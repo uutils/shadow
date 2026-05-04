@@ -248,14 +248,15 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 #[must_use]
 pub fn uu_app() -> Command {
     Command::new("chpasswd")
-        .about("Update passwords in batch mode")
+        .about("Read user:password pairs from stdin and apply them")
         .override_usage("chpasswd [options]")
-        .disable_version_flag(true)
+        .version(shadow_core::cli::VERSION)
+        .after_help(shadow_core::cli::AFTER_HELP)
         .arg(
             Arg::new(options::CRYPT_METHOD)
                 .short('c')
                 .long("crypt-method")
-                .help("the crypt method (SHA256, SHA512, YESCRYPT, etc.)")
+                .help("hashing scheme to apply (SHA256, SHA512, YESCRYPT, ...)")
                 .value_name("METHOD")
                 .value_parser(["SHA256", "SHA512", "YESCRYPT", "DES", "MD5"]),
         )
@@ -263,28 +264,28 @@ pub fn uu_app() -> Command {
             Arg::new(options::ENCRYPTED)
                 .short('e')
                 .long("encrypted")
-                .help("supplied passwords are encrypted (pre-hashed)")
+                .help("treat input passwords as already hashed")
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new(options::MD5)
                 .short('m')
                 .long("md5")
-                .help("encrypt the clear text password using the MD5 algorithm (deprecated)")
+                .help("hash with MD5 (legacy; do not use for new accounts)")
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new(options::ROOT)
                 .short('R')
                 .long("root")
-                .help("directory to chroot into")
+                .help("chroot into CHROOT_DIR before applying changes")
                 .value_name("CHROOT_DIR"),
         )
         .arg(
             Arg::new(options::SHA_ROUNDS)
                 .short('s')
                 .long("sha-rounds")
-                .help("number of SHA rounds for SHA256/SHA512 crypt method")
+                .help("iteration count when hashing with SHA-2")
                 .value_name("ROUNDS")
                 .value_parser(clap::value_parser!(i64)),
         )

@@ -370,28 +370,30 @@ fn recursive_chown(path: &Path, old_uid: u32, new_uid: u32) {
 #[allow(clippy::too_many_lines)]
 pub fn uu_app() -> Command {
     Command::new("usermod")
-        .about("Modify a user account")
+        .about("Edit a user account's fields")
         .override_usage("usermod [options] LOGIN")
+        .version(shadow_core::cli::VERSION)
+        .after_help(shadow_core::cli::AFTER_HELP)
         .arg(
             Arg::new(options::COMMENT)
                 .short('c')
                 .long("comment")
                 .value_name("COMMENT")
-                .help("New GECOS field"),
+                .help("Replace the GECOS comment"),
         )
         .arg(
             Arg::new(options::HOME)
                 .short('d')
                 .long("home")
                 .value_name("HOME_DIR")
-                .help("New home directory"),
+                .help("Replace the home directory path"),
         )
         .arg(
             Arg::new(options::EXPIREDATE)
                 .short('e')
                 .long("expiredate")
                 .value_name("EXPIRE_DATE")
-                .help("Account expiration date"),
+                .help("Set the account expiration date"),
         )
         .arg(
             Arg::new(options::INACTIVE)
@@ -399,7 +401,7 @@ pub fn uu_app() -> Command {
                 .long("inactive")
                 .value_name("INACTIVE")
                 .value_parser(clap::value_parser!(i64))
-                .help("Password inactive period"),
+                .help("Days the password may stay expired before disabling the account"),
         )
         .arg(
             Arg::new(options::GID)
@@ -407,27 +409,27 @@ pub fn uu_app() -> Command {
                 .long("gid")
                 .value_name("GROUP")
                 .value_parser(clap::value_parser!(u32))
-                .help("New primary GID"),
+                .help("Replace the primary group (numeric GID)"),
         )
         .arg(
             Arg::new(options::GROUPS)
                 .short('G')
                 .long("groups")
                 .value_name("GROUPS")
-                .help("Supplementary groups"),
+                .help("Replace supplementary groups (comma-separated)"),
         )
         .arg(
             Arg::new(options::APPEND)
                 .short('a')
                 .long("append")
-                .help("Append to groups (with -G)")
+                .help("Add to (instead of replace) supplementary groups")
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new(options::LOCK)
                 .short('L')
                 .long("lock")
-                .help("Lock account")
+                .help("Disable login by locking the password")
                 .conflicts_with(options::UNLOCK)
                 .action(ArgAction::SetTrue),
         )
@@ -435,7 +437,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::UNLOCK)
                 .short('U')
                 .long("unlock")
-                .help("Unlock account")
+                .help("Re-enable login by unlocking the password")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -443,21 +445,21 @@ pub fn uu_app() -> Command {
                 .short('l')
                 .long("login")
                 .value_name("NEW_LOGIN")
-                .help("New login name"),
+                .help("Rename the account"),
         )
         .arg(
             Arg::new(options::PASSWORD)
                 .short('p')
                 .long("password")
                 .value_name("PASSWORD")
-                .help("New encrypted password (crypt(3) hash)"),
+                .help("Replace the password field with a crypt(3) hash"),
         )
         .arg(
             Arg::new(options::SHELL)
                 .short('s')
                 .long("shell")
                 .value_name("SHELL")
-                .help("New login shell"),
+                .help("Replace the login shell"),
         )
         .arg(
             Arg::new(options::UID)
@@ -465,7 +467,7 @@ pub fn uu_app() -> Command {
                 .long("uid")
                 .value_name("UID")
                 .value_parser(clap::value_parser!(u32))
-                .help("New UID"),
+                .help("Replace the numeric UID"),
         )
         .arg(
             Arg::new(options::ROOT)

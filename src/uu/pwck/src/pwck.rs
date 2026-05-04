@@ -297,28 +297,29 @@ fn sort_and_write(
 #[must_use]
 pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
-        .version(env!("CARGO_PKG_VERSION"))
-        .about("Verify integrity of password files")
+        .version(shadow_core::cli::VERSION)
+        .about("Audit /etc/passwd and /etc/shadow for inconsistencies")
         .override_usage("pwck [options] [passwd [shadow]]")
+        .after_help(shadow_core::cli::AFTER_HELP)
         .arg(
             Arg::new(options::READ_ONLY)
                 .short('r')
                 .long("read-only")
-                .help("Display errors and warnings but do not modify files")
+                .help("Audit only; never write the files")
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new(options::SORT)
                 .short('s')
                 .long("sort")
-                .help("Sort entries by UID")
+                .help("Reorder entries by ascending UID")
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new(options::QUIET)
                 .short('q')
                 .long("quiet")
-                .help("Report only errors, suppress warnings")
+                .help("Suppress warnings; print errors only")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -326,20 +327,20 @@ pub fn uu_app() -> Command {
                 .short('R')
                 .long("root")
                 .value_name("CHROOT_DIR")
-                .help("Apply changes in the CHROOT_DIR directory")
+                .help("Chroot into CHROOT_DIR before applying changes")
                 .action(ArgAction::Set),
         )
         .arg(
             Arg::new(options::PASSWD_FILE)
                 .index(1)
                 .value_name("passwd")
-                .help("Alternate passwd file path"),
+                .help("Path to use instead of /etc/passwd"),
         )
         .arg(
             Arg::new(options::SHADOW_FILE)
                 .index(2)
                 .value_name("shadow")
-                .help("Alternate shadow file path"),
+                .help("Path to use instead of /etc/shadow"),
         )
 }
 

@@ -324,10 +324,11 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 #[must_use]
 pub fn uu_app() -> Command {
     Command::new("newgrp")
-        .about("Log in to a new group")
+        .about("Switch the current shell's primary group")
         .override_usage("newgrp [group]")
-        .disable_version_flag(true)
-        .arg(Arg::new(options::GROUP).help("Group to change to").index(1))
+        .version(shadow_core::cli::VERSION)
+        .after_help(shadow_core::cli::AFTER_HELP)
+        .arg(Arg::new(options::GROUP).help("Target group").index(1))
 }
 
 #[cfg(test)]

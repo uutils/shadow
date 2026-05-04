@@ -335,13 +335,15 @@ fn allocate_gid(
 #[must_use]
 pub fn uu_app() -> Command {
     Command::new("groupadd")
-        .about("Create a new group")
+        .about("Add a new group entry")
         .override_usage("groupadd [options] GROUP")
+        .version(shadow_core::cli::VERSION)
+        .after_help(shadow_core::cli::AFTER_HELP)
         .arg(
             Arg::new(options::FORCE)
                 .short('f')
                 .long("force")
-                .help("Exit successfully if the group already exists, and cancel -g if the GID is already used")
+                .help("If the group exists, succeed silently; if -g collides, fall back to a free GID")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -349,7 +351,7 @@ pub fn uu_app() -> Command {
                 .short('g')
                 .long("gid")
                 .value_name("GID")
-                .help("Use GID for the new group"),
+                .help("Assign GID to the new group"),
         )
         .arg(
             Arg::new(options::KEY)
@@ -357,13 +359,13 @@ pub fn uu_app() -> Command {
                 .long("key")
                 .value_name("KEY=VALUE")
                 .action(ArgAction::Append)
-                .help("Override /etc/login.defs defaults"),
+                .help("Override a /etc/login.defs key for this run (KEY=VALUE)"),
         )
         .arg(
             Arg::new(options::NON_UNIQUE)
                 .short('o')
                 .long("non-unique")
-                .help("Allow creating a group with a non-unique GID")
+                .help("Permit a duplicate GID (must accompany -g)")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -371,13 +373,13 @@ pub fn uu_app() -> Command {
                 .short('p')
                 .long("password")
                 .value_name("PASSWORD")
-                .help("Encrypted password for the new group"),
+                .help("crypt(3) hash for the group password field"),
         )
         .arg(
             Arg::new(options::SYSTEM)
                 .short('r')
                 .long("system")
-                .help("Create a system group")
+                .help("Allocate from the system GID range")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -385,7 +387,7 @@ pub fn uu_app() -> Command {
                 .short('R')
                 .long("root")
                 .value_name("CHROOT_DIR")
-                .help("Apply changes in the CHROOT_DIR directory"),
+                .help("Chroot into CHROOT_DIR before applying changes"),
         )
         .arg(
             Arg::new(options::PREFIX)
@@ -398,7 +400,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::GROUP)
                 .required(true)
                 .index(1)
-                .help("Name of the new group"),
+                .help("Group name to create"),
         )
 }
 

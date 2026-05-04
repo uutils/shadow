@@ -366,27 +366,29 @@ fn sort_gshadow_by_group(
 #[must_use]
 pub fn uu_app() -> Command {
     Command::new("grpck")
-        .about("Verify integrity of group files")
+        .about("Audit /etc/group and /etc/gshadow for inconsistencies")
         .override_usage("grpck [options] [group [gshadow]]")
+        .version(shadow_core::cli::VERSION)
+        .after_help(shadow_core::cli::AFTER_HELP)
         .arg(
             Arg::new(options::READ_ONLY)
                 .short('r')
                 .long("read-only")
-                .help("Display errors and warnings but do not modify files")
+                .help("Audit only; never write the files")
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new(options::SORT)
                 .short('s')
                 .long("sort")
-                .help("Sort entries by GID")
+                .help("Reorder entries by ascending GID")
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new(options::QUIET)
                 .short('q')
                 .long("quiet")
-                .help("Report only errors, suppress warnings")
+                .help("Suppress warnings; print errors only")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -394,20 +396,20 @@ pub fn uu_app() -> Command {
                 .short('R')
                 .long("root")
                 .value_name("CHROOT_DIR")
-                .help("Apply changes in the CHROOT_DIR directory")
+                .help("Chroot into CHROOT_DIR before applying changes")
                 .action(ArgAction::Set),
         )
         .arg(
             Arg::new(options::GROUP_FILE)
                 .index(1)
                 .value_name("group")
-                .help("Alternate group file path"),
+                .help("Path to use instead of /etc/group"),
         )
         .arg(
             Arg::new(options::GSHADOW_FILE)
                 .index(2)
                 .value_name("gshadow")
-                .help("Alternate gshadow file path"),
+                .help("Path to use instead of /etc/gshadow"),
         )
 }
 

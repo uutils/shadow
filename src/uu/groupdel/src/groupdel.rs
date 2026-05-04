@@ -203,14 +203,16 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 #[must_use]
 pub fn uu_app() -> Command {
     Command::new("groupdel")
-        .about("Delete a group")
+        .about("Remove a group entry")
         .override_usage("groupdel [options] GROUP")
+        .version(shadow_core::cli::VERSION)
+        .after_help(shadow_core::cli::AFTER_HELP)
         .arg(
             Arg::new(options::ROOT)
                 .short('R')
                 .long("root")
                 .value_name("CHROOT_DIR")
-                .help("Apply changes in the CHROOT_DIR directory"),
+                .help("Chroot into CHROOT_DIR before applying changes"),
         )
         .arg(
             Arg::new(options::PREFIX)
@@ -223,7 +225,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::GROUP)
                 .required(true)
                 .index(1)
-                .help("Name of the group to delete"),
+                .help("Group to remove"),
         )
 }
 

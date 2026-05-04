@@ -331,9 +331,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 #[must_use]
 pub fn uu_app() -> Command {
     Command::new("chfn")
-        .about("Change user finger information")
+        .about("Edit a user's GECOS (finger) fields")
         .override_usage("chfn [options] [LOGIN]")
-        .disable_version_flag(true)
+        .version(shadow_core::cli::VERSION)
+        .after_help(shadow_core::cli::AFTER_HELP)
         .disable_help_flag(true)
         .arg(
             Arg::new("help")
@@ -345,47 +346,47 @@ pub fn uu_app() -> Command {
             Arg::new(options::FULL_NAME)
                 .short('f')
                 .long("full-name")
-                .help("change user's full name")
+                .help("set the user's full name")
                 .value_name("FULL_NAME"),
         )
         .arg(
             Arg::new(options::ROOM)
                 .short('r')
                 .long("room")
-                .help("change user's room number")
+                .help("set the user's room number")
                 .value_name("ROOM"),
         )
         .arg(
             Arg::new(options::WORK_PHONE)
                 .short('w')
                 .long("work-phone")
-                .help("change user's office phone number")
+                .help("set the user's work phone")
                 .value_name("WORK_PHONE"),
         )
         .arg(
             Arg::new(options::HOME_PHONE)
                 .short('h')
                 .long("home-phone")
-                .help("change user's home phone number")
+                .help("set the user's home phone")
                 .value_name("HOME_PHONE"),
         )
         .arg(
             Arg::new(options::OTHER)
                 .short('o')
                 .long("other")
-                .help("change user's other GECOS information")
+                .help("set the trailing GECOS field")
                 .value_name("OTHER"),
         )
         .arg(
             Arg::new(options::ROOT)
                 .short('R')
                 .long("root")
-                .help("directory to chroot into")
+                .help("chroot into CHROOT_DIR before applying changes")
                 .value_name("CHROOT_DIR"),
         )
         .arg(
             Arg::new(options::USER)
-                .help("Username to change finger information for")
+                .help("User whose GECOS fields to edit")
                 .index(1),
         )
 }

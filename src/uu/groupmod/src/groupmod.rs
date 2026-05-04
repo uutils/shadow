@@ -232,27 +232,29 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 #[must_use]
 pub fn uu_app() -> Command {
     Command::new("groupmod")
-        .about("Modify a group definition")
+        .about("Edit a group's fields")
         .override_usage("groupmod [options] GROUP")
+        .version(shadow_core::cli::VERSION)
+        .after_help(shadow_core::cli::AFTER_HELP)
         .arg(
             Arg::new(options::GID)
                 .short('g')
                 .long("gid")
                 .value_name("GID")
-                .help("Change the group ID to GID"),
+                .help("Set the group's GID"),
         )
         .arg(
             Arg::new(options::NEW_NAME)
                 .short('n')
                 .long("new-name")
                 .value_name("NEW_GROUP")
-                .help("Change the name of the group to NEW_GROUP"),
+                .help("Rename the group to NEW_GROUP"),
         )
         .arg(
             Arg::new(options::NON_UNIQUE)
                 .short('o')
                 .long("non-unique")
-                .help("Allow using a non-unique GID with -g")
+                .help("Permit a duplicate GID (must accompany -g)")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -260,14 +262,14 @@ pub fn uu_app() -> Command {
                 .short('p')
                 .long("password")
                 .value_name("PASSWORD")
-                .help("Change the password to encrypted PASSWORD"),
+                .help("Replace the group password (PASSWORD must be a crypt(3) hash)"),
         )
         .arg(
             Arg::new(options::ROOT)
                 .short('R')
                 .long("root")
                 .value_name("CHROOT_DIR")
-                .help("Apply changes in the CHROOT_DIR directory"),
+                .help("Chroot into CHROOT_DIR before applying changes"),
         )
         .arg(
             Arg::new(options::PREFIX)
@@ -280,7 +282,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::GROUP)
                 .required(true)
                 .index(1)
-                .help("Name of the group to modify"),
+                .help("Group to edit"),
         )
 }
 

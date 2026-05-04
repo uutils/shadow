@@ -980,11 +980,13 @@ fn create_home_directory(home_path: &Path, skel_path: &Path, uid: u32, gid: u32)
 #[allow(clippy::too_many_lines)]
 pub fn uu_app() -> Command {
     Command::new("useradd")
-        .about("create a new user or update default new user information")
+        .about("Create a user account, or print/update useradd defaults")
         .override_usage("useradd [options] LOGIN\n       useradd -D [options]")
+        .version(shadow_core::cli::VERSION)
+        .after_help(shadow_core::cli::AFTER_HELP)
         .arg(
             Arg::new(options::LOGIN)
-                .help("Login name for the new user")
+                .help("Login name to create")
                 .index(1)
                 .required_unless_present(options::DEFAULTS),
         )
@@ -993,42 +995,42 @@ pub fn uu_app() -> Command {
                 .short('c')
                 .long("comment")
                 .value_name("COMMENT")
-                .help("GECOS field of the new account"),
+                .help("GECOS comment for the account"),
         )
         .arg(
             Arg::new(options::HOME_DIR)
                 .short('d')
                 .long("home-dir")
                 .value_name("HOME_DIR")
-                .help("Home directory of the new account"),
+                .help("Home directory path"),
         )
         .arg(
             Arg::new(options::EXPIRE_DATE)
                 .short('e')
                 .long("expiredate")
                 .value_name("EXPIRE_DATE")
-                .help("Expiration date of the new account (YYYY-MM-DD)"),
+                .help("Account expiration date (YYYY-MM-DD)"),
         )
         .arg(
             Arg::new(options::INACTIVE)
                 .short('f')
                 .long("inactive")
                 .value_name("INACTIVE")
-                .help("Password inactivity period of the new account"),
+                .help("Days the password may stay expired before the account is disabled"),
         )
         .arg(
             Arg::new(options::GID)
                 .short('g')
                 .long("gid")
                 .value_name("GROUP")
-                .help("Name or ID of the primary group of the new account"),
+                .help("Primary group (name or numeric GID)"),
         )
         .arg(
             Arg::new(options::GROUPS)
                 .short('G')
                 .long("groups")
                 .value_name("GROUPS")
-                .help("List of supplementary groups of the new account"),
+                .help("Comma-separated supplementary groups"),
         )
         .arg(
             Arg::new(options::CREATE_HOME)
@@ -1036,21 +1038,21 @@ pub fn uu_app() -> Command {
                 .long("create-home")
                 .action(ArgAction::SetTrue)
                 .conflicts_with(options::NO_CREATE_HOME)
-                .help("Create the user's home directory"),
+                .help("Materialise the home directory"),
         )
         .arg(
             Arg::new(options::NO_CREATE_HOME)
                 .short('M')
                 .long("no-create-home")
                 .action(ArgAction::SetTrue)
-                .help("Do not create the user's home directory"),
+                .help("Skip home directory creation"),
         )
         .arg(
             Arg::new(options::SKEL)
                 .short('k')
                 .long("skel")
                 .value_name("SKEL_DIR")
-                .help("Skeleton directory (default: /etc/skel)"),
+                .help("Template directory copied into the new home (default: /etc/skel)"),
         )
         .arg(
             Arg::new(options::NO_USER_GROUP)
@@ -1058,7 +1060,7 @@ pub fn uu_app() -> Command {
                 .long("no-user-group")
                 .action(ArgAction::SetTrue)
                 .conflicts_with(options::USER_GROUP)
-                .help("Do not create a group with the same name as the user"),
+                .help("Skip the matching user-private group"),
         )
         .arg(
             Arg::new(options::NON_UNIQUE)
@@ -1066,56 +1068,56 @@ pub fn uu_app() -> Command {
                 .long("non-unique")
                 .action(ArgAction::SetTrue)
                 .requires(options::UID)
-                .help("Allow creating users with duplicate (non-unique) UIDs"),
+                .help("Permit a duplicate UID (must accompany -u)"),
         )
         .arg(
             Arg::new(options::PASSWORD)
                 .short('p')
                 .long("password")
                 .value_name("PASSWORD")
-                .help("Encrypted password of the new account"),
+                .help("Initial crypt(3) hash for the password field"),
         )
         .arg(
             Arg::new(options::SYSTEM)
                 .short('r')
                 .long("system")
                 .action(ArgAction::SetTrue)
-                .help("Create a system account"),
+                .help("Allocate from the system UID range"),
         )
         .arg(
             Arg::new(options::ROOT)
                 .short('R')
                 .long("root")
                 .value_name("CHROOT_DIR")
-                .help("Directory to chroot into"),
+                .help("Chroot into CHROOT_DIR before applying changes"),
         )
         .arg(
             Arg::new(options::SHELL)
                 .short('s')
                 .long("shell")
                 .value_name("SHELL")
-                .help("Login shell of the new account"),
+                .help("Login shell path"),
         )
         .arg(
             Arg::new(options::UID)
                 .short('u')
                 .long("uid")
                 .value_name("UID")
-                .help("User ID of the new account"),
+                .help("Numeric UID to assign"),
         )
         .arg(
             Arg::new(options::USER_GROUP)
                 .short('U')
                 .long("user-group")
                 .action(ArgAction::SetTrue)
-                .help("Create a group with the same name as the user (default)"),
+                .help("Also create a matching user-private group (default)"),
         )
         .arg(
             Arg::new(options::DEFAULTS)
                 .short('D')
                 .long("defaults")
                 .action(ArgAction::SetTrue)
-                .help("Print or change default useradd configuration"),
+                .help("View or edit the saved useradd defaults"),
         )
 }
 

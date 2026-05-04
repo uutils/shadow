@@ -290,14 +290,15 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 #[allow(clippy::too_many_lines)]
 pub fn uu_app() -> Command {
     Command::new("passwd")
-        .about("Change user password")
+        .about("Update or manage a user's password")
         .override_usage("passwd [options] [LOGIN]")
-        .disable_version_flag(true)
+        .version(shadow_core::cli::VERSION)
+        .after_help(shadow_core::cli::AFTER_HELP)
         .arg(
             Arg::new(options::ALL)
                 .short('a')
                 .long("all")
-                .help("report password status on all accounts")
+                .help("show status for every user (combine with -S)")
                 .requires(options::STATUS)
                 .action(ArgAction::SetTrue),
         )
@@ -305,7 +306,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::DELETE)
                 .short('d')
                 .long("delete")
-                .help("delete the password for the named account")
+                .help("erase the password field on the target account")
                 .conflicts_with_all([options::LOCK, options::UNLOCK, options::STATUS])
                 .action(ArgAction::SetTrue),
         )
@@ -313,7 +314,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::EXPIRE)
                 .short('e')
                 .long("expire")
-                .help("force expire the password for the named account")
+                .help("mark the target account's password as expired")
                 .conflicts_with_all([
                     options::LOCK,
                     options::UNLOCK,
@@ -326,14 +327,14 @@ pub fn uu_app() -> Command {
             Arg::new(options::KEEP_TOKENS)
                 .short('k')
                 .long("keep-tokens")
-                .help("change password only if expired")
+                .help("no-op unless the password has already expired")
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new(options::INACTIVE)
                 .short('i')
                 .long("inactive")
-                .help("set password inactive after expiration to INACTIVE")
+                .help("disable the password INACTIVE days past its expiry")
                 .value_name("INACTIVE")
                 .value_parser(clap::value_parser!(i64)),
         )
@@ -341,7 +342,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::LOCK)
                 .short('l')
                 .long("lock")
-                .help("lock the password of the named account")
+                .help("disable login by locking the password field")
                 .conflicts_with_all([options::UNLOCK, options::DELETE, options::STATUS])
                 .action(ArgAction::SetTrue),
         )
@@ -349,7 +350,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::MINDAYS)
                 .short('n')
                 .long("mindays")
-                .help("set minimum number of days before password change to MIN_DAYS")
+                .help("require at least MIN_DAYS between password changes")
                 .value_name("MIN_DAYS")
                 .value_parser(clap::value_parser!(i64)),
         )
@@ -364,14 +365,14 @@ pub fn uu_app() -> Command {
             Arg::new(options::REPOSITORY)
                 .short('r')
                 .long("repository")
-                .help("change password in REPOSITORY repository")
+                .help("operate on REPOSITORY (e.g. files, ldap)")
                 .value_name("REPOSITORY"),
         )
         .arg(
             Arg::new(options::ROOT)
                 .short('R')
                 .long("root")
-                .help("directory to chroot into")
+                .help("chroot into CHROOT_DIR before applying changes")
                 .value_name("CHROOT_DIR"),
         )
         .arg(
@@ -385,7 +386,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::STATUS)
                 .short('S')
                 .long("status")
-                .help("report password status on the named account")
+                .help("print the password status of the target account")
                 .conflicts_with_all([options::LOCK, options::UNLOCK, options::DELETE])
                 .action(ArgAction::SetTrue),
         )
@@ -393,7 +394,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::UNLOCK)
                 .short('u')
                 .long("unlock")
-                .help("unlock the password of the named account")
+                .help("re-enable login by unlocking the password field")
                 .conflicts_with_all([options::LOCK, options::DELETE, options::STATUS])
                 .action(ArgAction::SetTrue),
         )
@@ -401,7 +402,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::WARNDAYS)
                 .short('w')
                 .long("warndays")
-                .help("set expiration warning days to WARN_DAYS")
+                .help("warn the user WARN_DAYS before password expiry")
                 .value_name("WARN_DAYS")
                 .value_parser(clap::value_parser!(i64)),
         )
@@ -409,7 +410,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::MAXDAYS)
                 .short('x')
                 .long("maxdays")
-                .help("set maximum number of days before password change to MAX_DAYS")
+                .help("require a password change at least every MAX_DAYS")
                 .value_name("MAX_DAYS")
                 .value_parser(clap::value_parser!(i64)),
         )
@@ -417,12 +418,12 @@ pub fn uu_app() -> Command {
             Arg::new(options::STDIN)
                 .short('s')
                 .long("stdin")
-                .help("read new token from stdin")
+                .help("read the new password from standard input")
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new(options::USER)
-                .help("Username to change password for")
+                .help("Account whose password to change")
                 .index(1),
         )
 }

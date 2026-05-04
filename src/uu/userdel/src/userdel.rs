@@ -175,20 +175,22 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 #[must_use]
 pub fn uu_app() -> Command {
     Command::new("userdel")
-        .about("Delete a user account and related files")
+        .about("Remove a user account (and optionally its files)")
         .override_usage("userdel [options] LOGIN")
+        .version(shadow_core::cli::VERSION)
+        .after_help(shadow_core::cli::AFTER_HELP)
         .arg(
             Arg::new(options::FORCE)
                 .short('f')
                 .long("force")
-                .help("Force removal even if user is logged in")
+                .help("Proceed even if the user is logged in")
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new(options::REMOVE)
                 .short('r')
                 .long("remove")
-                .help("Remove home directory and mail spool")
+                .help("Also delete the home directory and mail spool")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -196,7 +198,7 @@ pub fn uu_app() -> Command {
                 .short('R')
                 .long("root")
                 .value_name("CHROOT_DIR")
-                .help("Directory to chroot into"),
+                .help("Chroot into CHROOT_DIR before applying changes"),
         )
         .arg(
             Arg::new(options::PREFIX)
@@ -209,7 +211,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::LOGIN)
                 .required(true)
                 .index(1)
-                .help("Login name of the user to delete"),
+                .help("Account to remove"),
         )
 }
 
