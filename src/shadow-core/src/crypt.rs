@@ -51,13 +51,9 @@ impl CryptMethod {
 /// Generate a random salt string for crypt(3).
 fn generate_salt(method: CryptMethod, rounds: Option<u32>) -> Result<String, ShadowError> {
     let mut rand_bytes = [0u8; 16];
-
     // Use getrandom(2) syscall — works in chroot environments without /dev/urandom.
-    // SAFETY: getrandom(2) writes into a valid buffer and returns bytes written or -1.
-    let ret = unsafe { libc::getrandom(rand_bytes.as_mut_ptr().cast(), rand_bytes.len(), 0) };
-    if ret < 0 || ret.cast_unsigned() < rand_bytes.len() {
-        return Err(ShadowError::Other("getrandom(2) failed".into()));
-    }
+    rustix::rand::getrandom(&mut rand_bytes, rustix::rand::GetRandomFlags::empty())
+        .map_err(|_| ShadowError::Other("getrandom(2) failed".into()))?;
 
     let salt_str: String = rand_bytes
         .iter()
