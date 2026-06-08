@@ -5,3 +5,5 @@
 /fuzz/Cargo.lock
 CLAUDE.md
 PLAN-shadow-rs.md
+docs/claude-review-*.md
+docs/gemini-review-*.txt
