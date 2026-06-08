@@ -56,6 +56,16 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
 
+        if util_name == "--version" || util_name == "-V" {
+            let _ = writeln!(std::io::stdout(), "shadow-rs {}", shadow_core::cli::VERSION);
+            return ExitCode::SUCCESS;
+        }
+
+        if util_name == "--help" || util_name == "-h" {
+            print_multicall_help();
+            return ExitCode::SUCCESS;
+        }
+
         if let Some(code) = dispatch(&util_name, &args[1..]) {
             return to_exit_code(code);
         }
@@ -80,6 +90,24 @@ fn main() -> ExitCode {
         "Run 'shadow-rs --list' for available utilities."
     );
     ExitCode::FAILURE
+}
+
+fn print_multicall_help() {
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "shadow-rs {}", shadow_core::cli::VERSION);
+    let _ = writeln!(out);
+    let _ = writeln!(out, "Usage: shadow-rs <utility> [arguments...]");
+    let _ = writeln!(
+        out,
+        "   or: <name> [arguments...]   (when run through a symlink whose name is the utility, e.g. passwd)"
+    );
+    let _ = writeln!(out);
+    let _ = writeln!(out, "Options:");
+    let _ = writeln!(out, "  --list        List available utilities");
+    let _ = writeln!(out, "  --version, -V Print version");
+    let _ = writeln!(out, "  --help, -h    Print this help");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "{}", shadow_core::cli::AFTER_HELP);
 }
 
 fn dispatch(name: &str, args: &[std::ffi::OsString]) -> Option<i32> {

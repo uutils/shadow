@@ -8,6 +8,7 @@
 //! Provides file format parsers, atomic file operations, file locking,
 //! validation, and platform integration (PAM, `nscd`, `SELinux`, audit).
 
+pub mod cli;
 pub mod error;
 pub mod passwd;
 pub mod validate;

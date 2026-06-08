@@ -330,14 +330,15 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 #[must_use]
 pub fn uu_app() -> Command {
     Command::new("chage")
-        .about("Change user password expiry information")
+        .about("Manage password aging fields for a user")
         .override_usage("chage [options] LOGIN")
-        .disable_version_flag(true)
+        .version(shadow_core::cli::VERSION)
+        .after_help(shadow_core::cli::AFTER_HELP)
         .arg(
             Arg::new(options::LASTDAY)
                 .short('d')
                 .long("lastday")
-                .help("set date of last password change to LAST_DAY")
+                .help("record LAST_DAY as the date of the last password change")
                 .value_name("LAST_DAY")
                 .allow_hyphen_values(true),
         )
@@ -345,7 +346,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::EXPIREDATE)
                 .short('E')
                 .long("expiredate")
-                .help("set account expiration date to EXPIRE_DATE")
+                .help("expire the account on EXPIRE_DATE")
                 .value_name("EXPIRE_DATE")
                 .allow_hyphen_values(true),
         )
@@ -353,7 +354,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::INACTIVE)
                 .short('I')
                 .long("inactive")
-                .help("set password inactive after expiration to INACTIVE")
+                .help("disable the password INACTIVE days past its expiry")
                 .value_name("INACTIVE")
                 .allow_hyphen_values(true)
                 .value_parser(clap::value_parser!(i64)),
@@ -362,7 +363,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::LIST)
                 .short('l')
                 .long("list")
-                .help("show account aging information")
+                .help("print the user's aging fields and exit")
                 .conflicts_with_all([
                     options::LASTDAY,
                     options::EXPIREDATE,
@@ -377,7 +378,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::MINDAYS)
                 .short('m')
                 .long("mindays")
-                .help("set minimum number of days before password change to MIN_DAYS")
+                .help("require at least MIN_DAYS between password changes")
                 .value_name("MIN_DAYS")
                 .allow_hyphen_values(true)
                 .value_parser(clap::value_parser!(i64)),
@@ -386,7 +387,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::MAXDAYS)
                 .short('M')
                 .long("maxdays")
-                .help("set maximum number of days before password change to MAX_DAYS")
+                .help("require a password change at least every MAX_DAYS")
                 .value_name("MAX_DAYS")
                 .allow_hyphen_values(true)
                 .value_parser(clap::value_parser!(i64)),
@@ -395,14 +396,14 @@ pub fn uu_app() -> Command {
             Arg::new(options::ROOT)
                 .short('R')
                 .long("root")
-                .help("directory to chroot into")
+                .help("chroot into CHROOT_DIR before applying changes")
                 .value_name("CHROOT_DIR"),
         )
         .arg(
             Arg::new(options::WARNDAYS)
                 .short('W')
                 .long("warndays")
-                .help("set expiration warning days to WARN_DAYS")
+                .help("warn the user WARN_DAYS before expiry")
                 .value_name("WARN_DAYS")
                 .allow_hyphen_values(true)
                 .value_parser(clap::value_parser!(i64)),

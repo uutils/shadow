@@ -304,33 +304,34 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 #[must_use]
 pub fn uu_app() -> Command {
     Command::new("chsh")
-        .about("Change login shell")
+        .about("Set a user's login shell")
         .override_usage("chsh [options] [LOGIN]")
-        .disable_version_flag(true)
+        .version(shadow_core::cli::VERSION)
+        .after_help(shadow_core::cli::AFTER_HELP)
         .arg(
             Arg::new(options::SHELL)
                 .short('s')
                 .long("shell")
-                .help("specify login shell")
+                .help("path of the new shell")
                 .value_name("SHELL"),
         )
         .arg(
             Arg::new(options::LIST_SHELLS)
                 .short('l')
                 .long("list-shells")
-                .help("print the list of shells in /etc/shells and exit")
+                .help("list entries in /etc/shells and exit")
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new(options::ROOT)
                 .short('R')
                 .long("root")
-                .help("directory to chroot into")
+                .help("chroot into CHROOT_DIR before applying changes")
                 .value_name("CHROOT_DIR"),
         )
         .arg(
             Arg::new(options::USER)
-                .help("Username to change shell for")
+                .help("User whose shell to set")
                 .index(1),
         )
 }
