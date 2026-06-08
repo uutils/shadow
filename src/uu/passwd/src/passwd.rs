@@ -365,7 +365,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::REPOSITORY)
                 .short('r')
                 .long("repository")
-                .help("operate on REPOSITORY (e.g. files, ldap)")
+                .help("accepted for compatibility; only the local files backend is supported")
                 .value_name("REPOSITORY"),
         )
         .arg(
@@ -418,7 +418,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::STDIN)
                 .short('s')
                 .long("stdin")
-                .help("read the new password from standard input")
+                .help("read password input from standard input instead of a terminal")
                 .action(ArgAction::SetTrue),
         )
         .arg(

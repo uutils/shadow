@@ -183,7 +183,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::FORCE)
                 .short('f')
                 .long("force")
-                .help("Proceed even if the user is logged in")
+                .help("Accepted for compatibility; currently has no effect")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -197,8 +197,8 @@ pub fn uu_app() -> Command {
             Arg::new(options::ROOT)
                 .short('R')
                 .long("root")
-                .value_name("CHROOT_DIR")
-                .help("Chroot into CHROOT_DIR before applying changes"),
+                .value_name("ROOT_DIR")
+                .help("Locate the system files under ROOT_DIR instead of /"),
         )
         .arg(
             Arg::new(options::PREFIX)

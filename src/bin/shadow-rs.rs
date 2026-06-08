@@ -57,11 +57,7 @@ fn main() -> ExitCode {
         }
 
         if util_name == "--version" || util_name == "-V" {
-            let _ = writeln!(
-                std::io::stdout(),
-                "shadow-rs (uutils) {}",
-                env!("CARGO_PKG_VERSION")
-            );
+            let _ = writeln!(std::io::stdout(), "shadow-rs {}", shadow_core::cli::VERSION);
             return ExitCode::SUCCESS;
         }
 
@@ -98,12 +94,12 @@ fn main() -> ExitCode {
 
 fn print_multicall_help() {
     let mut out = std::io::stdout().lock();
-    let _ = writeln!(out, "shadow-rs (uutils) {}", env!("CARGO_PKG_VERSION"));
+    let _ = writeln!(out, "shadow-rs {}", shadow_core::cli::VERSION);
     let _ = writeln!(out);
     let _ = writeln!(out, "Usage: shadow-rs <utility> [arguments...]");
     let _ = writeln!(
         out,
-        "       <utility> [arguments...]   (when invoked via symlink)"
+        "   or: <name> [arguments...]   (when run through a symlink whose name is the utility, e.g. passwd)"
     );
     let _ = writeln!(out);
     let _ = writeln!(out, "Options:");

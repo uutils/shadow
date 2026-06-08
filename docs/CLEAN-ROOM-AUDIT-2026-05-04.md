@@ -7,7 +7,8 @@ evidence of the project's clean-room posture against GNU shadow-utils
 
 ## Why an audit at all
 
-The CLAUDE.md clean-room policy forbids reading shadow-maint/shadow source.
+The project's clean-room policy (`CONTRIBUTING.md`) forbids reading
+shadow-maint/shadow source.
 That guarantees no commit ever derives from upstream — but it cannot, by
 itself, prove the absence of accidental similarity in user-facing strings
 (error messages, clap flag-help, `--help` text). This audit is the
@@ -61,8 +62,9 @@ classify without quoting, it was instructed to emit `abstain`.
 
 - **16 high-confidence** all fall under the behavioral-compatibility
   carve-out — output strings that scripts grep for and where the project
-  explicitly commits to drop-in compat with GNU shadow (CLAUDE.md: *"Don't
-  break drop-in compatibility (flags, exit codes, output text)"*).
+  explicitly commits to drop-in compat with GNU shadow (`CONTRIBUTING.md`
+  Design Goals: *"Drop-in replacement: same flags, same exit codes, same
+  output format as GNU shadow-utils"*).
   Distribution:
     - `chage -l` aging-info column headings — `src/uu/chage/src/chage.rs`
       lines 442, 466–480 (the function comment itself reads

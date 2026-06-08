@@ -271,7 +271,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::MD5)
                 .short('m')
                 .long("md5")
-                .help("hash with MD5 (legacy; do not use for new accounts)")
+                .help("rejected: MD5 is insecure and unsupported (use -c SHA512)")
                 .action(ArgAction::SetTrue),
         )
         .arg(

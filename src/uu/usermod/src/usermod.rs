@@ -422,7 +422,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::APPEND)
                 .short('a')
                 .long("append")
-                .help("Add to (instead of replace) supplementary groups")
+                .help("Add to the supplementary groups instead of replacing them (only effective with -G)")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -473,8 +473,8 @@ pub fn uu_app() -> Command {
             Arg::new(options::ROOT)
                 .short('R')
                 .long("root")
-                .value_name("CHROOT_DIR")
-                .help("Chroot directory"),
+                .value_name("ROOT_DIR")
+                .help("Locate the system files under ROOT_DIR instead of /"),
         )
         .arg(
             Arg::new(options::PREFIX)

@@ -359,7 +359,10 @@ pub fn uu_app() -> Command {
                 .long("key")
                 .value_name("KEY=VALUE")
                 .action(ArgAction::Append)
-                .help("Override a /etc/login.defs key for this run (KEY=VALUE)"),
+                .help(
+                    "Override a GID-range key from login.defs (KEY=VALUE; \
+                     only GID_MIN, GID_MAX, SYS_GID_MIN, SYS_GID_MAX are honored)",
+                ),
         )
         .arg(
             Arg::new(options::NON_UNIQUE)
@@ -386,8 +389,8 @@ pub fn uu_app() -> Command {
             Arg::new(options::ROOT)
                 .short('R')
                 .long("root")
-                .value_name("CHROOT_DIR")
-                .help("Chroot into CHROOT_DIR before applying changes"),
+                .value_name("ROOT_DIR")
+                .help("Locate the system files under ROOT_DIR instead of /"),
         )
         .arg(
             Arg::new(options::PREFIX)

@@ -326,8 +326,8 @@ pub fn uu_app() -> Command {
             Arg::new(options::ROOT)
                 .short('R')
                 .long("root")
-                .value_name("CHROOT_DIR")
-                .help("Chroot into CHROOT_DIR before applying changes")
+                .value_name("ROOT_DIR")
+                .help("Locate the system files under ROOT_DIR instead of /")
                 .action(ArgAction::Set),
         )
         .arg(
