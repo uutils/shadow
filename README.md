@@ -1,17 +1,17 @@
 <!-- spell-checker:ignore reimplementation setuid nscd subuid subgid gshadow -->
 <div align="center">
 
-# shadow-rs
+# shadow
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/uutils/shadow-rs/blob/main/LICENSE)
-[![CI](https://github.com/uutils/shadow-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/uutils/shadow-rs/actions/workflows/ci.yml)
-[![MSRV](https://img.shields.io/badge/MSRV-1.94.0-blue)](https://github.com/uutils/shadow-rs)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/uutils/shadow/blob/main/LICENSE)
+[![CI](https://github.com/uutils/shadow/actions/workflows/ci.yml/badge.svg)](https://github.com/uutils/shadow/actions/workflows/ci.yml)
+[![MSRV](https://img.shields.io/badge/MSRV-1.94.0-blue)](https://github.com/uutils/shadow)
 
 </div>
 
 ---
 
-shadow-rs is a memory-safe reimplementation of the Linux
+A memory-safe reimplementation of the Linux
 [shadow-utils](https://github.com/shadow-maint/shadow) in
 [Rust](http://www.rust-lang.org). shadow-utils (`useradd`, `passwd`,
 `groupadd`, etc.) is the suite of setuid-root tools that manages user accounts,
@@ -22,13 +22,13 @@ passwords, and groups on every Linux system.
 shadow-utils runs as **root or setuid-root on every Linux system**. It parses
 user-supplied input, writes to `/etc/passwd`, `/etc/shadow`, `/etc/group`, and
 has had recent CVEs (CVE-2023-4641: password leak in memory, CVE-2024-56433:
-subuid collision enabling account takeover). Until shadow-rs, there was **no
+subuid collision enabling account takeover). Until this project appear, there was **no
 Rust reimplementation** — not in uutils, not in Prossimo/Trifecta, not on
 crates.io.
 
 [sudo-rs](https://github.com/trifectatechfoundation/sudo-rs) proved the model:
 an independent Rust rewrite of a privilege-boundary tool can go from zero to
-default-in-Ubuntu in under 3 years. shadow-rs follows that playbook.
+default-in-Ubuntu in under 3 years. This project follows that playbook.
 
 ## Goals
 
@@ -79,8 +79,8 @@ default-in-Ubuntu in under 3 years. shadow-rs follows that playbook.
 ### Build
 
 ```shell
-git clone https://github.com/uutils/shadow-rs
-cd shadow-rs
+git clone https://github.com/uutils/shadow
+cd shadow
 docker compose build debian
 docker compose run --rm debian cargo build --release
 ```
@@ -174,7 +174,7 @@ reviewed by [GitHub Copilot](https://github.com/features/copilot) and
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-**Important**: shadow-rs is developed under a strict GPL clean-room policy. Do
+**Important**: uutils/shadow is developed under a strict GPL clean-room policy. Do
 **not** read, reference, or feed into an LLM any code from
 [shadow-maint/shadow](https://github.com/shadow-maint/shadow) (GPL-2.0+).
 Reference only: POSIX specs, man pages, BSD-licensed implementations (FreeBSD,
@@ -182,6 +182,6 @@ OpenBSD, musl), and sudo-rs.
 
 ## License
 
-shadow-rs is licensed under the [MIT License](LICENSE).
+uutils/shadow is licensed under the [MIT License](LICENSE).
 
 GNU shadow-utils is licensed under the GPL 2.0 or later.
