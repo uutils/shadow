@@ -19,15 +19,10 @@
 #[must_use]
 pub fn strerror(errno: i32) -> String {
     // `io::Error::from_raw_os_error` carries libc's `strerror` text, but its
-    // `Display` appends Rust's own " (os error N)" suffix. Strip that so the
-    // result is the bare OS message (matching GNU/coreutils output). The
-    // suffix is emitted verbatim in English regardless of locale, so a
-    // localized message cannot contain it earlier in the string.
-    let rendered = std::io::Error::from_raw_os_error(errno).to_string();
-    match rendered.rfind(" (os error ") {
-        Some(cut) => rendered[..cut].to_string(),
-        None => rendered,
-    }
+    // `Display` appends Rust's own " (os error N)" suffix. `strip_errno` (the
+    // same helper uucore uses for its own I/O errors) removes it, leaving the
+    // bare OS message — matching GNU/coreutils output.
+    uucore::error::strip_errno(&std::io::Error::from_raw_os_error(errno))
 }
 
 /// The OS message for `EACCES` ("Permission denied"), sourced from libc.
