@@ -662,6 +662,7 @@ dependencies = [
  "subtle",
  "tempfile",
  "thiserror",
+ "uucore",
  "zeroize",
 ]
 
