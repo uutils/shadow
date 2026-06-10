@@ -89,7 +89,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let root = SysRoot::new(prefix);
 
     if !rustix::process::getuid().is_root() {
-        return Err(UsermodError::CantUpdate("Permission denied.".into()).into());
+        return Err(UsermodError::CantUpdate(shadow_core::os_error::permission_denied()).into());
     }
 
     // Block signals for the passwd lock→write critical section only.

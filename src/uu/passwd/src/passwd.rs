@@ -175,12 +175,18 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         // Non-root users can only view their own status.
         if !shadow_core::hardening::caller_is_root() {
             if show_all {
-                return Err(PasswdError::PermissionDenied("Permission denied.".into()).into());
+                return Err(PasswdError::PermissionDenied(
+                    shadow_core::os_error::permission_denied(),
+                )
+                .into());
             }
             let current_user = shadow_core::hardening::current_username()
                 .map_err(|e| PasswdError::UnexpectedFailure(e.to_string()))?;
             if current_user != target_user {
-                return Err(PasswdError::PermissionDenied("Permission denied.".into()).into());
+                return Err(PasswdError::PermissionDenied(
+                    shadow_core::os_error::permission_denied(),
+                )
+                .into());
             }
         }
 
@@ -205,7 +211,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // caller to be root. Non-root users can only change their own password
     // (the default PAM path below).
     if (has_mutation || has_aging) && !shadow_core::hardening::caller_is_root() {
-        return Err(PasswdError::PermissionDenied("Permission denied.".into()).into());
+        return Err(
+            PasswdError::PermissionDenied(shadow_core::os_error::permission_denied()).into(),
+        );
     }
 
     // When a mutation flag and aging flags are both present, apply both in a

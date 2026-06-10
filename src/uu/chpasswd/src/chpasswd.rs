@@ -175,7 +175,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     // chpasswd always requires root.
     if !shadow_core::hardening::caller_is_root() {
-        return Err(ChpasswdError::PermissionDenied("Permission denied.".into()).into());
+        return Err(
+            ChpasswdError::PermissionDenied(shadow_core::os_error::permission_denied()).into(),
+        );
     }
 
     let is_encrypted = matches.get_flag(options::ENCRYPTED);
