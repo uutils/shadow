@@ -18,7 +18,16 @@
 /// translate (musl), this is the untranslated English text.
 #[must_use]
 pub fn strerror(errno: i32) -> String {
-    std::io::Error::from_raw_os_error(errno).to_string()
+    // `io::Error::from_raw_os_error` carries libc's `strerror` text, but its
+    // `Display` appends Rust's own " (os error N)" suffix. Strip that so the
+    // result is the bare OS message (matching GNU/coreutils output). The
+    // suffix is emitted verbatim in English regardless of locale, so a
+    // localized message cannot contain it earlier in the string.
+    let rendered = std::io::Error::from_raw_os_error(errno).to_string();
+    match rendered.rfind(" (os error ") {
+        Some(cut) => rendered[..cut].to_string(),
+        None => rendered,
+    }
 }
 
 /// The OS message for `EACCES` ("Permission denied"), sourced from libc.
@@ -40,5 +49,14 @@ mod tests {
         assert!(!msg.is_empty());
         // Same value libc would give for EACCES directly.
         assert_eq!(msg, strerror(libc::EACCES));
+    }
+
+    #[test]
+    fn strerror_drops_the_rust_os_error_suffix() {
+        // Regression guard: the bare OS message must not carry Rust's
+        // " (os error N)" rendering (the bug that made permission_denied()
+        // return "Permission denied (os error 13)").
+        let msg = strerror(libc::EACCES);
+        assert!(!msg.contains("(os error"), "got: {msg:?}");
     }
 }
