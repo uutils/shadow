@@ -16,8 +16,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN rustup component add clippy rustfmt \
-    && cargo install cargo-deny \
     && curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C /usr/local/cargo/bin
+
+# cargo-deny: pinned, checksum-verified prebuilt binary. The static musl build
+# runs on glibc too, so every image shares one asset. Installing the binary
+# (instead of `cargo install cargo-deny`) skips a multi-minute source compile.
+ARG CARGO_DENY_VERSION=0.19.8
+ARG CARGO_DENY_SHA256=70e769ae3872e34d45132b17040859175e11401dc12dddb0303e0b8c7d088f3f
+RUN curl -LsSf "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o /tmp/cargo-deny.tar.gz \
+    && echo "${CARGO_DENY_SHA256}  /tmp/cargo-deny.tar.gz" | sha256sum -c - \
+    && tar zxf /tmp/cargo-deny.tar.gz -C /tmp \
+    && install -m 0755 "/tmp/cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl/cargo-deny" /usr/local/cargo/bin/cargo-deny \
+    && rm -rf /tmp/cargo-deny.tar.gz "/tmp/cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl" \
+    && cargo-deny --version
 
 RUN useradd -m -s /bin/bash testuser \
     && useradd -m -s /bin/sh testuser2 \
