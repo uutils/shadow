@@ -7,6 +7,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Ride out transient crates.io/registry blips instead of failing the job.
+  CARGO_NET_RETRY: "10"
 
 jobs:
   fmt:
@@ -57,8 +59,23 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     strategy:
+      # One distro's transient registry timeout must not cancel the others.
+      fail-fast: false
       matrix:
         target: [debian, alpine, fedora]
     steps:
       - uses: actions/checkout@v6
-      - run: docker compose run --rm ${{ matrix.target }} cargo test --workspace
+      # Base images are pulled from Docker Hub at build time; retry to ride
+      # out transient registry timeouts that would otherwise fail the job.
+      - name: Build ${{ matrix.target }} image
+        run: |
+          for attempt in 1 2 3; do
+            docker compose build ${{ matrix.target }} && exit 0
+            echo "::warning::'${{ matrix.target }}' image build attempt $attempt failed (likely a registry timeout); retrying in 30s"
+            sleep 30
+          done
+          exit 1
+      # CARGO_NET_RETRY is passed into the container so cargo retries crate
+      # downloads; a real test failure still fails fast (no step-level retry).
+      - name: Test on ${{ matrix.target }}
+        run: docker compose run --rm -e CARGO_NET_RETRY=10 ${{ matrix.target }} cargo test --workspace
