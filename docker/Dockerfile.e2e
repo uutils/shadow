@@ -26,7 +26,7 @@ RUN cargo build --release --features pam \
     && make install DESTDIR=/install PREFIX=/usr
 
 # ── Stage 2: runtime with tests ────────────────────────────────────
-FROM debian:trixie-20260518
+FROM debian:trixie-20260610
 
 # Install GNU shadow-utils first — this creates /etc/pam.d/passwd,
 # /etc/pam.d/su, and other PAM configs we need. We overwrite the
