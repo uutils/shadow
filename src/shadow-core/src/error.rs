@@ -43,24 +43,4 @@ pub enum ShadowError {
     Other(Cow<'static, str>),
 }
 
-/// Print an error message prefixed with the utility name to stderr.
-#[macro_export]
-macro_rules! show_error {
-    ($util:expr, $($arg:tt)*) => {
-        {
-            use std::io::Write as _;
-            let _ = writeln!(std::io::stderr().lock(), "{}: {}", $util, format_args!($($arg)*));
-        }
-    };
-}
 
-/// Print a warning message prefixed with the utility name to stderr.
-#[macro_export]
-macro_rules! show_warning {
-    ($util:expr, $($arg:tt)*) => {
-        {
-            use std::io::Write as _;
-            let _ = writeln!(std::io::stderr().lock(), "{}: warning: {}", $util, format_args!($($arg)*));
-        }
-    };
-}
