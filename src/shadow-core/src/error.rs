@@ -42,5 +42,3 @@ pub enum ShadowError {
     #[error("{0}")]
     Other(Cow<'static, str>),
 }
-
-
