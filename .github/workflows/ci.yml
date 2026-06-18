@@ -15,14 +15,14 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - run: cargo fmt --all --check
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       # pre-installed tools: https://github.com/actions/runner-images/blob/main/images/ubuntu/
       - run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libselinux1-dev libaudit-dev libcrypt-dev
@@ -32,7 +32,7 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libselinux1-dev libaudit-dev libcrypt-dev
       - run: cargo test --workspace
@@ -41,7 +41,7 @@ jobs:
     name: MSRV (1.94.0)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.94.0
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libselinux1-dev libaudit-dev libcrypt-dev
@@ -51,7 +51,7 @@ jobs:
     name: Cargo Deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
 
   test-docker:
@@ -64,7 +64,7 @@ jobs:
       matrix:
         target: [debian, alpine, fedora]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Base images are pulled from Docker Hub at build time; retry to ride
       # out transient registry timeouts that would otherwise fail the job.
       - name: Build ${{ matrix.target }} image
