@@ -38,12 +38,14 @@ mod exit_codes {
     pub const CANT_REMOVE_HOME: i32 = 12;
 }
 
+// Variant names mirror GNU userdel(8)'s documented exit-code names
+// (CANT_UPDATE_PASSWD, ...), so the shared prefix is intentional.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
 enum UserdelError {
     CantUpdatePasswd(String),
     CantUpdateGroup(String),
     CantRemoveHome(String),
-    AlreadyPrinted(i32),
 }
 
 impl fmt::Display for UserdelError {
@@ -52,7 +54,6 @@ impl fmt::Display for UserdelError {
             Self::CantUpdatePasswd(msg)
             | Self::CantUpdateGroup(msg)
             | Self::CantRemoveHome(msg) => f.write_str(msg),
-            Self::AlreadyPrinted(_) => Ok(()),
         }
     }
 }
@@ -65,7 +66,6 @@ impl UError for UserdelError {
             Self::CantUpdatePasswd(_) => exit_codes::CANT_UPDATE_PASSWD,
             Self::CantUpdateGroup(_) => exit_codes::CANT_UPDATE_GROUP,
             Self::CantRemoveHome(_) => exit_codes::CANT_REMOVE_HOME,
-            Self::AlreadyPrinted(code) => *code,
         }
     }
 }
@@ -74,19 +74,14 @@ impl UError for UserdelError {
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let _ = shadow_core::hardening::harden_process();
 
-    let matches = match uu_app().try_get_matches_from(args) {
-        Ok(m) => m,
-        Err(e) => {
-            e.print().ok();
-            if !e.use_stderr() {
-                return Ok(());
-            }
-            return Err(UserdelError::AlreadyPrinted(exit_codes::INVALID_SYNTAX).into());
-        }
+    let Some(matches) =
+        shadow_core::cli::parse_args(uu_app(), args, |_| exit_codes::INVALID_SYNTAX)?
+    else {
+        return Ok(());
     };
 
     let Some(login) = matches.get_one::<String>(options::LOGIN) else {
-        return Err(UserdelError::AlreadyPrinted(exit_codes::INVALID_SYNTAX).into());
+        return Err(shadow_core::cli::AlreadyPrinted(exit_codes::INVALID_SYNTAX).into());
     };
     let remove_home = matches.get_flag(options::REMOVE);
     let prefix = matches

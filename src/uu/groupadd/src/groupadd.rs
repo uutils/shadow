@@ -52,7 +52,6 @@ enum GroupaddError {
     GidInUse(String),
     GroupInUse(String),
     CantUpdate(String),
-    AlreadyPrinted(i32),
 }
 
 impl fmt::Display for GroupaddError {
@@ -63,7 +62,6 @@ impl fmt::Display for GroupaddError {
             | Self::GidInUse(msg)
             | Self::GroupInUse(msg)
             | Self::CantUpdate(msg) => f.write_str(msg),
-            Self::AlreadyPrinted(_) => Ok(()),
         }
     }
 }
@@ -78,7 +76,6 @@ impl UError for GroupaddError {
             Self::GidInUse(_) => exit_codes::GID_IN_USE,
             Self::GroupInUse(_) => exit_codes::GROUP_IN_USE,
             Self::CantUpdate(_) => exit_codes::CANT_UPDATE,
-            Self::AlreadyPrinted(c) => *c,
         }
     }
 }
@@ -97,20 +94,14 @@ impl UError for GroupaddError {
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let _clean_env = shadow_core::hardening::harden_process();
 
-    let matches = match uu_app().try_get_matches_from(args) {
-        Ok(m) => m,
-        Err(e) => {
-            e.print().ok();
-            if !e.use_stderr() {
-                return Ok(());
-            }
-            return Err(GroupaddError::AlreadyPrinted(exit_codes::BAD_SYNTAX).into());
-        }
+    let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| exit_codes::BAD_SYNTAX)?
+    else {
+        return Ok(());
     };
 
     if !shadow_core::hardening::caller_is_root() {
         uucore::show_error!("Permission denied.");
-        return Err(GroupaddError::AlreadyPrinted(1).into());
+        return Err(shadow_core::cli::AlreadyPrinted(1).into());
     }
 
     do_groupadd(&matches)

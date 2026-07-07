@@ -47,8 +47,6 @@ enum ChpasswdError {
     FileBusy(String),
     /// Exit 1 — invalid input line.
     InvalidInput(String),
-    /// Sentinel used when the error has already been printed (e.g. by clap).
-    AlreadyPrinted(i32),
 }
 
 impl fmt::Display for ChpasswdError {
@@ -58,7 +56,6 @@ impl fmt::Display for ChpasswdError {
             | Self::UnexpectedFailure(msg)
             | Self::FileBusy(msg)
             | Self::InvalidInput(msg) => f.write_str(msg),
-            Self::AlreadyPrinted(_) => Ok(()),
         }
     }
 }
@@ -72,7 +69,6 @@ impl UError for ChpasswdError {
             | Self::UnexpectedFailure(_)
             | Self::FileBusy(_)
             | Self::InvalidInput(_) => 1,
-            Self::AlreadyPrinted(code) => *code,
         }
     }
 }
@@ -166,15 +162,8 @@ fn days_since_epoch() -> Result<i64, ChpasswdError> {
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let _clean_env = shadow_core::hardening::harden_process();
 
-    let matches = match uu_app().try_get_matches_from(args) {
-        Ok(m) => m,
-        Err(e) => {
-            e.print().ok();
-            if !e.use_stderr() {
-                return Ok(());
-            }
-            return Err(ChpasswdError::AlreadyPrinted(1).into());
-        }
+    let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 1)? else {
+        return Ok(());
     };
 
     // Handle --root / -R: chroot before anything else.
@@ -602,8 +591,8 @@ mod tests {
     fn test_already_printed_preserves_code() {
         use uucore::error::UError;
 
-        assert_eq!(ChpasswdError::AlreadyPrinted(1).code(), 1);
-        assert_eq!(ChpasswdError::AlreadyPrinted(2).code(), 2);
+        assert_eq!(shadow_core::cli::AlreadyPrinted(1).code(), 1);
+        assert_eq!(shadow_core::cli::AlreadyPrinted(2).code(), 2);
     }
 
     #[test]
@@ -614,7 +603,7 @@ mod tests {
         let err = ChpasswdError::InvalidInput("bad line".into());
         assert_eq!(format!("{err}"), "bad line");
 
-        let err = ChpasswdError::AlreadyPrinted(1);
+        let err = shadow_core::cli::AlreadyPrinted(1);
         assert_eq!(format!("{err}"), "");
     }
 

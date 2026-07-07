@@ -49,7 +49,6 @@ enum GroupmodError {
     GroupNotFound(String),
     NameInUse(String),
     CantUpdate(String),
-    AlreadyPrinted(i32),
 }
 
 impl fmt::Display for GroupmodError {
@@ -61,7 +60,6 @@ impl fmt::Display for GroupmodError {
             | Self::GroupNotFound(msg)
             | Self::NameInUse(msg)
             | Self::CantUpdate(msg) => f.write_str(msg),
-            Self::AlreadyPrinted(_) => Ok(()),
         }
     }
 }
@@ -77,7 +75,6 @@ impl UError for GroupmodError {
             Self::GroupNotFound(_) => exit_codes::GROUP_NOT_FOUND,
             Self::NameInUse(_) => exit_codes::NAME_IN_USE,
             Self::CantUpdate(_) => exit_codes::CANT_UPDATE,
-            Self::AlreadyPrinted(c) => *c,
         }
     }
 }
@@ -97,20 +94,14 @@ impl UError for GroupmodError {
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let _clean_env = shadow_core::hardening::harden_process();
 
-    let matches = match uu_app().try_get_matches_from(args) {
-        Ok(m) => m,
-        Err(e) => {
-            e.print().ok();
-            if !e.use_stderr() {
-                return Ok(());
-            }
-            return Err(GroupmodError::AlreadyPrinted(exit_codes::BAD_SYNTAX).into());
-        }
+    let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| exit_codes::BAD_SYNTAX)?
+    else {
+        return Ok(());
     };
 
     if !shadow_core::hardening::caller_is_root() {
         uucore::show_error!("Permission denied.");
-        return Err(GroupmodError::AlreadyPrinted(1).into());
+        return Err(shadow_core::cli::AlreadyPrinted(1).into());
     }
 
     let group_name = matches

@@ -46,7 +46,6 @@ enum UsermodError {
     CantUpdate(String),
     UserNotFound(String),
     UidInUse(String),
-    AlreadyPrinted(i32),
 }
 
 impl fmt::Display for UsermodError {
@@ -55,7 +54,6 @@ impl fmt::Display for UsermodError {
             Self::CantUpdate(msg) | Self::UserNotFound(msg) | Self::UidInUse(msg) => {
                 f.write_str(msg)
             }
-            Self::AlreadyPrinted(_) => Ok(()),
         }
     }
 }
@@ -68,7 +66,6 @@ impl UError for UsermodError {
             Self::CantUpdate(_) => 1,
             Self::UserNotFound(_) => 6,
             Self::UidInUse(_) => 4,
-            Self::AlreadyPrinted(c) => *c,
         }
     }
 }
@@ -78,19 +75,12 @@ impl UError for UsermodError {
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let _ = shadow_core::hardening::harden_process();
 
-    let matches = match uu_app().try_get_matches_from(args) {
-        Ok(m) => m,
-        Err(e) => {
-            e.print().ok();
-            if !e.use_stderr() {
-                return Ok(());
-            }
-            return Err(UsermodError::AlreadyPrinted(2).into());
-        }
+    let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 2)? else {
+        return Ok(());
     };
 
     let Some(login) = matches.get_one::<String>(options::USER) else {
-        return Err(UsermodError::AlreadyPrinted(2).into());
+        return Err(shadow_core::cli::AlreadyPrinted(2).into());
     };
     let prefix = matches
         .get_one::<String>(options::PREFIX)
