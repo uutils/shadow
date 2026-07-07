@@ -53,7 +53,7 @@ clap = { version = "4", features = ["derive", "wrap_help"] }
 clap_complete = "4"
 
 # uutils integration
-uucore = "0.8"
+uucore = "0.9"
 
 # Error handling
 thiserror = "2"
