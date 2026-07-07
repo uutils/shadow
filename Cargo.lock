@@ -655,6 +655,7 @@ dependencies = [
 name = "shadow-core"
 version = "0.2.0"
 dependencies = [
+ "clap",
  "landlock",
  "libc",
  "proptest",
@@ -662,6 +663,7 @@ dependencies = [
  "subtle",
  "tempfile",
  "thiserror",
+ "uucore",
  "zeroize",
 ]
 

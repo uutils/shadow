@@ -37,15 +37,12 @@ mod options {
 enum ChshError {
     /// Exit 1 — general error.
     Error(String),
-    /// Sentinel for errors already printed by clap.
-    AlreadyPrinted(i32),
 }
 
 impl fmt::Display for ChshError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Error(msg) => f.write_str(msg),
-            Self::AlreadyPrinted(_) => Ok(()),
         }
     }
 }
@@ -56,7 +53,6 @@ impl UError for ChshError {
     fn code(&self) -> i32 {
         match self {
             Self::Error(_) => 1,
-            Self::AlreadyPrinted(code) => *code,
         }
     }
 }
@@ -240,15 +236,8 @@ where
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let _clean_env = shadow_core::hardening::harden_process();
 
-    let matches = match uu_app().try_get_matches_from(args) {
-        Ok(m) => m,
-        Err(e) => {
-            e.print().ok();
-            if !e.use_stderr() {
-                return Ok(());
-            }
-            return Err(ChshError::AlreadyPrinted(1).into());
-        }
+    let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 1)? else {
+        return Ok(());
     };
 
     // Handle --root / -R: chroot before anything else.

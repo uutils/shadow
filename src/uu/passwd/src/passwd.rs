@@ -62,8 +62,9 @@ mod exit_codes {
 ///   1 = permission denied, 3 = unexpected failure, 4 = shadow file missing,
 ///   5 = file busy (lock), 10 = PAM error.
 ///
-/// For clap-reported errors (exit 2 or 6), use [`AlreadyPrinted`] so the
-/// uucore wrapper does not duplicate the message clap already wrote.
+/// Clap-reported errors (exit 2 or 6) go through
+/// [`shadow_core::cli::AlreadyPrinted`] so the uucore wrapper does not
+/// duplicate the message clap already wrote.
 #[derive(Debug)]
 enum PasswdError {
     /// Exit 1 — insufficient privileges.
@@ -77,9 +78,6 @@ enum PasswdError {
     /// Exit 10 — PAM returned an error.
     #[cfg_attr(not(feature = "pam"), allow(dead_code))]
     PamError(String),
-    /// Sentinel used when the error has already been printed (e.g. by clap).
-    /// The uucore wrapper skips printing when Display yields an empty string.
-    AlreadyPrinted(i32),
 }
 
 impl fmt::Display for PasswdError {
@@ -90,7 +88,6 @@ impl fmt::Display for PasswdError {
             | Self::FileMissing(msg)
             | Self::FileBusy(msg)
             | Self::PamError(msg) => f.write_str(msg),
-            Self::AlreadyPrinted(_) => Ok(()),
         }
     }
 }
@@ -105,7 +102,6 @@ impl UError for PasswdError {
             Self::FileMissing(_) => 4,
             Self::FileBusy(_) => 5,
             Self::PamError(_) => 10,
-            Self::AlreadyPrinted(code) => *code,
         }
     }
 }
@@ -147,23 +143,14 @@ fn apply_landlock(root: &SysRoot) {
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let _clean_env = shadow_core::hardening::harden_process();
 
-    let matches = match uu_app().try_get_matches_from(args) {
-        Ok(m) => m,
-        Err(e) => {
-            e.print().ok();
-            if !e.use_stderr() {
-                // --help / --version: clap prints to stdout, exit 0.
-                return Ok(());
-            }
-            // GNU passwd exits 2 for conflicting options, 6 for unknown/invalid.
-            return Err(match e.kind() {
-                clap::error::ErrorKind::ArgumentConflict
-                | clap::error::ErrorKind::MissingRequiredArgument => {
-                    PasswdError::AlreadyPrinted(2).into()
-                }
-                _ => PasswdError::AlreadyPrinted(6).into(),
-            });
-        }
+    // GNU passwd exits 2 for conflicting options, 6 for unknown/invalid.
+    let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |e| match e.kind() {
+        clap::error::ErrorKind::ArgumentConflict
+        | clap::error::ErrorKind::MissingRequiredArgument => 2,
+        _ => 6,
+    })?
+    else {
+        return Ok(());
     };
 
     // Handle --root / -R: chroot before anything else.

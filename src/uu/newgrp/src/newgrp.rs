@@ -34,15 +34,12 @@ mod options {
 enum NewgrpError {
     /// Exit 1 — general error.
     Error(String),
-    /// Sentinel for errors already printed by clap.
-    AlreadyPrinted(i32),
 }
 
 impl fmt::Display for NewgrpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Error(msg) => f.write_str(msg),
-            Self::AlreadyPrinted(_) => Ok(()),
         }
     }
 }
@@ -53,7 +50,6 @@ impl UError for NewgrpError {
     fn code(&self) -> i32 {
         match self {
             Self::Error(_) => 1,
-            Self::AlreadyPrinted(code) => *code,
         }
     }
 }
@@ -222,15 +218,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     shadow_core::hardening::suppress_core_dumps();
     let _clean_env = shadow_core::hardening::sanitized_env();
 
-    let matches = match uu_app().try_get_matches_from(args) {
-        Ok(m) => m,
-        Err(e) => {
-            e.print().ok();
-            if !e.use_stderr() {
-                return Ok(());
-            }
-            return Err(NewgrpError::AlreadyPrinted(1).into());
-        }
+    let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 1)? else {
+        return Ok(());
     };
 
     let root = SysRoot::default();

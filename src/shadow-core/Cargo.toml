@@ -15,9 +15,11 @@ description = "shadow-core ~ (shadow-rs) parsers, atomic file ops, locking, PAM"
 path = "src/lib.rs"
 
 [dependencies]
+clap = { workspace = true }
 libc = { workspace = true }
 rustix = { workspace = true }
 thiserror = { workspace = true }
+uucore = { workspace = true }
 zeroize = { workspace = true }
 subtle = { workspace = true }
 landlock = { workspace = true, optional = true }

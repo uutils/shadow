@@ -64,8 +64,6 @@ enum ChageError {
     FileBusy(String),
     /// Exit 15 — shadow entry not found for user.
     ShadowNotFound(String),
-    /// Sentinel used when the error has already been printed (e.g. by clap).
-    AlreadyPrinted(i32),
 }
 
 impl fmt::Display for ChageError {
@@ -75,7 +73,6 @@ impl fmt::Display for ChageError {
             | Self::UnexpectedFailure(msg)
             | Self::FileBusy(msg)
             | Self::ShadowNotFound(msg) => f.write_str(msg),
-            Self::AlreadyPrinted(_) => Ok(()),
         }
     }
 }
@@ -89,7 +86,6 @@ impl UError for ChageError {
             Self::UnexpectedFailure(_) => 3,
             Self::FileBusy(_) => 5,
             Self::ShadowNotFound(_) => 15,
-            Self::AlreadyPrinted(code) => *code,
         }
     }
 }
@@ -228,15 +224,8 @@ fn format_date_human(days: i64) -> String {
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let _clean_env = shadow_core::hardening::harden_process();
 
-    let matches = match uu_app().try_get_matches_from(args) {
-        Ok(m) => m,
-        Err(e) => {
-            e.print().ok();
-            if !e.use_stderr() {
-                return Ok(());
-            }
-            return Err(ChageError::AlreadyPrinted(2).into());
-        }
+    let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 2)? else {
+        return Ok(());
     };
 
     // Handle --root / -R: chroot before anything else.
@@ -249,7 +238,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // The LOGIN argument is required by clap.
     let login = matches
         .get_one::<String>(options::LOGIN)
-        .ok_or(ChageError::AlreadyPrinted(2))?;
+        .ok_or(shadow_core::cli::AlreadyPrinted(2))?;
 
     let is_list = matches.get_flag(options::LIST);
 
@@ -945,7 +934,7 @@ mod tests {
             exit_codes::SHADOW_NOT_FOUND
         );
         assert_eq!(
-            ChageError::AlreadyPrinted(exit_codes::INVALID_SYNTAX).code(),
+            shadow_core::cli::AlreadyPrinted(exit_codes::INVALID_SYNTAX).code(),
             exit_codes::INVALID_SYNTAX
         );
     }
@@ -958,7 +947,7 @@ mod tests {
         let err = ChageError::ShadowNotFound("no entry".into());
         assert_eq!(format!("{err}"), "no entry");
 
-        let err = ChageError::AlreadyPrinted(2);
+        let err = shadow_core::cli::AlreadyPrinted(2);
         assert_eq!(format!("{err}"), "");
     }
 

@@ -106,8 +106,6 @@ enum UseraddError {
     CannotUpdateGroup(String),
     /// Exit 12 -- cannot create home directory.
     CannotCreateHome(String),
-    /// Sentinel used when the error has already been printed (e.g. by clap).
-    AlreadyPrinted(i32),
 }
 
 impl fmt::Display for UseraddError {
@@ -121,7 +119,6 @@ impl fmt::Display for UseraddError {
             | Self::UsernameInUse(msg)
             | Self::CannotUpdateGroup(msg)
             | Self::CannotCreateHome(msg) => f.write_str(msg),
-            Self::AlreadyPrinted(_) => Ok(()),
         }
     }
 }
@@ -139,7 +136,6 @@ impl UError for UseraddError {
             Self::UsernameInUse(_) => 9,
             Self::CannotUpdateGroup(_) => 10,
             Self::CannotCreateHome(_) => 12,
-            Self::AlreadyPrinted(code) => *code,
         }
     }
 }
@@ -271,27 +267,14 @@ fn today_days_since_epoch() -> Result<i64, UseraddError> {
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let _clean_env = shadow_core::hardening::harden_process();
 
-    let matches = match uu_app().try_get_matches_from(args) {
-        Ok(m) => m,
-        Err(e) => {
-            e.print().ok();
-            if !e.use_stderr() {
-                return Ok(());
-            }
-            return Err(match e.kind() {
-                clap::error::ErrorKind::ArgumentConflict
-                | clap::error::ErrorKind::MissingRequiredArgument => {
-                    UseraddError::AlreadyPrinted(2).into()
-                }
-                _ => UseraddError::AlreadyPrinted(2).into(),
-            });
-        }
+    let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 2)? else {
+        return Ok(());
     };
 
     // Only root can add users.
     if !shadow_core::hardening::caller_is_root() {
         uucore::show_error!("Permission denied.");
-        return Err(UseraddError::AlreadyPrinted(1).into());
+        return Err(shadow_core::cli::AlreadyPrinted(1).into());
     }
 
     // Handle --defaults mode (show defaults and exit).
