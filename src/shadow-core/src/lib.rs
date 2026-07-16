@@ -10,6 +10,7 @@
 
 pub mod cli;
 pub mod error;
+pub mod os_error;
 pub mod passwd;
 pub mod validate;
 

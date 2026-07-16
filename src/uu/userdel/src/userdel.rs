@@ -92,7 +92,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     // Must be root.
     if !rustix::process::getuid().is_root() {
-        return Err(UserdelError::CantUpdatePasswd("Permission denied.".into()).into());
+        return Err(
+            UserdelError::CantUpdatePasswd(shadow_core::os_error::permission_denied()).into(),
+        );
     }
 
     // Read the user's home directory and UID from /etc/passwd BEFORE removing

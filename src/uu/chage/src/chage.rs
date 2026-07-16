@@ -263,7 +263,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             let current_user = shadow_core::hardening::current_username()
                 .map_err(|e| ChageError::UnexpectedFailure(e.to_string()))?;
             if current_user != *login {
-                return Err(ChageError::PermissionDenied("Permission denied.".into()).into());
+                return Err(ChageError::PermissionDenied(
+                    shadow_core::os_error::permission_denied(),
+                )
+                .into());
             }
         }
         return cmd_list(&root, login);
@@ -271,7 +274,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     // All modification flags require root.
     if !shadow_core::hardening::caller_is_root() {
-        return Err(ChageError::PermissionDenied("Permission denied.".into()).into());
+        return Err(
+            ChageError::PermissionDenied(shadow_core::os_error::permission_denied()).into(),
+        );
     }
 
     if !has_modifications {
