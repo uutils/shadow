@@ -29,8 +29,8 @@ highlight = "all"
 # Known duplicate dependencies from transitive deps.
 # Update this list when bumping clap/uucore.
 skip = [
-    # clap -> terminal_size (0.60) vs clap -> anstyle-query (0.61)
-    { crate = "windows-sys@0.60", reason = "transitive clap dep, Linux-only project" },
+    # various crates
+    { crate = "syn@2.0.117", reason = "new major release v3 has been released" },
 ]
 
 [sources]
