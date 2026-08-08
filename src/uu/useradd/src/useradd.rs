@@ -48,6 +48,7 @@ mod options {
     pub const INACTIVE: &str = "inactive";
     pub const GID: &str = "gid";
     pub const GROUPS: &str = "groups";
+    pub const KEY: &str = "key";
     pub const CREATE_HOME: &str = "create-home";
     pub const NO_CREATE_HOME: &str = "no-create-home";
     pub const SKEL: &str = "skel";
@@ -162,6 +163,7 @@ struct UseraddOptions {
     inactive: Option<i64>,
     expire_date: Option<i64>,
     create_user_group: bool,
+    login_defs_overrides: Vec<(String, String)>,
     root: SysRoot,
 }
 
@@ -338,8 +340,12 @@ fn parse_options(matches: &clap::ArgMatches) -> Result<UseraddOptions, UseraddEr
 
     let home_dir = matches.get_one::<String>(options::HOME_DIR).cloned();
 
-    let defs = LoginDefs::load(&root.login_defs_path())
+    // Apply -K overrides before reading defaults so CREATE_HOME, SKEL, etc.
+    // match the overridden values when flags are not given.
+    let login_defs_overrides = parse_login_defs_overrides(matches)?;
+    let mut defs = LoginDefs::load(&root.login_defs_path())
         .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
+    apply_login_defs_overrides(&mut defs, &login_defs_overrides);
 
     let shell = matches
         .get_one::<String>(options::SHELL)
@@ -445,6 +451,7 @@ fn parse_options(matches: &clap::ArgMatches) -> Result<UseraddOptions, UseraddEr
         inactive,
         expire_date,
         create_user_group,
+        login_defs_overrides,
         root,
     })
 }
@@ -487,9 +494,11 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
         );
     }
 
-    // Step 4: Load login.defs for UID/GID ranges.
-    let defs = LoginDefs::load(&opts.root.login_defs_path())
+    // Step 4: Load login.defs and apply -K overrides before allocation and
+    // shadow aging fields that are taken from the table.
+    let mut defs = LoginDefs::load(&opts.root.login_defs_path())
         .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
+    apply_login_defs_overrides(&mut defs, &opts.login_defs_overrides);
 
     // Step 5: Determine UID.
     let uid = determine_uid(opts, &passwd_entries, &defs)?;
@@ -614,6 +623,37 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     audit::log_user_event("ADD_USER", &opts.login, uid, true);
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// login.defs -K overrides
+// ---------------------------------------------------------------------------
+
+/// Collect `-K`/`--key` pairs; each value must be non-empty `KEY=VALUE`.
+fn parse_login_defs_overrides(
+    matches: &clap::ArgMatches,
+) -> Result<Vec<(String, String)>, UseraddError> {
+    let key_values: Vec<&String> = matches
+        .get_many::<String>(options::KEY)
+        .map_or_else(Vec::new, Iterator::collect);
+    let mut overrides = Vec::with_capacity(key_values.len());
+    for kv in &key_values {
+        let (k, v) = kv
+            .split_once('=')
+            .ok_or_else(|| UseraddError::BadArgument(format!("invalid key=value pair: '{kv}'")))?;
+        if k.is_empty() {
+            return Err(UseraddError::BadArgument(format!(
+                "invalid key=value pair: '{kv}'"
+            )));
+        }
+        overrides.push((k.to_string(), v.to_string()));
+    }
+    Ok(overrides)
+}
+
+/// Merge `-K` overrides into `defs` so later lookups use the new values.
+fn apply_login_defs_overrides(defs: &mut LoginDefs, overrides: &[(String, String)]) {
+    defs.apply_overrides(overrides.iter().map(|(k, v)| (k.as_str(), v.as_str())));
 }
 
 // ---------------------------------------------------------------------------
@@ -1016,6 +1056,14 @@ pub fn uu_app() -> Command {
                 .help("Comma-separated supplementary groups"),
         )
         .arg(
+            Arg::new(options::KEY)
+                .short('K')
+                .long("key")
+                .value_name("KEY=VALUE")
+                .action(ArgAction::Append)
+                .help("Override /etc/login.defs defaults (KEY=VALUE; may be repeated)"),
+        )
+        .arg(
             Arg::new(options::CREATE_HOME)
                 .short('m')
                 .long("create-home")
@@ -1310,6 +1358,26 @@ mod tests {
             .try_get_matches_from(["useradd", "-N", "user"])
             .expect("should parse -N");
         assert!(m.get_flag(options::NO_USER_GROUP));
+    }
+
+    #[test]
+    fn test_clap_key_short_and_long() {
+        let m = uu_app()
+            .try_get_matches_from([
+                "useradd",
+                "-K",
+                "UID_MIN=9100",
+                "--key",
+                "UID_MAX=9100",
+                "user",
+            ])
+            .expect("should parse -K/--key");
+        let keys: Vec<&str> = m
+            .get_many::<String>(options::KEY)
+            .expect("KEY present")
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys, ["UID_MIN=9100", "UID_MAX=9100"]);
     }
 
     // -----------------------------------------------------------------------
@@ -1729,6 +1797,7 @@ mod tests {
             inactive: None,
             expire_date: None,
             create_user_group: false,
+            login_defs_overrides: Vec::new(),
             root: root.clone(),
         };
 
@@ -1872,6 +1941,7 @@ mod tests {
             inactive: None,
             expire_date: None,
             create_user_group: false,
+            login_defs_overrides: Vec::new(),
             root: SysRoot::default(),
         };
 
@@ -1906,6 +1976,7 @@ mod tests {
             inactive: None,
             expire_date: None,
             create_user_group: true,
+            login_defs_overrides: Vec::new(),
             root: SysRoot::default(),
         };
 
@@ -1944,6 +2015,7 @@ mod tests {
             inactive: None,
             expire_date: None,
             create_user_group: true,
+            login_defs_overrides: Vec::new(),
             root: SysRoot::default(),
         };
 
@@ -1972,6 +2044,7 @@ mod tests {
             inactive: None,
             expire_date: None,
             create_user_group: false,
+            login_defs_overrides: Vec::new(),
             root: SysRoot::default(),
         };
 
@@ -2006,6 +2079,7 @@ mod tests {
             inactive: None,
             expire_date: None,
             create_user_group: false,
+            login_defs_overrides: Vec::new(),
             root: SysRoot::default(),
         };
 
@@ -2042,6 +2116,7 @@ mod tests {
             inactive: None,
             expire_date: None,
             create_user_group: false,
+            login_defs_overrides: Vec::new(),
             root: SysRoot::default(),
         };
 
@@ -2078,10 +2153,185 @@ mod tests {
             inactive: None,
             expire_date: None,
             create_user_group: false,
+            login_defs_overrides: Vec::new(),
             root: SysRoot::default(),
         };
 
         let uid = determine_uid(&opts, &entries, &defs).expect("should allow duplicate");
         assert_eq!(uid, 5000);
+    }
+
+    // -----------------------------------------------------------------------
+    // -K / login.defs override tests
+    // -----------------------------------------------------------------------
+
+    fn empty_defs() -> LoginDefs {
+        LoginDefs::load(Path::new("/nonexistent")).expect("empty defs")
+    }
+
+    fn opts_for_uid_alloc(system: bool) -> UseraddOptions {
+        UseraddOptions {
+            login: "user".into(),
+            comment: String::new(),
+            home_dir: None,
+            shell: "/bin/bash".into(),
+            uid: None,
+            gid: None,
+            groups: vec![],
+            create_home: false,
+            skel_dir: "/etc/skel".into(),
+            system,
+            non_unique: false,
+            password: "!".into(),
+            inactive: None,
+            expire_date: None,
+            create_user_group: false,
+            login_defs_overrides: Vec::new(),
+            root: SysRoot::default(),
+        }
+    }
+
+    #[test]
+    fn test_parse_login_defs_overrides_valid() {
+        let m = uu_app()
+            .try_get_matches_from([
+                "useradd",
+                "-K",
+                "UID_MIN=9100",
+                "-K",
+                "PASS_MAX_DAYS=-1",
+                "user",
+            ])
+            .expect("parse args");
+        let overrides = parse_login_defs_overrides(&m).expect("valid KEY=VALUE");
+        assert_eq!(
+            overrides,
+            vec![
+                ("UID_MIN".into(), "9100".into()),
+                ("PASS_MAX_DAYS".into(), "-1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_login_defs_overrides_rejects_missing_equals() {
+        let m = uu_app()
+            .try_get_matches_from(["useradd", "-K", "UID_MIN", "user"])
+            .expect("clap accepts raw value");
+        let err = parse_login_defs_overrides(&m).expect_err("missing '='");
+        assert!(matches!(err, UseraddError::BadArgument(_)));
+    }
+
+    #[test]
+    fn test_parse_login_defs_overrides_rejects_empty_key() {
+        let m = uu_app()
+            .try_get_matches_from(["useradd", "-K", "=9100", "user"])
+            .expect("clap accepts raw value");
+        let err = parse_login_defs_overrides(&m).expect_err("empty key");
+        assert!(matches!(err, UseraddError::BadArgument(_)));
+    }
+
+    #[test]
+    fn test_apply_login_defs_overrides_updates_table() {
+        let mut defs = empty_defs();
+        apply_login_defs_overrides(
+            &mut defs,
+            &[
+                ("UID_MIN".into(), "9100".into()),
+                ("PASS_MAX_DAYS".into(), "-1".into()),
+            ],
+        );
+        assert_eq!(defs.get("UID_MIN"), Some("9100"));
+        assert_eq!(defs.get_i64("PASS_MAX_DAYS"), Some(-1));
+    }
+
+    #[test]
+    fn test_determine_uid_honors_uid_range_overrides() {
+        let entries: Vec<PasswdEntry> = vec![];
+        let mut defs = empty_defs();
+        apply_login_defs_overrides(
+            &mut defs,
+            &[
+                ("UID_MIN".into(), "9100".into()),
+                ("UID_MAX".into(), "9100".into()),
+            ],
+        );
+        let opts = opts_for_uid_alloc(false);
+        let uid = determine_uid(&opts, &entries, &defs).expect("allocate");
+        assert_eq!(uid, 9100);
+    }
+
+    #[test]
+    fn test_determine_uid_honors_sys_uid_range_for_system() {
+        let entries: Vec<PasswdEntry> = vec![];
+        let mut defs = empty_defs();
+        apply_login_defs_overrides(
+            &mut defs,
+            &[
+                ("SYS_UID_MIN".into(), "250".into()),
+                ("SYS_UID_MAX".into(), "250".into()),
+            ],
+        );
+        let opts = opts_for_uid_alloc(true);
+        let uid = determine_uid(&opts, &entries, &defs).expect("allocate system");
+        assert_eq!(uid, 250);
+    }
+
+    #[test]
+    fn test_determine_uid_sys_override_does_not_affect_regular() {
+        let entries: Vec<PasswdEntry> = vec![];
+        let mut defs = empty_defs();
+        // Only system-range keys: regular allocation still uses UID_MIN default.
+        apply_login_defs_overrides(
+            &mut defs,
+            &[
+                ("SYS_UID_MIN".into(), "250".into()),
+                ("SYS_UID_MAX".into(), "250".into()),
+            ],
+        );
+        let opts = opts_for_uid_alloc(false);
+        let uid = determine_uid(&opts, &entries, &defs).expect("allocate regular");
+        assert_eq!(uid, 1000);
+    }
+
+    #[test]
+    fn test_determine_gid_honors_gid_range_overrides() {
+        let groups = vec![GroupEntry {
+            name: "taken".into(),
+            passwd: "x".into(),
+            gid: 9200,
+            members: vec![],
+        }];
+        let mut defs = empty_defs();
+        apply_login_defs_overrides(
+            &mut defs,
+            &[
+                ("GID_MIN".into(), "9201".into()),
+                ("GID_MAX".into(), "9201".into()),
+            ],
+        );
+        // Prefer same-as-UID is blocked (9200 taken), so allocate from range.
+        let opts = UseraddOptions {
+            login: "newgrp".into(),
+            comment: String::new(),
+            home_dir: None,
+            shell: "/bin/bash".into(),
+            uid: Some(9200),
+            gid: None,
+            groups: vec![],
+            create_home: false,
+            skel_dir: "/etc/skel".into(),
+            system: false,
+            non_unique: false,
+            password: "!".into(),
+            inactive: None,
+            expire_date: None,
+            create_user_group: true,
+            login_defs_overrides: Vec::new(),
+            root: SysRoot::default(),
+        };
+        let (gid, new_group) = determine_gid(&opts, 9200, &groups, &defs).expect("gid");
+        assert_eq!(gid, 9201);
+        assert!(new_group.is_some());
     }
 }

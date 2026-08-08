@@ -366,3 +366,164 @@ fn test_create_user_with_home_dir_flag() {
         "passwd should contain custom home path, got: {passwd}"
     );
 }
+
+#[test]
+fn test_create_user_with_key_uid_range() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    let code = run_with_root(
+        &dir,
+        &[
+            "-K",
+            "UID_MIN=9100",
+            "-K",
+            "UID_MAX=9100",
+            "-M",
+            "-N",
+            "keyuser",
+        ],
+    );
+    assert_eq!(code, 0, "useradd -K UID range should exit 0");
+
+    let passwd = read_passwd(&dir);
+    assert!(
+        passwd.contains("keyuser:x:9100:"),
+        "passwd should contain UID 9100 from -K, got: {passwd}"
+    );
+}
+
+#[test]
+fn test_create_user_with_key_long_option() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    let code = run_with_root(
+        &dir,
+        &[
+            "--key",
+            "UID_MIN=9101",
+            "--key",
+            "UID_MAX=9101",
+            "-M",
+            "-N",
+            "keyuserlong",
+        ],
+    );
+    assert_eq!(code, 0, "useradd --key should exit 0");
+
+    let passwd = read_passwd(&dir);
+    assert!(
+        passwd.contains("keyuserlong:x:9101:"),
+        "passwd should contain UID 9101 from --key, got: {passwd}"
+    );
+}
+
+#[test]
+fn test_create_system_user_with_key_sys_uid_range() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    let code = run_with_root(
+        &dir,
+        &[
+            "-r",
+            "-K",
+            "SYS_UID_MIN=250",
+            "-K",
+            "SYS_UID_MAX=250",
+            "-M",
+            "-N",
+            "syskeyuser",
+        ],
+    );
+    assert_eq!(code, 0, "useradd -r -K SYS_UID range should exit 0");
+
+    let passwd = read_passwd(&dir);
+    assert!(
+        passwd.contains("syskeyuser:x:250:"),
+        "passwd should contain UID 250 from -K, got: {passwd}"
+    );
+}
+
+#[test]
+fn test_create_user_with_key_gid_range_for_user_group() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    // Without -N, create a matching user group; both UID and GID from -K.
+    let code = run_with_root(
+        &dir,
+        &[
+            "-K",
+            "UID_MIN=9200",
+            "-K",
+            "UID_MAX=9200",
+            "-K",
+            "GID_MIN=9200",
+            "-K",
+            "GID_MAX=9200",
+            "-M",
+            "keygrpuser",
+        ],
+    );
+    assert_eq!(code, 0, "useradd -K with user group should exit 0");
+
+    let passwd = read_passwd(&dir);
+    assert!(
+        passwd.contains("keygrpuser:x:9200:9200:"),
+        "passwd should contain UID/GID 9200 from -K, got: {passwd}"
+    );
+
+    let group = read_group(&dir);
+    assert!(
+        group.contains("keygrpuser:x:9200:"),
+        "group should contain GID 9200 from -K, got: {group}"
+    );
+}
+
+#[test]
+fn test_create_user_with_key_pass_max_days() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    let code = run_with_root(&dir, &["-K", "PASS_MAX_DAYS=-1", "-M", "-N", "ageuser"]);
+    assert_eq!(code, 0, "useradd -K PASS_MAX_DAYS should exit 0");
+
+    let shadow = read_shadow(&dir);
+    let line = shadow
+        .lines()
+        .find(|l| l.starts_with("ageuser:"))
+        .expect("ageuser shadow entry");
+    // name:passwd:lstchg:min:max:warn:...
+    let fields: Vec<&str> = line.split(':').collect();
+    assert!(
+        fields.len() >= 5,
+        "shadow entry should have max field, got: {line}"
+    );
+    assert_eq!(
+        fields[4], "-1",
+        "PASS_MAX_DAYS override should set max age to -1, got: {line}"
+    );
+}
+
+#[test]
+fn test_key_missing_equals_exits_error() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    let code = run_with_root(&dir, &["-K", "UID_MIN", "-M", "-N", "badkeyuser"]);
+    assert_eq!(code, 3, "invalid KEY=VALUE should exit 3 (bad argument)");
+}
