@@ -30,7 +30,7 @@ highlight = "all"
 # Update this list when bumping clap/uucore.
 skip = [
     # various crates
-    { crate = "syn@2.0.117", reason = "new major release v3 has been released" },
+    { name = "syn", version = "2.0.117", reason = "new major release v3 has been released" },
 ]
 
 [sources]
