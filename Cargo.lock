@@ -893,9 +893,9 @@ dependencies = [
 
 [[package]]
 name = "uucore"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e97dd0fd8bb2ed12affba9f956c3b94b8ad3f9432746717475420e916ae0b8d4"
+checksum = "9962a5082023875505c7b74a6ef8b5b5d50081b7b09b998973f6da7b9514eed8"
 dependencies = [
  "clap",
  "fluent",
@@ -913,9 +913,9 @@ dependencies = [
 
 [[package]]
 name = "uucore_procs"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "907f1b828046ea42cdb4bd898f05b48ab873a41937bf75ebe12f09a5bf411f58"
+checksum = "92ef57c6e2299a853551cabee2fae52f340575621903d5250271738773c6a6e6"
 dependencies = [
  "proc-macro2",
  "quote",
