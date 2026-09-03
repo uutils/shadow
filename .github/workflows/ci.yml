@@ -26,8 +26,8 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          git fetch --no-tags --depth=0 origin "${{ github.base_ref }}"
-          .github/scripts/no-ai-traces.sh "origin/${{ github.base_ref }}"
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          .github/scripts/no-ai-traces.sh FETCH_HEAD
 
   fmt:
     name: Format
