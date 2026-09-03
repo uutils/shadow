@@ -515,22 +515,26 @@ impl Drop for PrivDrop {
 /// Default operation: change password via PAM.
 ///
 /// Feature-gated on `pam`. When PAM is not compiled in, prints an error.
-fn cmd_pam_change(matches: &clap::ArgMatches, _target_user: &str) -> UResult<()> {
-    let _keep_tokens = matches.get_flag(options::KEEP_TOKENS);
-    let _use_stdin = matches.get_flag(options::STDIN);
+// Every binding below is consumed only by the `pam` block; without the
+// feature the whole conversation is compiled out.
+#[cfg_attr(not(feature = "pam"), allow(unused_variables))]
+fn cmd_pam_change(matches: &clap::ArgMatches, target_user: &str) -> UResult<()> {
+    let keep_tokens = matches.get_flag(options::KEEP_TOKENS);
+    let use_stdin = matches.get_flag(options::STDIN);
+    // Parsed for compatibility only; shadow-rs always uses the files backend.
     let _repository = matches.get_one::<String>(options::REPOSITORY);
 
     #[cfg(feature = "pam")]
     {
         use shadow_core::pam::{ConvMode, PamContext, flags};
 
-        let conv_mode = if _use_stdin {
+        let conv_mode = if use_stdin {
             ConvMode::Stdin
         } else {
             ConvMode::Tty
         };
 
-        let mut pam = match PamContext::new("passwd", _target_user, conv_mode) {
+        let mut pam = match PamContext::new("passwd", target_user, conv_mode) {
             Ok(ctx) => ctx,
             Err(e) => {
                 return Err(PasswdError::PamError(e.to_string()).into());
@@ -542,10 +546,10 @@ fn cmd_pam_change(matches: &clap::ArgMatches, _target_user: &str) -> UResult<()>
         let _priv_drop = PrivDrop::drop_to(rustix::process::getuid().as_raw())?;
 
         // Non-root users changing their own password must authenticate first.
-        if !shadow_core::hardening::caller_is_root() {
-            if let Err(e) = pam.authenticate(0) {
-                return Err(PasswdError::PamError(e.to_string()).into());
-            }
+        if !shadow_core::hardening::caller_is_root()
+            && let Err(e) = pam.authenticate(0)
+        {
+            return Err(PasswdError::PamError(e.to_string()).into());
         }
 
         // Validate that the account is in good standing.
@@ -554,7 +558,7 @@ fn cmd_pam_change(matches: &clap::ArgMatches, _target_user: &str) -> UResult<()>
         }
 
         // Change the password token.
-        let chauthtok_flags = if _keep_tokens {
+        let chauthtok_flags = if keep_tokens {
             flags::PAM_CHANGE_EXPIRED_AUTHTOK
         } else {
             0
@@ -566,7 +570,7 @@ fn cmd_pam_change(matches: &clap::ArgMatches, _target_user: &str) -> UResult<()>
 
         audit::log_user_event(
             "CHNG_PASSWD",
-            _target_user,
+            target_user,
             rustix::process::getuid().as_raw(),
             true,
         );

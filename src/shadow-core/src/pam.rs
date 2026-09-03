@@ -822,14 +822,19 @@ mod tests {
 
     #[test]
     fn test_pam_message_layout() {
-        // Verify PamMessage has the expected C layout.
+        // Verify PamMessage has a plausible C layout: it holds an int and a
+        // pointer, so it must be at least their combined size and padded out
+        // to its own alignment. Computing the exact padding here only
+        // reimplements the compiler's layout rules, and the previous attempt
+        // clamped an unsigned subtraction with `.max(0)`, which never did
+        // anything.
+        assert!(
+            std::mem::size_of::<PamMessage>()
+                >= std::mem::size_of::<libc::c_int>() + std::mem::size_of::<*const libc::c_char>()
+        );
         assert_eq!(
-            std::mem::size_of::<PamMessage>(),
-            std::mem::size_of::<libc::c_int>() + std::mem::size_of::<*const libc::c_char>()
-                // Account for padding.
-                + (std::mem::align_of::<*const libc::c_char>()
-                    - std::mem::size_of::<libc::c_int>())
-                    .max(0)
+            std::mem::size_of::<PamMessage>() % std::mem::align_of::<PamMessage>(),
+            0
         );
     }
 

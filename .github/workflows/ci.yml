@@ -45,6 +45,9 @@ jobs:
       # pre-installed tools: https://github.com/actions/runner-images/blob/main/images/ubuntu/
       - run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libselinux1-dev libaudit-dev libcrypt-dev
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # Release binaries are built with `pam` (see dist-workspace.toml), so the
+      # PAM code path has to be linted too — it is invisible to the run above.
+      - run: cargo clippy --workspace --all-targets --features pam -- -D warnings
 
   test:
     name: Test
