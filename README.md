@@ -108,8 +108,9 @@ sudo make install-multicall PREFIX=/usr/local
 
 Each release publishes `uu_shadow-x86_64-unknown-linux-gnu.tar.gz` (with a
 `.sha256` alongside), containing the `shadow-rs` multicall binary. Archives are
-built against glibc; musl is not yet published because `crypt(3)` is not part
-of the static musl target.
+built against glibc. A static musl archive is not published yet: PAM loads its
+modules with `dlopen`, which a fully static binary cannot do, so a musl build
+would have to drop `passwd`'s interactive password change. Tracked in #224.
 
 The archive ships a plain binary — nothing is installed, symlinked, or made
 setuid by extracting it. To deploy it the same way `make install-multicall`
