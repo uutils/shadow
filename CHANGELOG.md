@@ -7,15 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-03
+
+First release to ship prebuilt binaries.
+
 ### Added
 
 - Release binaries. Tagging a version now builds and uploads
-  `uu_shadow-x86_64-unknown-linux-gnu.tar.gz` (multicall binary plus
-  checksum) via `dist` (#207)
+  `uu_shadow-x86_64-unknown-linux-gnu.tar.gz` (the `shadow-rs` multicall
+  binary) with a `.sha256` checksum, via `dist` (#207)
+- README section on deploying a release archive: symlinks and the setuid
+  bit, neither of which extracting the tarball sets up
+- CI rejects AI tooling artifacts in pull requests
+
+### Fixed
+
+- `passwd` could not change a password. `pam` is not a default cargo
+  feature, so the release archive, `make install` and
+  `make install-multicall` all compiled the interactive change path out;
+  only the end-to-end image enabled it. Account status and locking were
+  unaffected, which is why it went unnoticed (#220)
 
 ### Changed
 
 - Dropped the deprecated `authors` field from the package manifests (#213)
+- Renovate no longer edits `.github/workflows/release.yml`, which `dist`
+  generates and validates (#227)
 
 ## [0.2.1] - 2026-08-05
 

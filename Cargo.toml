@@ -33,7 +33,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 rust-version = "1.94.0"
 license = "MIT"
@@ -44,7 +44,7 @@ categories = ["command-line-utilities"]
 
 [workspace.dependencies]
 # Internal crates
-shadow-core = { path = "src/shadow-core", version = "0.2.1" }
+shadow-core = { path = "src/shadow-core", version = "0.2.2" }
 
 # CLI
 clap = { version = "4", features = ["derive", "wrap_help"] }
@@ -72,24 +72,24 @@ tempfile = "3"
 [dependencies]
 clap = { workspace = true }
 clap_complete = { workspace = true, optional = true }
-shadow-core = { path = "src/shadow-core", version = "0.2.1" }
+shadow-core = { path = "src/shadow-core", version = "0.2.2" }
 rustix = { workspace = true }
 
 # Tool crates (optional, enabled by features)
-passwd = { optional = true, version = "0.2.1", package = "uu_passwd", path = "src/uu/passwd" }
-pwck = { optional = true, version = "0.2.1", package = "uu_pwck", path = "src/uu/pwck" }
-useradd = { optional = true, version = "0.2.1", package = "uu_useradd", path = "src/uu/useradd" }
-userdel = { optional = true, version = "0.2.1", package = "uu_userdel", path = "src/uu/userdel" }
-usermod = { optional = true, version = "0.2.1", package = "uu_usermod", path = "src/uu/usermod" }
-chpasswd = { optional = true, version = "0.2.1", package = "uu_chpasswd", path = "src/uu/chpasswd" }
-chage = { optional = true, version = "0.2.1", package = "uu_chage", path = "src/uu/chage" }
-groupadd = { optional = true, version = "0.2.1", package = "uu_groupadd", path = "src/uu/groupadd" }
-groupdel = { optional = true, version = "0.2.1", package = "uu_groupdel", path = "src/uu/groupdel" }
-groupmod = { optional = true, version = "0.2.1", package = "uu_groupmod", path = "src/uu/groupmod" }
-grpck = { optional = true, version = "0.2.1", package = "uu_grpck", path = "src/uu/grpck" }
-chfn = { optional = true, version = "0.2.1", package = "uu_chfn", path = "src/uu/chfn" }
-chsh = { optional = true, version = "0.2.1", package = "uu_chsh", path = "src/uu/chsh" }
-newgrp = { optional = true, version = "0.2.1", package = "uu_newgrp", path = "src/uu/newgrp" }
+passwd = { optional = true, version = "0.2.2", package = "uu_passwd", path = "src/uu/passwd" }
+pwck = { optional = true, version = "0.2.2", package = "uu_pwck", path = "src/uu/pwck" }
+useradd = { optional = true, version = "0.2.2", package = "uu_useradd", path = "src/uu/useradd" }
+userdel = { optional = true, version = "0.2.2", package = "uu_userdel", path = "src/uu/userdel" }
+usermod = { optional = true, version = "0.2.2", package = "uu_usermod", path = "src/uu/usermod" }
+chpasswd = { optional = true, version = "0.2.2", package = "uu_chpasswd", path = "src/uu/chpasswd" }
+chage = { optional = true, version = "0.2.2", package = "uu_chage", path = "src/uu/chage" }
+groupadd = { optional = true, version = "0.2.2", package = "uu_groupadd", path = "src/uu/groupadd" }
+groupdel = { optional = true, version = "0.2.2", package = "uu_groupdel", path = "src/uu/groupdel" }
+groupmod = { optional = true, version = "0.2.2", package = "uu_groupmod", path = "src/uu/groupmod" }
+grpck = { optional = true, version = "0.2.2", package = "uu_grpck", path = "src/uu/grpck" }
+chfn = { optional = true, version = "0.2.2", package = "uu_chfn", path = "src/uu/chfn" }
+chsh = { optional = true, version = "0.2.2", package = "uu_chsh", path = "src/uu/chsh" }
+newgrp = { optional = true, version = "0.2.2", package = "uu_newgrp", path = "src/uu/newgrp" }
 
 [features]
 default = ["passwd", "pwck", "useradd", "userdel", "usermod", "chpasswd", "chage",
@@ -190,21 +190,21 @@ name = "test_groupadd"
 path = "tests/by-util/test_groupadd.rs"
 
 [dev-dependencies]
-chage = { version = "0.2.1", package = "uu_chage", path = "src/uu/chage" }
-chfn = { version = "0.2.1", package = "uu_chfn", path = "src/uu/chfn" }
-chpasswd = { version = "0.2.1", package = "uu_chpasswd", path = "src/uu/chpasswd" }
-chsh = { version = "0.2.1", package = "uu_chsh", path = "src/uu/chsh" }
-groupadd = { version = "0.2.1", package = "uu_groupadd", path = "src/uu/groupadd" }
-groupdel = { version = "0.2.1", package = "uu_groupdel", path = "src/uu/groupdel" }
-groupmod = { version = "0.2.1", package = "uu_groupmod", path = "src/uu/groupmod" }
-newgrp = { version = "0.2.1", package = "uu_newgrp", path = "src/uu/newgrp" }
-passwd = { version = "0.2.1", package = "uu_passwd", path = "src/uu/passwd" }
-useradd = { version = "0.2.1", package = "uu_useradd", path = "src/uu/useradd" }
-userdel = { version = "0.2.1", package = "uu_userdel", path = "src/uu/userdel" }
-usermod = { version = "0.2.1", package = "uu_usermod", path = "src/uu/usermod" }
-pwck = { version = "0.2.1", package = "uu_pwck", path = "src/uu/pwck" }
-grpck = { version = "0.2.1", package = "uu_grpck", path = "src/uu/grpck" }
-shadow-core = { path = "src/shadow-core", version = "0.2.1", features = ["shadow"] }
+chage = { version = "0.2.2", package = "uu_chage", path = "src/uu/chage" }
+chfn = { version = "0.2.2", package = "uu_chfn", path = "src/uu/chfn" }
+chpasswd = { version = "0.2.2", package = "uu_chpasswd", path = "src/uu/chpasswd" }
+chsh = { version = "0.2.2", package = "uu_chsh", path = "src/uu/chsh" }
+groupadd = { version = "0.2.2", package = "uu_groupadd", path = "src/uu/groupadd" }
+groupdel = { version = "0.2.2", package = "uu_groupdel", path = "src/uu/groupdel" }
+groupmod = { version = "0.2.2", package = "uu_groupmod", path = "src/uu/groupmod" }
+newgrp = { version = "0.2.2", package = "uu_newgrp", path = "src/uu/newgrp" }
+passwd = { version = "0.2.2", package = "uu_passwd", path = "src/uu/passwd" }
+useradd = { version = "0.2.2", package = "uu_useradd", path = "src/uu/useradd" }
+userdel = { version = "0.2.2", package = "uu_userdel", path = "src/uu/userdel" }
+usermod = { version = "0.2.2", package = "uu_usermod", path = "src/uu/usermod" }
+pwck = { version = "0.2.2", package = "uu_pwck", path = "src/uu/pwck" }
+grpck = { version = "0.2.2", package = "uu_grpck", path = "src/uu/grpck" }
+shadow-core = { path = "src/shadow-core", version = "0.2.2", features = ["shadow"] }
 rustix = { workspace = true }
 tempfile = { workspace = true }
 
