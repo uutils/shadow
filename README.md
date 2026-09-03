@@ -108,9 +108,9 @@ sudo make install-multicall PREFIX=/usr/local
 
 Each release publishes `uu_shadow-x86_64-unknown-linux-gnu.tar.gz` (with a
 `.sha256` alongside), containing the `shadow-rs` multicall binary. Archives are
-built against glibc. A static musl archive is not published yet: PAM loads its
-modules with `dlopen`, which a fully static binary cannot do, so a musl build
-would have to drop `passwd`'s interactive password change. Tracked in #224.
+built against glibc. A static musl archive is not published: such a build works
+but loses PAM, NSS and yescrypt support, so it is not equivalent to this one.
+See [docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md).
 
 The archive ships a plain binary — nothing is installed, symlinked, or made
 setuid by extracting it. To deploy it the same way `make install-multicall`
@@ -183,6 +183,11 @@ merge is frictionless.
 | `debian` | `rust:latest` (Trixie) | glibc | Linux-PAM | headers |
 | `alpine` | `rust:alpine` | musl | Linux-PAM | none |
 | `fedora` | `fedora:latest` | glibc | Linux-PAM | enforcing |
+
+musl is covered by the test matrix but is not a release target: a static musl
+build loses PAM, NSS and yescrypt. See
+[docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md) for what that means and
+why.
 
 ## Credits
 

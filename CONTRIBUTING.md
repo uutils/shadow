@@ -60,6 +60,10 @@ docker compose run --rm alpine cargo test --workspace  # test on Alpine (musl)
 docker compose run --rm fedora cargo test --workspace  # test on Fedora (SELinux)
 ```
 
+All three must pass. Note that musl is tested but not a release target — a
+static musl build loses PAM, NSS and yescrypt; see
+[docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md).
+
 ### Linting
 
 ```shell

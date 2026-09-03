@@ -28,8 +28,8 @@ features = ["pam"]
 
 # `shadow-core::crypt` links crypt(3) via `#[link(name = "crypt")]`, which on
 # Debian/Ubuntu lives in libxcrypt rather than glibc; the `pam` feature above
-# links libpam. Both are why targets stay glibc-only for now: a static musl
-# binary cannot dlopen PAM modules at all (see issue #224).
+# links libpam. Both are why targets stay glibc-only: a static musl build loses
+# PAM, NSS and yescrypt — see docs/PLATFORM-SUPPORT.md and issue #224.
 [dist.dependencies.apt]
 libcrypt-dev = "*"
 libpam0g-dev = "*"
