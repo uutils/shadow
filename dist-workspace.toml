@@ -16,6 +16,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 # setuid bit to do anything useful (see the install notes in the README).
 installers = []
 unix-archive = ".tar.gz"
+# Build with PAM. Without it `passwd` refuses the interactive change path
+# ("PAM support is not compiled in"), which is the tool's primary function.
+features = ["pam"]
 
 # Ship only the multicall binary. `shadow-rs-completions` is a build-time
 # helper behind `required-features = ["completions"]`, so it is not part of a
@@ -24,6 +27,8 @@ unix-archive = ".tar.gz"
 "*" = ["shadow-rs"]
 
 # `shadow-core::crypt` links crypt(3) via `#[link(name = "crypt")]`, which on
-# Debian/Ubuntu lives in libxcrypt rather than glibc.
+# Debian/Ubuntu lives in libxcrypt rather than glibc; the `pam` feature above
+# links libpam.
 [dist.dependencies.apt]
 libcrypt-dev = "*"
+libpam0g-dev = "*"

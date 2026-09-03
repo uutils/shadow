@@ -168,6 +168,12 @@ test_setuid() {
         fi
     done
 
+    # passwd must be built with the `pam` cargo feature, otherwise the
+    # interactive change path is compiled out and the tool can only report and
+    # lock accounts — it cannot actually change a password.
+    assert_ok "passwd is linked against PAM" \
+        sh -c "ldd $BINDIR/passwd | grep -q libpam"
+
     # Non-root user should be able to run passwd -S on themselves
     assert_ok "testrunner can run passwd -S" \
         su -s /bin/bash testrunner -c "$BINDIR/passwd -S testrunner"

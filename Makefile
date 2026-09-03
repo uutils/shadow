@@ -15,11 +15,15 @@ ALL_TOOLS = $(SETUID_TOOLS) $(ROOT_TOOLS)
 
 all: build
 
+# `pam` is not a default cargo feature, so a plain build produces a `passwd`
+# that refuses the interactive change path ("PAM support is not compiled in").
+# Installed binaries must have it; the PAM headers are already listed as a
+# build requirement in the README.
 build:
-	cargo build --release --workspace --bins --exclude uu_shadow
+	cargo build --release --workspace --bins --exclude uu_shadow --features uu_passwd/pam
 
 build-multicall:
-	cargo build --release --bin shadow-rs
+	cargo build --release --bin shadow-rs --features pam
 
 test:
 	cargo test --workspace
