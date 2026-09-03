@@ -8,5 +8,16 @@
       "matchFileNames": [".github/workflows/release.yml"],
       "enabled": false
     }
+  ],
+  "customManagers": [
+    {
+      "description": "Track the dist release tooling pinned in dist-workspace.toml, which no built-in manager understands.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^dist-workspace\\.toml$/"],
+      "matchStrings": ["cargo-dist-version = \"(?<currentValue>[^\"]+)\""],
+      "depNameTemplate": "axodotdev/cargo-dist",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$"
+    }
   ]
 }
