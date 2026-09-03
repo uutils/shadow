@@ -218,6 +218,12 @@ codegen-units = 1
 inherits = "release"
 opt-level = "z"
 
+# Profile used by `dist` when building release artifacts (issue #207).
+# Inherits the hardened release settings: LTO, stripped symbols, and
+# panic = "abort" (no unwind tables in a setuid-root binary).
+[profile.dist]
+inherits = "release"
+
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
 unsafe_code = "deny"

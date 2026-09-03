@@ -1,0 +1,29 @@
+[workspace]
+members = ["cargo:."]
+
+# Release automation for the multicall binary (issue #207).
+#
+# Only the workspace root package (uu_shadow) is distributed: it builds the
+# single `shadow-rs` multicall binary that provides all 14 tools via argv[0],
+# the same layout as `make install-multicall`. The 14 per-tool crates each
+# carry `dist = false` so we ship one archive per target instead of fifteen.
+[dist]
+cargo-dist-version = "0.32.0"
+ci = "github"
+targets = ["x86_64-unknown-linux-gnu"]
+# Archives only. The shell installer drops binaries in ~/.local/bin, which is
+# misleading for setuid-root account tools — they need root ownership and the
+# setuid bit to do anything useful (see the install notes in the README).
+installers = []
+unix-archive = ".tar.gz"
+
+# Ship only the multicall binary. `shadow-rs-completions` is a build-time
+# helper behind `required-features = ["completions"]`, so it is not part of a
+# default build and must not be listed as a release artifact.
+[dist.binaries]
+"*" = ["shadow-rs"]
+
+# `shadow-core::crypt` links crypt(3) via `#[link(name = "crypt")]`, which on
+# Debian/Ubuntu lives in libxcrypt rather than glibc.
+[dist.dependencies.apt]
+libcrypt-dev = "*"

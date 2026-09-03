@@ -32,3 +32,8 @@ tempfile = { workspace = true }
 
 [lints]
 workspace = true
+
+# Distributed via the `shadow-rs` multicall binary in the workspace root
+# package, not as a standalone archive (see dist-workspace.toml, issue #207).
+[package.metadata.dist]
+dist = false

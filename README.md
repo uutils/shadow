@@ -104,6 +104,30 @@ Intended for container/embedded use cases.
 sudo make install-multicall PREFIX=/usr/local
 ```
 
+#### From a release archive
+
+Each release publishes `uu_shadow-x86_64-unknown-linux-gnu.tar.gz` (with a
+`.sha256` alongside), containing the `shadow-rs` multicall binary. Archives are
+built against glibc; musl is not yet published because `crypt(3)` is not part
+of the static musl target.
+
+The archive ships a plain binary — nothing is installed, symlinked, or made
+setuid by extracting it. To deploy it the same way `make install-multicall`
+would:
+
+```shell
+tar xzf uu_shadow-x86_64-unknown-linux-gnu.tar.gz
+sudo install -o root -g root -m 4755 \
+    uu_shadow-*/shadow-rs /usr/local/bin/shadow-rs
+for tool in passwd chfn chsh newgrp chage chpasswd groupadd groupdel \
+            groupmod grpck pwck useradd userdel usermod; do
+    sudo ln -sf shadow-rs "/usr/local/bin/$tool"
+done
+```
+
+Mode `4755` makes every applet run `euid=root`; see the setuid trade-off noted
+above. Run `shadow-rs --list` to see the applets a given build contains.
+
 ### Test
 
 All builds and tests run inside Docker containers to isolate from the host
