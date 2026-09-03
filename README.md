@@ -190,10 +190,6 @@ Security patterns from [OpenBSD](https://cvsweb.openbsd.org/src/usr.bin/passwd/)
 [sudo-rs](https://github.com/trifectatechfoundation/sudo-rs) (Apache-2.0/MIT).
 uutils infrastructure via [`uucore`](https://crates.io/crates/uucore) (MIT).
 
-Code written by [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview) (Anthropic),
-reviewed by [GitHub Copilot](https://github.com/features/copilot) and
-[Google Gemini CLI](https://github.com/google-gemini/gemini-cli).
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

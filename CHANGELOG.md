@@ -9,15 +9,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Release binaries. Tagging a version now builds and uploads
+  `uu_shadow-x86_64-unknown-linux-gnu.tar.gz` (multicall binary plus
+  checksum) via `dist` (#207)
+
+### Changed
+
+- Dropped the deprecated `authors` field from the package manifests (#213)
+
+## [0.2.1] - 2026-08-05
+
+First release published on crates.io, as `uu_shadow` and `uu_shadow_core`
+(both plain names were already taken).
+
+### Added
+
 - `audit.yml` workflow for daily `cargo-audit` security advisory checks (#155)
 - AT_EXECFN validation in multicall binary: rejects spoofed `argv[0]` in
   setuid context by comparing against the kernel-recorded executable path (#154)
+- Tools identify themselves as part of uutils: `--version` prints
+  `<tool> (uutils shadow-rs) <version>` and `--help` carries a project
+  footer, including the multicall front-end (#161)
+- `.pre-commit-config.yaml` (#164)
 
 ### Changed
 
 - AT_EXECFN check uses `rustix::param::linux_execfn()` instead of unsafe
   `libc::getauxval` — zero new unsafe for this feature
-- All workspace crate versions aligned to 0.2.0
+- Packages renamed to `uu_shadow` / `uu_shadow_core` for crates.io
+- All workspace crate versions aligned
+- "Permission denied" for the root-required guards is now taken from the OS
+  via `strerror(EACCES)` rather than a hardcoded literal, so it matches the
+  host and is localized by glibc (#159)
+- Clap-error handling de-duplicated: the `AlreadyPrinted` sentinel and the
+  `try_get_matches_from` boilerplate moved from 12 tool error enums into
+  `shadow_core::cli` (#181)
+- `uucore` 0.8 → 0.9 (#179)
+- Random bytes come from `rustix` instead of a separate `getrandom` dependency
+  (#165)
+- 118 clap `--help`/`--about` strings rewritten from in-tree behavior; `--root`
+  no longer claims a `chroot(2)` in the tools that only prefix paths (#161)
+- Docker test matrix no longer fails on transient registry timeouts:
+  `fail-fast: false`, image-build retry, and `CARGO_NET_RETRY` (#172)
+- Dev images install `cargo-deny` as a pinned, checksum-verified prebuilt
+  binary instead of compiling it (#175)
+
+### Fixed
+
+- `Cargo.lock` is committed, so the `cargo-audit` job actually runs — it had
+  been failing on every invocation, silently masking advisories (#167)
+- Removed an `unreachable!()` from `validate.rs` (#156)
+- Removed the unused `show_error` / `show_warning` macros from `shadow-core`
+  (#182)
+- `shadow-core` carries an explicit version in workspace dependencies, needed
+  for `cargo publish`
+
+### Security
+
+- `useradd` creates the home directory with its final mode atomically,
+  closing a window in which it was world-writable (#157)
 
 ## [0.2.0] - 2026-04-22
 
@@ -105,5 +155,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - O_EXCL temp files (symlink attack prevention)
 - Umask guard (RAII) for restrictive file permissions
 - GPL clean-room development (MIT license, no GPL source referenced)
-- Reviewed by GitHub Copilot (automated) and Google Gemini CLI (manual)
 - 20+ security findings addressed across 4 review rounds

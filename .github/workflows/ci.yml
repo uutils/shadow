@@ -11,6 +11,24 @@ env:
   CARGO_NET_RETRY: "10"
 
 jobs:
+  no-ai-traces:
+    name: No AI traces
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Need the base branch to diff against.
+          fetch-depth: 0
+      - name: Check commits, PR text and added lines
+        env:
+          # Passed through the environment; never interpolated into the shell.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          git fetch --no-tags --depth=0 origin "${{ github.base_ref }}"
+          .github/scripts/no-ai-traces.sh "origin/${{ github.base_ref }}"
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
