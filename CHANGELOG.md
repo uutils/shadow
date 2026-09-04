@@ -21,6 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `passwd` can change a password again. The 0.2.2 build applied its Landlock
+  sandbox before `pam_start`, which stopped Linux-PAM from loading
+  `pam_unix.so` (*"Module is unknown"*, exit 10) for every caller, and the
+  privilege drop for the PAM conversation spanned `pam_chauthtok`, so
+  `pam_unix` could not rewrite `/etc/shadow` for a non-root caller either.
+  The sandbox now covers only the direct-file paths (`-S`, lock/unlock/
+  delete/expire, aging) with rules that also let NSS, `nscd` and `logger`
+  work, and privileges are dropped for `pam_authenticate` alone
+- The end-to-end image builds again (`make install` had stopped producing the
+  multicall binary it installed) and its suite runs in CI on every pull
+  request. It now changes a password through PAM as an unprivileged user and
+  verifies the result by authenticating — root's `su` never asks for a
+  password, so the previous PAM checks proved nothing
 - A `..` in a `--prefix`, `-d` or `-k` argument, or in a home directory read
   from `/etc/passwd`, no longer aborts the tool (`unreachable!` in the path
   resolver); `useradd -d /home/../x` had written the account and then died
@@ -52,6 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as a last line of defence, by the `shadow-core` writers. `useradd -c` with
   a newline in the value could previously append an arbitrary `/etc/passwd`
   record
+- `passwd --prefix` is root-only, like `--root`: it pointed a setuid binary
+  at account files of the caller's choosing
 - Core dumps are disabled with `PR_SET_DUMPABLE` in addition to
   `RLIMIT_CORE`; the limit alone is ignored when cores are piped to
   `systemd-coredump` or `apport`
