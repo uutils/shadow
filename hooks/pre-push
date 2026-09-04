@@ -14,7 +14,9 @@
 # skip it.
 #
 # What is left is the one check worth having before the code leaves the
-# machine: the tests actually run.
+# machine: the tests actually run. `make test` is the single definition of
+# what that means -- with and without `pam`, since the feature changes which
+# code paths exist.
 
 set -euo pipefail
 
@@ -68,9 +70,9 @@ elif ! carries_commits; then
     exit 0
 fi
 
-echo -e "${YELLOW}pre-push${NC}: cargo test --workspace (debian)"
-if ! docker compose run --rm -T debian cargo test --workspace 2>&1; then
-    echo -e "${RED}FAILED${NC}: cargo test --workspace"
+echo -e "${YELLOW}pre-push${NC}: make test (debian)"
+if ! docker compose run --rm -T debian make test 2>&1; then
+    echo -e "${RED}FAILED${NC}: make test"
     echo "The full matrix -- fmt, clippy, ±pam, MSRV, musl, three distros,"
     echo "end-to-end -- runs in CI on the pull request."
     exit 1

@@ -20,7 +20,7 @@ USER_TOOLS = $(SETUID_TOOLS) chage
 
 ALL_TOOLS = $(SETUID_TOOLS) $(ROOT_TOOLS) chage
 
-.PHONY: all build build-multicall dist-musl test install install-multicall uninstall clean
+.PHONY: all build build-multicall dist-musl check test test-gnu-compat install install-multicall uninstall clean
 
 all: build
 
@@ -62,11 +62,25 @@ dist-musl:
 	cd $(MUSL_DIST_DIR) && sha256sum $(MUSL_ARCHIVE).tar.gz > $(MUSL_ARCHIVE).tar.gz.sha256
 	@echo "Built $(MUSL_DIST_DIR)/$(MUSL_ARCHIVE).tar.gz"
 
+# Everything CI gates on, in one place, so the README, CONTRIBUTING, the git
+# hooks and ci.yml stop each carrying their own copy of the command list.
+# Run it inside a container: docker compose run --rm debian make check
+check:
+	cargo fmt --all --check
+	cargo clippy --workspace --all-targets -- -D warnings
+	cargo clippy --workspace --all-targets --features pam -- -D warnings
+	$(MAKE) test
+
 # `install` ships binaries built with pam, so the tests must cover that build
 # as well as the default one: the feature changes which code paths exist.
 test:
 	cargo test --workspace
 	cargo test --workspace --features pam
+
+# Compare our output and exit codes against the GNU tools installed alongside.
+# Needs root and the GNU shadow package, so it belongs in a container.
+test-gnu-compat:
+	bash tests/gnu-compat.sh
 
 # Default install: 14 standalone per-tool binaries, with the setuid layout and
 # the bin/sbin split GNU shadow-utils uses. Only passwd/chfn/chsh/newgrp are

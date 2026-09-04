@@ -52,17 +52,29 @@ docker compose build
 ```
 
 The hooks are deliberately small. `pre-commit` checks formatting and runs
-clippy; `pre-push` runs the workspace tests once, on Debian, and skips
-entirely for a push that carries no new commits (a tag, a deletion, a branch
-the remote already has). Everything else — the tests with and without `pam`,
-MSRV, cargo-deny, the static musl archive, the three-distro matrix as root and
-the end-to-end deployment image — runs in CI on the pull request, in parallel
-and with retries. A hook that tried to match CI took minutes on every push and
-was routed around with `--no-verify`, which protects nothing.
+clippy; `pre-push` runs `make test` once, on Debian, and skips entirely for a
+push that carries no new commits (a tag, a deletion, a branch the remote
+already has). Everything else — MSRV, cargo-deny, the static musl archive, the
+three-distro matrix as root, the GNU output comparison and the end-to-end
+deployment image — runs in CI on the pull request, in parallel and with
+retries. A hook that tried to match CI took minutes on every push and was
+routed around with `--no-verify`, which protects nothing.
+
+There is a second hook system, `.pre-commit-config.yaml`, run by pre-commit.ci
+on the pull request. It does not overlap: whitespace, line endings, large
+files, and the spell checker. The two are kept apart on purpose — file hygiene
+needs no container, and the Rust checks need one.
 
 ### Building and Testing
 
+`make check` is the single definition of what CI gates on — formatting, clippy
+with and without `pam`, and the tests in both configurations. Run it in a
+container; do not build on the host.
+
 ```shell
+docker compose run --rm debian make check           # everything CI gates on
+docker compose run --rm debian make test-gnu-compat # compare against GNU
+
 docker compose run --rm debian cargo build          # build
 docker compose run --rm debian cargo test --workspace  # test on Debian
 docker compose run --rm alpine cargo test --workspace  # test on Alpine (musl)
