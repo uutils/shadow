@@ -13,8 +13,19 @@ Techniques adopted from OpenBSD and best practices for setuid-root tools.
       kernel will not take the privilege away
 - [x] `chfn` and `chsh` authenticate the caller through PAM before applying a
       change, and refuse every non-root use when PAM is not compiled in
-- [x] `chfn` honours `CHFN_RESTRICT`; `chsh` refuses to change the shell of an
-      account whose current shell is not listed in `/etc/shells`
+- [x] `chfn` honours `CHFN_RESTRICT`, including in interactive mode, where a
+      field the caller may not change is never prompted for; `chsh` refuses to
+      change the shell of an account whose current shell is not listed in
+      `/etc/shells`
+- [x] `chsh` tests `/etc/shells` membership **before** existence for a non-root
+      caller. Setuid-root, an existence check answers with root's view of the
+      filesystem, so a distinct "does not exist" reply would make the tool a
+      one-probe-at-a-time oracle for paths the caller cannot stat
+- [x] `chfn` and `chsh` validate the new value *before* the PAM conversation,
+      so a rejected value never costs the caller a password prompt
+- [x] Neither `chfn` nor `chsh` calls `setuid(0)` before writing: euid 0 is all
+      the lock and the atomic write need, and raising the *real* uid would make
+      `caller_is_root()` answer true for every caller
 - [x] `passwd --prefix` and `--root` are root-only: they point a setuid binary
       at files of the caller's choosing
 - [x] User enumeration prevention (#49 — early permission check for non-root
@@ -73,6 +84,10 @@ Techniques adopted from OpenBSD and best practices for setuid-root tools.
 - [x] Core dumps suppressed with `PR_SET_DUMPABLE` **and** `RLIMIT_CORE=0` — the
       limit alone is ignored when cores are piped to a handler
 - [x] Resource limit hardening (#44 — `raise_file_size_limit()`)
+- [x] Ctrl-C at a password prompt no longer leaves the terminal with echo off.
+      `shadow_core::tty` blocks `SIGINT`/`SIGQUIT`/`SIGTSTP` for the duration
+      of the read — `readpassphrase(3)` semantics — so the `EchoGuard`
+      destructor always runs. One helper, shared by every prompt
 
 ### Sandboxing and environment
 
@@ -87,13 +102,6 @@ Techniques adopted from OpenBSD and best practices for setuid-root tools.
       tools)
 
 ## Not yet implemented
-
-### Terminal echo after an interrupt
-
-Ctrl-C at a password prompt terminates without unwinding, so the `EchoGuard`
-destructor does not run and the terminal is left with echo disabled. Blocking
-`SIGINT`/`SIGQUIT`/`SIGTSTP` for the duration of the read — `readpassphrase(3)`
-semantics — would fix it in one shared helper. Tracked in #248.
 
 ### Seccomp-BPF
 

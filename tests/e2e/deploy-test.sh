@@ -458,6 +458,139 @@ test_pam_auth() {
     userdel -r pamtest_user 2>/dev/null || true
 }
 
+# ── Self-service tools: chfn and chsh ───────────────────────────────
+
+# $1 runs chsh interactively as themselves, answering the shell prompt with $2
+# and any password prompt with $3. Exits with chsh's own status.
+chsh_interactive() {
+    expect -c "
+        set timeout 20
+        log_user 0
+        spawn su -s /bin/bash $1 -c $BINDIR/chsh
+        expect {
+            -nocase -re {login shell.*:} { send \"$2\r\"; exp_continue }
+            -nocase -re {password:} { send \"$3\r\"; exp_continue }
+            eof { catch wait result; exit [lindex \$result 3] }
+            timeout { exit 99 }
+        }
+    "
+}
+
+# $1 runs chfn interactively as themselves, answering the room prompt with $2,
+# every other field with ENTER, and any password prompt with $3.
+chfn_interactive() {
+    expect -c "
+        set timeout 20
+        log_user 0
+        spawn su -s /bin/bash $1 -c $BINDIR/chfn
+        expect {
+            -nocase -re {room number.*:} { send \"$2\r\"; exp_continue }
+            -nocase -re {(full name|work phone|home phone).*:} { send \"\r\"; exp_continue }
+            -nocase -re {password:} { send \"$3\r\"; exp_continue }
+            eof { catch wait result; exit [lindex \$result 3] }
+            timeout { exit 99 }
+        }
+    "
+}
+
+# $1 asks chsh for shell $2 and must be refused *before* any password prompt:
+# the value is checked first, so a rejected shell never costs a password.
+# Exit 0 only if chsh failed and never prompted. $3 is the expected message.
+chsh_refused_without_prompt() {
+    expect -c "
+        set timeout 20
+        log_user 0
+        spawn su -s /bin/bash $1 -c {$BINDIR/chsh -s $2}
+        expect {
+            -nocase -re {password:} { exit 20 }
+            -nocase {$3} { exp_continue }
+            eof { catch wait result;
+                  if {[lindex \$result 3] == 0} { exit 21 } else { exit 0 } }
+            timeout { exit 99 }
+        }
+    "
+}
+
+# Same, but exit 0 only if the message does NOT appear.
+chsh_message_absent() {
+    expect -c "
+        set timeout 20
+        log_user 0
+        spawn su -s /bin/bash $1 -c {$BINDIR/chsh -s $2}
+        expect {
+            -nocase {$3} { exit 22 }
+            eof { exit 0 }
+            timeout { exit 99 }
+        }
+    "
+}
+
+test_self_service() {
+    section "Self-service tools (chfn, chsh)"
+
+    userdel -r selftest_user 2>/dev/null || true
+    assert_ok "useradd -m -s /bin/bash selftest_user" \
+        useradd -m -s /bin/bash selftest_user
+    local hashed
+    hashed=$(hash_password "SelfPass123")
+    assert_ok "chpasswd -e sets selftest_user password" \
+        bash -c "echo 'selftest_user:$hashed' | chpasswd -e"
+
+    grep -q '^/bin/sh$' /etc/shells 2>/dev/null || echo /bin/sh >>/etc/shells
+    grep -q '^/bin/bash$' /etc/shells 2>/dev/null || echo /bin/bash >>/etc/shells
+
+    # A user changes their own shell with no -s: chsh prompts, PAM verifies.
+    assert_ok "selftest_user changes own shell interactively" \
+        chsh_interactive selftest_user /bin/sh SelfPass123
+    assert_file_contains "interactive chsh wrote the new shell" \
+        /etc/passwd "selftest_user:.*:/bin/sh$"
+
+    # Pressing ENTER keeps the current value and is not an error.
+    assert_ok "empty answer keeps the current shell" \
+        chsh_interactive selftest_user "" SelfPass123
+    assert_file_contains "shell unchanged after an empty answer" \
+        /etc/passwd "selftest_user:.*:/bin/sh$"
+
+    # chsh is setuid-root, so its existence check sees what root sees. A
+    # non-root caller must get the same answer for an unlisted path whether or
+    # not it exists, or the tool becomes a filesystem oracle.
+    local secret=/root/.chsh-oracle-probe
+    : >"$secret"
+    chmod 600 "$secret"
+    assert_ok "unlisted existing path under /root is refused as unlisted" \
+        chsh_refused_without_prompt selftest_user "$secret" "is not listed"
+    assert_ok "unlisted missing path under /root gives the same answer" \
+        chsh_refused_without_prompt selftest_user /root/.chsh-absent "is not listed"
+    assert_ok "existence of a /root path is never disclosed" \
+        chsh_message_absent selftest_user "$secret" "does not exist"
+    rm -f "$secret"
+
+    # An empty shell field is the system default, not a missing program.
+    assert_ok "root may set the empty shell" chsh -s "" selftest_user
+    assert_file_contains "empty shell field written" \
+        /etc/passwd "^selftest_user:.*:/home/selftest_user:$"
+    assert_ok "chsh -s /bin/bash restores a shell" chsh -s /bin/bash selftest_user
+
+    # chfn with no field option prompts for each field the caller may change.
+    assert_ok "CHFN_RESTRICT=rwh in login.defs" \
+        bash -c "sed -i '/^CHFN_RESTRICT/d' /etc/login.defs; echo 'CHFN_RESTRICT rwh' >>/etc/login.defs"
+    assert_ok "selftest_user changes own room interactively" \
+        chfn_interactive selftest_user B-217 SelfPass123
+    assert_file_contains "interactive chfn wrote the room number" \
+        /etc/passwd "selftest_user:.*:,B-217,"
+
+    # 'f' is absent from CHFN_RESTRICT, so the full name is not the caller's
+    # to change — and the refusal must arrive without a password prompt.
+    assert_fail "selftest_user may not change the full name under CHFN_RESTRICT=rwh" \
+        su -s /bin/bash selftest_user -c "$BINDIR/chfn -f Nope </dev/null"
+    assert_ok "root may still change the full name" \
+        chfn -f "Self Test User" selftest_user
+    assert_file_contains "root-set full name written" \
+        /etc/passwd "selftest_user:.*:Self Test User,"
+
+    userdel -r selftest_user 2>/dev/null || true
+}
+
 # ── nscd cache invalidation ────────────────────────────────────────
 
 test_nscd() {
@@ -566,6 +699,7 @@ main() {
     test_group_lifecycle
     test_individual_tools
     test_pam_auth
+    test_self_service
     test_nscd
     test_landlock
     test_ansible
