@@ -11,7 +11,7 @@ ROOT_TOOLS = useradd userdel usermod chpasswd chage \
 
 ALL_TOOLS = $(SETUID_TOOLS) $(ROOT_TOOLS)
 
-.PHONY: all build build-multicall test install install-multicall uninstall clean
+.PHONY: all build build-multicall dist-musl test install install-multicall uninstall clean
 
 all: build
 
@@ -25,6 +25,33 @@ build:
 
 build-multicall:
 	cargo build --release --bin shadow-rs --features pam
+
+# Static musl archive, published as a release asset next to the glibc one
+# (dist-workspace.toml runs this target; see issue #224). Built without `pam`:
+# Linux-PAM dlopen()s its modules, which a static binary cannot do, and
+# shadow-core refuses the combination at compile time. The archive name carries
+# the "-static" label and docs/PLATFORM-SUPPORT.md, shipped inside, spells out
+# what the build does and does not do.
+MUSL_TARGET = x86_64-unknown-linux-musl
+MUSL_ARCHIVE = uu_shadow-$(MUSL_TARGET)-static
+MUSL_DIST_DIR = target/dist-musl
+
+dist-musl:
+	rustup target add $(MUSL_TARGET)
+	cargo build --release --locked --bin shadow-rs --target $(MUSL_TARGET)
+	@# A DT_NEEDED entry would mean a shared object slipped in and the archive
+	@# is not the self-contained binary its name promises.
+	@if readelf -d target/$(MUSL_TARGET)/release/shadow-rs | grep -q NEEDED; then \
+		echo "error: shadow-rs is not statically linked" >&2; exit 1; \
+	fi
+	rm -rf $(MUSL_DIST_DIR)
+	mkdir -p $(MUSL_DIST_DIR)/$(MUSL_ARCHIVE)
+	cp target/$(MUSL_TARGET)/release/shadow-rs LICENSE README.md CHANGELOG.md \
+		docs/PLATFORM-SUPPORT.md $(MUSL_DIST_DIR)/$(MUSL_ARCHIVE)/
+	tar -C $(MUSL_DIST_DIR) --owner=0 --group=0 --numeric-owner \
+		-czf $(MUSL_DIST_DIR)/$(MUSL_ARCHIVE).tar.gz $(MUSL_ARCHIVE)
+	cd $(MUSL_DIST_DIR) && sha256sum $(MUSL_ARCHIVE).tar.gz > $(MUSL_ARCHIVE).tar.gz.sha256
+	@echo "Built $(MUSL_DIST_DIR)/$(MUSL_ARCHIVE).tar.gz"
 
 test:
 	cargo test --workspace

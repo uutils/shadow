@@ -26,10 +26,22 @@ features = ["pam"]
 [dist.binaries]
 "*" = ["shadow-rs"]
 
-# `shadow-core::crypt` links crypt(3) via `#[link(name = "crypt")]`, which on
-# Debian/Ubuntu lives in libxcrypt rather than glibc; the `pam` feature above
-# links libpam. Both are why targets stay glibc-only: a static musl build loses
-# PAM, NSS and yescrypt — see docs/PLATFORM-SUPPORT.md and issue #224.
+# `shadow-core::crypt` links crypt(3), which on Debian/Ubuntu lives in
+# libxcrypt rather than glibc; the `pam` feature above links libpam.
 [dist.dependencies.apt]
 libcrypt-dev = "*"
 libpam0g-dev = "*"
+
+# Static musl archive (issue #224). It cannot be a regular target: `features`
+# is not per-target in dist, and `pam` must be off for musl (Linux-PAM needs
+# dlopen, which a static binary has not got). So it is built as an extra
+# artifact by `make dist-musl`, which runs in the global-artifacts job on a
+# plain Ubuntu runner — no apt dependencies needed, the musl sysroot is
+# self-contained. The "-static" suffix labels it as the reduced build it is;
+# docs/PLATFORM-SUPPORT.md, shipped inside the archive, states the gaps.
+[[dist.extra-artifacts]]
+artifacts = [
+    "target/dist-musl/uu_shadow-x86_64-unknown-linux-musl-static.tar.gz",
+    "target/dist-musl/uu_shadow-x86_64-unknown-linux-musl-static.tar.gz.sha256",
+]
+build = ["make", "dist-musl"]

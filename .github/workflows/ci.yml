@@ -62,6 +62,40 @@ jobs:
       # authenticate. Both configurations have to be tested.
       - run: cargo test --workspace --features pam
 
+  musl-static:
+    name: Static musl archive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      # The exact command the release pipeline runs (extra-artifacts in
+      # dist-workspace.toml), so a tag is never the first place a musl
+      # regression shows up. No apt packages: the musl sysroot is self-contained.
+      - run: make dist-musl
+      - name: Smoke-test the archive
+        run: |
+          set -eu
+          name=uu_shadow-x86_64-unknown-linux-musl-static
+          (cd target/dist-musl && sha256sum -c "$name.tar.gz.sha256")
+          tar xzf "target/dist-musl/$name.tar.gz" -C "$RUNNER_TEMP"
+          bin="$RUNNER_TEMP/$name/shadow-rs"
+          "$bin" --version
+          "$bin" --list | grep -qE '^ *passwd$'
+          test -f "$RUNNER_TEMP/$name/PLATFORM-SUPPORT.md"
+      # shadow-core's crypt(3) wrapper has musl-specific expectations (no
+      # yescrypt, `rounds=` honoured). Run its unit tests against the static
+      # musl libc, not only Alpine's dynamic one in the Docker matrix.
+      - run: cargo test --target x86_64-unknown-linux-musl -p shadow-core --features crypt,shadow,group,gshadow,login-defs,subid
+      # `pam` must be refused on static musl, not silently produce a binary
+      # whose authentication path can never work.
+      - name: pam is rejected on static musl
+        run: |
+          if cargo check --target x86_64-unknown-linux-musl -p shadow-core --features pam 2>check.log; then
+            echo "::error::the pam feature built on static musl; the compile_error guard in shadow-core is gone"
+            exit 1
+          fi
+          grep -q "statically linked musl build" check.log
+
   msrv:
     name: MSRV (1.94.0)
     runs-on: ubuntu-latest
