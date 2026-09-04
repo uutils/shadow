@@ -100,6 +100,14 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         return Ok(());
     };
 
+    // --root DIR is a real chroot: the account files come from the new root,
+    // and so does every absolute path read out of them. Done before anything
+    // else, so nothing has resolved a path against the old root yet.
+    if let Some(chroot_dir) = matches.get_one::<String>(options::ROOT) {
+        shadow_core::hardening::chroot_into(std::path::Path::new(chroot_dir))
+            .map_err(|e| GroupaddError::BadArgument(e.to_string()))?;
+    }
+
     if !shadow_core::hardening::caller_is_root() {
         uucore::show_error!("{}", shadow_core::os_error::permission_denied());
         return Err(shadow_core::cli::AlreadyPrinted(1).into());
@@ -138,8 +146,7 @@ fn do_groupadd(matches: &clap::ArgMatches) -> UResult<()> {
         .unwrap_or_default();
 
     let prefix = matches.get_one::<String>(options::PREFIX).map(Path::new);
-    let root_dir = matches.get_one::<String>(options::ROOT).map(Path::new);
-    let root = SysRoot::new(prefix.or(root_dir));
+    let root = SysRoot::new(prefix);
 
     // Load login.defs once and fold the -K overrides into it, so every later
     // lookup — not just the GID range — sees the overridden values.

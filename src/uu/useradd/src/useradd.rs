@@ -203,6 +203,14 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         return Ok(());
     };
 
+    // --root DIR is a real chroot: the account files come from the new root,
+    // and so does every absolute path read out of them. Done before anything
+    // else, so nothing has resolved a path against the old root yet.
+    if let Some(chroot_dir) = matches.get_one::<String>(options::ROOT) {
+        shadow_core::hardening::chroot_into(std::path::Path::new(chroot_dir))
+            .map_err(|e| UseraddError::CannotUpdatePasswd(e.to_string()))?;
+    }
+
     // Only root can add users.
     if !shadow_core::hardening::caller_is_root() {
         uucore::show_error!("{}", shadow_core::os_error::permission_denied());
@@ -243,10 +251,7 @@ fn useradd_default(root: &SysRoot, key: &str) -> Option<String> {
 
 /// Load login.defs under `-R`, apply `-K` overrides, and write the `useradd -D` report.
 fn write_defaults(matches: &clap::ArgMatches, out: &mut dyn std::io::Write) -> UResult<()> {
-    let root_dir = matches
-        .get_one::<String>(options::PREFIX)
-        .or_else(|| matches.get_one::<String>(options::ROOT));
-    let root = SysRoot::new(root_dir.map(Path::new));
+    let root = SysRoot::new(matches.get_one::<String>(options::PREFIX).map(Path::new));
     let mut defs = LoginDefs::load(&root.login_defs_path())
         .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
     apply_login_defs_overrides(&mut defs, &parse_login_defs_overrides(matches)?);
@@ -386,7 +391,7 @@ fn parse_options(matches: &clap::ArgMatches) -> Result<UseraddOptions, UseraddEr
 
     let root_dir = matches
         .get_one::<String>(options::PREFIX)
-        .or_else(|| matches.get_one::<String>(options::ROOT));
+        .map(String::as_str);
     let root = SysRoot::new(root_dir.map(Path::new));
 
     let comment = matches
@@ -1451,6 +1456,8 @@ mod tests {
                 "-r",
                 "-R",
                 "/mnt/root",
+                "-P",
+                "/mnt/prefix",
                 "-s",
                 "/bin/zsh",
                 "-u",
@@ -1498,6 +1505,10 @@ mod tests {
         assert_eq!(
             m.get_one::<String>(options::ROOT).map(String::as_str),
             Some("/mnt/root")
+        );
+        assert_eq!(
+            m.get_one::<String>(options::PREFIX).map(String::as_str),
+            Some("/mnt/prefix")
         );
         assert_eq!(
             m.get_one::<String>(options::SHELL).map(String::as_str),
@@ -2508,7 +2519,7 @@ mod tests {
         let m = uu_app()
             .try_get_matches_from([
                 "useradd",
-                "-R",
+                "-P",
                 root,
                 "-D",
                 "-K",

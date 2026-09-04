@@ -115,7 +115,9 @@ struct PwckOptions {
 
 impl PwckOptions {
     fn from_matches(matches: &clap::ArgMatches) -> Self {
-        let root = SysRoot::new(matches.get_one::<String>(options::ROOT).map(Path::new));
+        // pwck has no --prefix, matching GNU; --root is a real chroot, done
+        // before this runs, so paths resolve against the new root.
+        let root = SysRoot::default();
 
         let passwd_path = matches
             .get_one::<String>(options::PASSWD_FILE)
@@ -144,6 +146,14 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     shadow_core::hardening::harden_process();
 
     let matches = uu_app().try_get_matches_from(args)?;
+    // --root DIR is a real chroot: the account files come from the new root,
+    // and so does every absolute path read out of them. Done before anything
+    // else, so nothing has resolved a path against the old root yet.
+    if let Some(chroot_dir) = matches.get_one::<String>(options::ROOT) {
+        shadow_core::hardening::chroot_into(std::path::Path::new(chroot_dir))
+            .map_err(|e| PwckError::CantOpen(e.to_string()))?;
+    }
+
     let opts = PwckOptions::from_matches(&matches);
     run_checks(&opts)
 }
@@ -1157,11 +1167,12 @@ mod tests {
         // Create the home dir.
         std::fs::create_dir_all(dir.path().join("root")).expect("mkdir root home");
 
+        // The files are named positionally, as pwck(8) allows. `--root` is a
+        // real chroot now, which an in-process test cannot perform: it would
+        // chroot the test binary itself.
         let code = run(&[
             "pwck",
             "-r",
-            "-R",
-            dir.path().to_str().expect("non-utf8 path"),
             passwd_path.to_str().expect("non-utf8 path"),
             shadow_path.to_str().expect("non-utf8 path"),
         ]);
@@ -1180,13 +1191,7 @@ mod tests {
         std::fs::write(&passwd_path, "root:x:0:0\n").expect("write passwd");
         std::fs::write(etc.join("group"), "root:x:0:\n").expect("write group");
 
-        let code = run(&[
-            "pwck",
-            "-r",
-            "-R",
-            dir.path().to_str().expect("non-utf8 path"),
-            passwd_path.to_str().expect("non-utf8 path"),
-        ]);
+        let code = run(&["pwck", "-r", passwd_path.to_str().expect("non-utf8 path")]);
 
         assert_eq!(
             code,

@@ -70,21 +70,6 @@ fn resolve_target_user(matches: &clap::ArgMatches) -> Result<String, ChshError> 
     shadow_core::hardening::current_username().map_err(|e| ChshError::Error(e.to_string()))
 }
 
-fn do_chroot(dir: &str) -> Result<(), ChshError> {
-    if !shadow_core::hardening::caller_is_root() {
-        return Err(ChshError::Error("only root may use --root".into()));
-    }
-
-    let path = std::path::Path::new(dir);
-    rustix::process::chroot(path)
-        .map_err(|e| ChshError::Error(format!("cannot chroot to '{dir}': {e}")))?;
-
-    rustix::process::chdir("/")
-        .map_err(|e| ChshError::Error(format!("cannot chdir to / after chroot: {e}")))?;
-
-    Ok(())
-}
-
 /// Read valid shells from `/etc/shells`.
 ///
 /// Returns a list of absolute paths. Lines starting with `#` and blank
@@ -298,7 +283,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     // Handle --root / -R: chroot before anything else.
     if let Some(chroot_dir) = matches.get_one::<String>(options::ROOT) {
-        do_chroot(chroot_dir)?;
+        shadow_core::hardening::chroot_into(std::path::Path::new(chroot_dir))
+            .map_err(|e| ChshError::Error(e.to_string()))?;
     }
 
     let root = SysRoot::default();

@@ -215,7 +215,7 @@ fn test_delete_with_root_flag() {
     );
 
     let root_path = dir.path().to_str().expect("temp dir path is valid UTF-8");
-    let code = run(&["groupdel", "-R", root_path, "target"]);
+    let code = run(&["groupdel", "-P", root_path, "target"]);
     assert_eq!(code, 0, "-R flag should work the same as -P");
 
     let content = read_group(&dir);

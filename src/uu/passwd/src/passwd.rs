@@ -185,7 +185,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     // Handle --root / -R: chroot before anything else.
     if let Some(chroot_dir) = matches.get_one::<String>(options::ROOT) {
-        do_chroot(chroot_dir)?;
+        shadow_core::hardening::chroot_into(std::path::Path::new(chroot_dir))
+            .map_err(|e| PasswdError::UnexpectedFailure(e.to_string()))?;
     }
 
     // --prefix points a setuid binary at files of the caller's choosing; like
@@ -615,28 +616,6 @@ fn resolve_target_user(matches: &clap::ArgMatches) -> Result<String, PasswdError
     // No user specified — default to current user.
     shadow_core::hardening::current_username()
         .map_err(|e| PasswdError::UnexpectedFailure(e.to_string()))
-}
-
-/// Perform `chroot(2)` into the specified directory.
-///
-/// Must be root to call `chroot`. After `chroot`, chdir to `/` so the
-/// working directory is valid inside the new root.
-fn do_chroot(dir: &str) -> Result<(), PasswdError> {
-    if !shadow_core::hardening::caller_is_root() {
-        return Err(PasswdError::PermissionDenied(
-            "only root may use --root".into(),
-        ));
-    }
-
-    let path = std::path::Path::new(dir);
-    rustix::process::chroot(path)
-        .map_err(|e| PasswdError::UnexpectedFailure(format!("cannot chroot to '{dir}': {e}")))?;
-
-    rustix::process::chdir("/").map_err(|e| {
-        PasswdError::UnexpectedFailure(format!("cannot chdir to / after chroot: {e}"))
-    })?;
-
-    Ok(())
 }
 
 /// Format a single shadow entry as a `passwd -S` status line.

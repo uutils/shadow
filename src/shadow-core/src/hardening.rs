@@ -131,6 +131,40 @@ pub fn harden_process() {
     raise_file_size_limit();
 }
 
+/// Enter `dir` with `chroot(2)`, then make it the working directory.
+///
+/// This is what `--root DIR` means in every tool that offers it: the account
+/// files come from the new root, and so does every absolute path read out of
+/// them -- a home directory, a shell, a skeleton directory. `--prefix` is the
+/// weaker relative: it prepends the directory to the files the tool opens and
+/// leaves absolute paths inside those files alone.
+///
+/// Chrooting needs root, and it is refused for anyone else: a setuid-root
+/// binary pointed at a tree of the caller's choosing would read and write
+/// account files they control.
+///
+/// # Errors
+///
+/// Returns `ShadowError::Validation` if the caller is not root, and
+/// `ShadowError::IoPath` if the chroot or the following `chdir` fails.
+pub fn chroot_into(dir: &std::path::Path) -> Result<(), crate::error::ShadowError> {
+    if !caller_is_root() {
+        return Err(crate::error::ShadowError::Validation(
+            "only root may use --root".into(),
+        ));
+    }
+
+    rustix::process::chroot(dir)
+        .map_err(|e| crate::error::ShadowError::IoPath(e.into(), dir.to_owned()))?;
+
+    // Without this the working directory is still outside the new root, which
+    // is a documented way back out of a chroot.
+    rustix::process::chdir("/")
+        .map_err(|e| crate::error::ShadowError::IoPath(e.into(), std::path::PathBuf::from("/")))?;
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Identity helpers
 // ---------------------------------------------------------------------------

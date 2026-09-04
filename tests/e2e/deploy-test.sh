@@ -762,6 +762,63 @@ test_audit_logging() {
     kill "$rsyslog_pid" 2>/dev/null || true
 }
 
+# ── --root is a real chroot ─────────────────────────────────────────
+
+test_root_option() {
+    section "--root is a real chroot"
+
+    # A minimal target tree. The point of --root is that absolute paths read
+    # out of the records resolve inside it too, so the home directory must be
+    # created here and not on the host.
+    local tree
+    tree=$(mktemp -d)
+    mkdir -p "$tree/etc" "$tree/home" "$tree/etc/skel"
+    printf 'root:x:0:0:root:/root:/bin/sh\n'  >"$tree/etc/passwd"
+    printf 'root:!:19000:0:99999:7:::\n'      >"$tree/etc/shadow"
+    printf 'root:x:0:\n'                      >"$tree/etc/group"
+    printf 'root:!::\n'                       >"$tree/etc/gshadow"
+    printf 'UID_MIN 1000\nGID_MIN 1000\n'     >"$tree/etc/login.defs"
+    echo 'from the tree skeleton' >"$tree/etc/skel/.profile"
+
+    assert_ok "useradd -R creates the account in the tree" \
+        useradd -R "$tree" -m rooted_user
+    assert_file_contains "the record is in the tree" \
+        "$tree/etc/passwd" '^rooted_user:'
+    assert_ok "the home is in the tree, not on the host" \
+        test -d "$tree/home/rooted_user"
+    assert_ok "the skeleton came from inside the tree" \
+        bash -c "grep -q 'from the tree skeleton' '$tree/home/rooted_user/.profile'"
+    assert_ok "the host was not touched" \
+        bash -c "! test -e /home/rooted_user && ! grep -q '^rooted_user:' /etc/passwd"
+
+    assert_ok "usermod -R edits the account in the tree" \
+        usermod -R "$tree" -c 'Rooted User' rooted_user
+    assert_file_contains "usermod wrote inside the tree" \
+        "$tree/etc/passwd" 'rooted_user:.*Rooted User'
+
+    assert_ok "groupadd -R adds a group in the tree" groupadd -R "$tree" rooted_grp
+    assert_file_contains "the group is in the tree" "$tree/etc/group" '^rooted_grp:'
+    assert_ok "groupmod -R renames it" groupmod -R "$tree" -n rooted_grp2 rooted_grp
+    assert_ok "groupdel -R removes it" groupdel -R "$tree" rooted_grp2
+    assert_ok "the group is gone from the tree" \
+        bash -c "! grep -q '^rooted_grp' '$tree/etc/group'"
+    assert_ok "no group leaked onto the host" \
+        bash -c "! grep -q '^rooted_grp' /etc/group"
+
+    # pwck and grpck have no --prefix, matching GNU, so --root is the only way
+    # to point them at another tree.
+    assert_ok "grpck -r reads the tree" grpck -r -R "$tree"
+    assert_ok "pwck -r reads the tree" \
+        bash -c "rc=\$(pwck -r -R '$tree' >/dev/null 2>&1; echo \$?); [ \"\$rc\" -le 2 ]"
+
+    assert_ok "userdel -r -R removes the account and its home in the tree" \
+        userdel -R "$tree" -r rooted_user
+    assert_ok "the home is gone from the tree" \
+        bash -c "! test -e '$tree/home/rooted_user'"
+
+    rm -rf "$tree"
+}
+
 # ── nscd cache invalidation ────────────────────────────────────────
 
 test_nscd() {
@@ -873,6 +930,7 @@ main() {
     test_self_service
     test_aging_and_input
     test_audit_logging
+    test_root_option
     test_nscd
     test_landlock
     test_ansible

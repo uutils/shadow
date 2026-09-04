@@ -96,7 +96,9 @@ struct GrpckOptions {
 
 impl GrpckOptions {
     fn from_matches(matches: &clap::ArgMatches) -> Self {
-        let root = SysRoot::new(matches.get_one::<String>(options::ROOT).map(Path::new));
+        // grpck has no --prefix, matching GNU; --root is a real chroot, done
+        // before this runs, so paths resolve against the new root.
+        let root = SysRoot::default();
 
         let group_path = matches
             .get_one::<String>(options::GROUP_FILE)
@@ -125,6 +127,14 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     shadow_core::hardening::harden_process();
 
     let matches = uu_app().try_get_matches_from(args)?;
+    // --root DIR is a real chroot: the account files come from the new root,
+    // and so does every absolute path read out of them. Done before anything
+    // else, so nothing has resolved a path against the old root yet.
+    if let Some(chroot_dir) = matches.get_one::<String>(options::ROOT) {
+        shadow_core::hardening::chroot_into(std::path::Path::new(chroot_dir))
+            .map_err(|e| GrpckError::CantOpen(e.to_string()))?;
+    }
+
     let opts = GrpckOptions::from_matches(&matches);
     run_checks(&opts)
 }

@@ -142,7 +142,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     // Handle --root / -R: chroot before anything else.
     if let Some(chroot_dir) = matches.get_one::<String>(options::ROOT) {
-        do_chroot(chroot_dir)?;
+        shadow_core::hardening::chroot_into(std::path::Path::new(chroot_dir))
+            .map_err(|e| ChageError::UnexpectedFailure(e.to_string()))?;
     }
 
     // --prefix points a setuid binary at files of the caller's choosing, so
@@ -476,28 +477,6 @@ fn inactive_display(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Perform `chroot(2)` into the specified directory.
-///
-/// Must be root to call `chroot`. After `chroot`, chdir to `/` so the
-/// working directory is valid inside the new root.
-fn do_chroot(dir: &str) -> Result<(), ChageError> {
-    if !shadow_core::hardening::caller_is_root() {
-        return Err(ChageError::PermissionDenied(
-            "only root may use --root".into(),
-        ));
-    }
-
-    let path = Path::new(dir);
-    rustix::process::chroot(path)
-        .map_err(|e| ChageError::UnexpectedFailure(format!("cannot chroot to '{dir}': {e}")))?;
-
-    rustix::process::chdir("/").map_err(|e| {
-        ChageError::UnexpectedFailure(format!("cannot chdir to / after chroot: {e}"))
-    })?;
-
-    Ok(())
-}
 
 /// Lock the shadow file, read entries, apply a mutation to one user's entry,
 /// write back atomically, invalidate nscd cache.

@@ -97,10 +97,15 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let Some(login) = matches.get_one::<String>(options::USER) else {
         return Err(shadow_core::cli::AlreadyPrinted(2).into());
     };
-    let prefix = matches
-        .get_one::<String>(options::PREFIX)
-        .or_else(|| matches.get_one::<String>(options::ROOT))
-        .map(Path::new);
+    // --root DIR is a real chroot: the account files come from the new root,
+    // and so does every absolute path read out of them. Done before anything
+    // else, so nothing has resolved a path against the old root yet.
+    if let Some(chroot_dir) = matches.get_one::<String>(options::ROOT) {
+        shadow_core::hardening::chroot_into(std::path::Path::new(chroot_dir))
+            .map_err(|e| UsermodError::CantUpdate(e.to_string()))?;
+    }
+
+    let prefix = matches.get_one::<String>(options::PREFIX).map(Path::new);
     let root = SysRoot::new(prefix);
 
     if !rustix::process::getuid().is_root() {

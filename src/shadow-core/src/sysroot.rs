@@ -9,13 +9,12 @@
 //! `--prefix DIR` prepends DIR to every file path the tool touches, without a
 //! `chroot` syscall.
 //!
-//! `--root DIR` is **not** uniform across the tools, and this resolver is
-//! where the difference shows. `chage`, `chfn`, `chpasswd`, `chsh` and
-//! `passwd` call `chroot()` first and then resolve against `/`, so an absolute
-//! path stored in a record resolves inside the new root. Every other tool
-//! passes `--root` here as a second spelling of `--prefix`, which prepends the
-//! directory to the files it opens and leaves absolute paths alone. Tracked in
-//! #270.
+//! `--root DIR` is the stronger relative and does not come through here at
+//! all: every tool that offers it calls `chroot(2)` before anything else, so
+//! an absolute path stored in a record -- a home directory, a shell, a
+//! skeleton directory -- resolves inside the new root too. Eight of the
+//! thirteen tools used to fold `--root` into this resolver instead, which made
+//! `useradd -R /mnt/target -m` create the home on the *host* (#270).
 
 use std::path::{Path, PathBuf};
 

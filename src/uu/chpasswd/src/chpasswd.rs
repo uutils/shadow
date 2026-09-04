@@ -197,7 +197,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     // Handle --root / -R: chroot before anything else.
     if let Some(chroot_dir) = matches.get_one::<String>(options::ROOT) {
-        do_chroot(chroot_dir)?;
+        shadow_core::hardening::chroot_into(std::path::Path::new(chroot_dir))
+            .map_err(|e| ChpasswdError::UnexpectedFailure(e.to_string()))?;
     }
 
     let prefix = matches.get_one::<String>(options::PREFIX).map(Path::new);
@@ -496,25 +497,6 @@ fn default_crypt_method(root: &SysRoot) -> shadow_core::crypt::CryptMethod {
         .ok()
         .and_then(|d| d.get("ENCRYPT_METHOD").and_then(parse_crypt_method))
         .unwrap_or(shadow_core::crypt::CryptMethod::Sha512)
-}
-
-/// Perform `chroot(2)` into the specified directory.
-fn do_chroot(dir: &str) -> Result<(), ChpasswdError> {
-    if !shadow_core::hardening::caller_is_root() {
-        return Err(ChpasswdError::PermissionDenied(
-            "only root may use --root".into(),
-        ));
-    }
-
-    let path = Path::new(dir);
-    rustix::process::chroot(path)
-        .map_err(|e| ChpasswdError::UnexpectedFailure(format!("cannot chroot to '{dir}': {e}")))?;
-
-    rustix::process::chdir("/").map_err(|e| {
-        ChpasswdError::UnexpectedFailure(format!("cannot chdir to / after chroot: {e}"))
-    })?;
-
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------

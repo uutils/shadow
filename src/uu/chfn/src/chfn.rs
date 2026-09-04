@@ -312,22 +312,6 @@ fn chfn_restrict(root: &SysRoot) -> String {
         })
 }
 
-/// Perform `chroot(2)` into the specified directory.
-fn do_chroot(dir: &str) -> Result<(), ChfnError> {
-    if !shadow_core::hardening::caller_is_root() {
-        return Err(ChfnError::Error("only root may use --root".into()));
-    }
-
-    let path = std::path::Path::new(dir);
-    rustix::process::chroot(path)
-        .map_err(|e| ChfnError::Error(format!("cannot chroot to '{dir}': {e}")))?;
-
-    rustix::process::chdir("/")
-        .map_err(|e| ChfnError::Error(format!("cannot chdir to / after chroot: {e}")))?;
-
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // Atomic passwd mutation
 // ---------------------------------------------------------------------------
@@ -410,7 +394,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     // Handle --root / -R: chroot before anything else.
     if let Some(chroot_dir) = matches.get_one::<String>(options::ROOT) {
-        do_chroot(chroot_dir)?;
+        shadow_core::hardening::chroot_into(std::path::Path::new(chroot_dir))
+            .map_err(|e| ChfnError::Error(e.to_string()))?;
     }
 
     let root = SysRoot::default();

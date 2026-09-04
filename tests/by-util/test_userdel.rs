@@ -61,7 +61,7 @@ shared:x:1002:testuser,otheruser\n",
 /// Run `uumain` with a `--root` dir prepended to the args.
 fn run_with_root(dir: &tempfile::TempDir, extra_args: &[&str]) -> i32 {
     let root_str = dir.path().to_str().expect("non-UTF-8 temp path");
-    let mut args = vec!["userdel", "-R", root_str];
+    let mut args = vec!["userdel", "-P", root_str];
     args.extend_from_slice(extra_args);
     run(&args)
 }
