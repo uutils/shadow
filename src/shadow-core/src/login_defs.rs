@@ -16,7 +16,11 @@ use std::path::Path;
 use crate::error::ShadowError;
 
 /// Parsed `/etc/login.defs` configuration.
-#[derive(Debug, Clone)]
+///
+/// `Default` is an empty configuration, which is what a caller wants when the
+/// file is missing or unreadable: every lookup then returns `None` and the
+/// tool falls back to its built-in default rather than failing.
+#[derive(Debug, Clone, Default)]
 pub struct LoginDefs {
     entries: HashMap<String, String>,
 }
@@ -68,9 +72,15 @@ impl LoginDefs {
     }
 
     /// Get a numeric value by key.
+    ///
+    /// login.defs(5) writes numbers "in decimal, or in octal with a leading
+    /// 0, or in hexadecimal with a leading 0x". Parsing decimal only is not a
+    /// rejection but a silent misreading: `UID_MIN 01000` means 512, and a
+    /// decimal parse turns it into 1000, handing out UIDs from a range the
+    /// administrator reserved.
     #[must_use]
     pub fn get_i64(&self, key: &str) -> Option<i64> {
-        self.entries.get(key).and_then(|v| v.parse().ok())
+        self.entries.get(key).and_then(|v| parse_number(v))
     }
 
     /// Insert or replace a configuration value for later `get` / `get_i64` calls.
@@ -101,6 +111,36 @@ impl LoginDefs {
 /// # Errors
 ///
 /// Returns [`ShadowError::Validation`] for a malformed pair.
+/// Parse a login.defs number: decimal, octal with a leading `0`, or
+/// hexadecimal with a leading `0x`, with an optional sign.
+///
+/// A bare `0` is zero, not an empty octal literal.
+fn parse_number(value: &str) -> Option<i64> {
+    let value = value.trim();
+    let (negative, digits) = match value.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, value.strip_prefix('+').unwrap_or(value)),
+    };
+
+    let (radix, digits) = if let Some(hex) = digits
+        .strip_prefix("0x")
+        .or_else(|| digits.strip_prefix("0X"))
+    {
+        (16, hex)
+    } else if digits.len() > 1 && digits.starts_with('0') {
+        (8, &digits[1..])
+    } else {
+        (10, digits)
+    };
+
+    let magnitude = i64::from_str_radix(digits, radix).ok()?;
+    if negative {
+        magnitude.checked_neg()
+    } else {
+        Some(magnitude)
+    }
+}
+
 pub fn parse_override(kv: &str) -> Result<(&str, &str), ShadowError> {
     match kv.split_once('=') {
         Some((key, value)) if !key.is_empty() => Ok((key, value)),
@@ -326,6 +366,39 @@ mod tests {
             let path = write_login_defs(dir.path(), &line);
             let defs = LoginDefs::load(&path).unwrap();
             prop_assert_eq!(defs.get(&key), Some(value.as_str()));
+        }
+    }
+
+    /// login.defs(5): numbers may be decimal, octal with a leading 0, or
+    /// hexadecimal with a leading 0x. Reading `UID_MIN 01000` as 1000 rather
+    /// than 512 hands out UIDs from a range the administrator reserved.
+    #[test]
+    fn test_get_i64_honours_octal_and_hex() {
+        let cases = [
+            ("1000", 1000),
+            ("01000", 512),
+            ("0x1000", 4096),
+            ("0X20", 32),
+            ("0", 0),
+            ("00", 0),
+            ("-5", -5),
+            ("-010", -8),
+            ("+7", 7),
+            ("  42  ", 42),
+        ];
+        for (text, expected) in cases {
+            let mut defs = LoginDefs::default();
+            defs.set("N", text);
+            assert_eq!(defs.get_i64("N"), Some(expected), "for {text:?}");
+        }
+    }
+
+    #[test]
+    fn test_get_i64_rejects_non_numbers() {
+        for text in ["", "abc", "0x", "09", "1.5", "12ab"] {
+            let mut defs = LoginDefs::default();
+            defs.set("N", text);
+            assert_eq!(defs.get_i64("N"), None, "for {text:?}");
         }
     }
 }
