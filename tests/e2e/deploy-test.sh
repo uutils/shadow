@@ -292,6 +292,13 @@ test_user_lifecycle() {
     assert_ok "/etc/shadow is still root:shadow 0640 after passwd -l" \
         test "$(stat -c '%U:%G %a' /etc/shadow)" = "root:shadow 640"
 
+    # Locking twice must leave one marker: a second would need a second
+    # unlock, and `passwd -u` refuses to unlock an account that would stay
+    # locked, so the tool could not undo its own second lock.
+    assert_ok "passwd -l lifecycle_user again" passwd -l lifecycle_user
+    assert_ok "a second lock adds no second marker" \
+        bash -c "! grep -q '^lifecycle_user:!!' /etc/shadow"
+
     assert_ok "passwd -u lifecycle_user" passwd -u lifecycle_user
     assert_file_not_contains "password unlocked (no ! prefix)" \
         /etc/shadow '^lifecycle_user:!'

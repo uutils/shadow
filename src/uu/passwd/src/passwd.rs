@@ -1169,20 +1169,31 @@ mod tests {
     // New integration tests
     // -----------------------------------------------------------------------
 
+    /// Locking is idempotent. It used to prepend a second `!`, after which
+    /// one unlock left the account still locked -- and `-u` refuses to unlock
+    /// an account that would stay locked, so the tool could not undo its own
+    /// second lock. GNU shadow 4.17 leaves a single marker however many times
+    /// it is asked.
     #[test]
-    fn test_lock_already_locked() {
+    fn test_locking_an_already_locked_account_changes_nothing() {
         if skip_unless_root() {
             return;
         }
-        // Locking an already locked password adds another '!'.
         let dir = setup_prefix("testuser:!$6$hash:19500:0:99999:7:::\n");
-        let code = run_with_prefix(&dir, &["-l", "testuser"]);
-        assert_eq!(code, 0);
+        assert_eq!(run_with_prefix(&dir, &["-l", "testuser"]), 0);
 
         let content = read_shadow(&dir);
         assert!(
-            content.contains("testuser:!!$6$hash:"),
-            "should have double !, got: {content}"
+            content.contains("testuser:!$6$hash:"),
+            "the marker was doubled: {content}"
+        );
+
+        // And one unlock is enough to undo it.
+        assert_eq!(run_with_prefix(&dir, &["-u", "testuser"]), 0);
+        assert!(
+            read_shadow(&dir).contains("testuser:$6$hash:"),
+            "one unlock did not restore the password: {}",
+            read_shadow(&dir)
         );
     }
 

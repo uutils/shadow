@@ -64,8 +64,17 @@ impl ShadowEntry {
     }
 
     /// Lock the password by prepending `!`.
+    ///
+    /// Idempotent, as `passwd -l` is: locking an already-locked account
+    /// leaves one marker, not a second. Prepending unconditionally meant two
+    /// locks needed two unlocks, and since `passwd -u` refuses to unlock an
+    /// account that would stay locked, an account locked twice could not be
+    /// unlocked with the tool at all. Verified against GNU shadow 4.17, where
+    /// three locks leave a single `!` that one unlock removes.
     pub fn lock(&mut self) {
-        self.passwd.insert(0, '!');
+        if !self.passwd.starts_with('!') {
+            self.passwd.insert(0, '!');
+        }
     }
 
     /// Unlock the password by removing the leading `!`.
@@ -403,15 +412,24 @@ mod tests {
         assert_eq!(entry.passwd, "!$6$hash");
     }
 
+    /// Locking is idempotent, as `passwd -l` is. Adding a second marker meant
+    /// two locks needed two unlocks, and `passwd -u` refuses to unlock an
+    /// account that would stay locked, so a twice-locked account could not be
+    /// unlocked with the tool at all. Verified against GNU shadow 4.17: three
+    /// locks leave one `!`, and one unlock removes it.
     #[test]
-    fn test_lock_already_locked_adds_another() {
+    fn test_locking_twice_leaves_one_marker() {
         let mut entry = ShadowEntry {
             name: "u".into(),
-            passwd: "!$6$hash".into(),
+            passwd: "$6$hash".into(),
             ..Default::default()
         };
-        entry.lock();
-        assert_eq!(entry.passwd, "!!$6$hash");
+        for _ in 0..3 {
+            entry.lock();
+        }
+        assert_eq!(entry.passwd, "!$6$hash");
+        assert!(entry.unlock(), "one unlock must undo any number of locks");
+        assert_eq!(entry.passwd, "$6$hash");
     }
 
     #[test]
