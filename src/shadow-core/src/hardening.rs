@@ -9,12 +9,16 @@
 //! hostile callers. These functions implement the standard hardening
 //! steps that all tools share.
 
-/// Suppress core dumps via `RLIMIT_CORE=0`.
+/// Suppress core dumps.
 ///
-/// A core dump from a setuid-root process could expose password hashes
-/// and plaintext passwords.
+/// A core dump from an account tool could expose password hashes and, for
+/// `chpasswd` or the PAM conversation, plaintext passwords. `RLIMIT_CORE=0`
+/// is not enough on its own: the kernel ignores it when cores are piped to a
+/// handler (core(5)), which is how systemd-coredump and apport collect them.
+/// `PR_SET_DUMPABLE` is what actually stops the dump. A setuid exec already
+/// clears the flag; the root-run tools start dumpable.
 pub fn suppress_core_dumps() {
-    use rustix::process::{Resource, Rlimit, setrlimit};
+    use rustix::process::{DumpableBehavior, Resource, Rlimit, set_dumpable_behavior, setrlimit};
 
     let _ = setrlimit(
         Resource::Core,
@@ -23,9 +27,7 @@ pub fn suppress_core_dumps() {
             maximum: Some(0),
         },
     );
-    // PR_SET_DUMPABLE via prctl (no raw unsafe needed).
-    // nix doesn't expose prctl directly, so we skip it rather than use unsafe.
-    // RLIMIT_CORE=0 is sufficient to prevent core dumps.
+    let _ = set_dumpable_behavior(DumpableBehavior::NotDumpable);
 }
 
 /// Raise `RLIMIT_FSIZE` to prevent truncated file writes.
@@ -44,17 +46,13 @@ pub fn raise_file_size_limit() {
     );
 }
 
-/// Sanitize the environment for setuid-root context.
-///
-/// Clears all environment variables except essential ones (`TERM`, `LANG`,
-/// `LC_*`) and sets `PATH` to a safe default. Prevents environment variable
-/// injection attacks (`LD_PRELOAD`, `IFS`, `CDPATH`, etc.).
 /// Build a sanitized environment for child process spawning.
 ///
-/// Returns safe key-value pairs (PATH + TERM/LANG/LC_*). The current
-/// process environment is NOT modified (`set_var` is unsafe in edition
-/// 2024). Pass the returned Vec to `Command::env_clear().envs(...)`
-/// when spawning subprocesses.
+/// Returns safe key-value pairs: a fixed `PATH` plus the caller's `TERM`,
+/// `LANG` and `LC_*`. The current process environment is NOT modified
+/// (`set_var` is unsafe in edition 2024); pass the returned Vec to
+/// `Command::env_clear().envs(...)` when spawning subprocesses so that
+/// `LD_PRELOAD`, `IFS`, `CDPATH` and friends never reach a child.
 pub fn sanitized_env() -> Vec<(String, String)> {
     let mut env = Vec::new();
     env.push((
