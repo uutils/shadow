@@ -4,12 +4,13 @@
 // file that was distributed with this source code.
 // spell-checker:ignore chroot sysroot
 
-//! System root path resolver for `--root` and `--prefix` support.
+//! System root path resolver for `--prefix` support.
 //!
-//! `--prefix DIR` prepends DIR to all file paths (no `chroot` syscall).
-//! `--root DIR` does an actual `chroot()` — paths are then relative to `/`.
+//! `--prefix DIR` prepends DIR to every file path the tool touches, without a
+//! `chroot` syscall. Tools that also offer `--root DIR` perform a real
+//! `chroot()` first and then resolve against `/`.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// Resolves file paths relative to an optional prefix directory.
 #[derive(Debug, Clone)]
@@ -30,29 +31,15 @@ impl SysRoot {
 
     /// Resolve a path relative to the prefix.
     ///
-    /// Strips leading `/` from `relative` before joining with the prefix.
-    /// Returns `None` if the path contains `..` components (path traversal).
-    pub fn try_resolve(&self, relative: &str) -> Option<PathBuf> {
-        let stripped = relative.strip_prefix('/').unwrap_or(relative);
-        let joined = self.prefix.join(stripped);
-        // Reject path traversal: ".." components could escape the prefix.
-        for component in joined.components() {
-            if matches!(component, Component::ParentDir) {
-                return None;
-            }
-        }
-        Some(joined)
-    }
-
-    /// Resolve a path relative to the prefix.
-    ///
-    /// Strips leading `/` from `relative` before joining with the prefix.
-    /// Only for hardcoded paths — use [`try_resolve`] for user-controlled input.
+    /// Strips a leading `/` from `relative` and joins it onto the prefix. This
+    /// is a plain path computation and cannot fail: a `..` component is joined
+    /// like any other. Callers that accept a path from the command line (a
+    /// home directory, a skeleton directory) validate it before it gets here;
+    /// the prefix itself is trusted because only root may set it.
     #[must_use]
     pub fn resolve(&self, relative: &str) -> PathBuf {
-        // All callers pass hardcoded paths like "/etc/passwd" — never ".."
-        self.try_resolve(relative)
-            .unwrap_or_else(|| unreachable!("resolve() called with path traversal: {relative:?}"))
+        let stripped = relative.strip_prefix('/').unwrap_or(relative);
+        self.prefix.join(stripped)
     }
 
     /// Path to `/etc/passwd`.
@@ -148,20 +135,19 @@ mod tests {
         assert_eq!(root.resolve("etc/shadow"), PathBuf::from("/mnt/etc/shadow"));
     }
 
+    // A `..` anywhere — in a relative prefix given on the command line or in
+    // a home directory read from /etc/passwd — used to trip an
+    // `unreachable!()`; setuid `passwd --prefix ../x` aborted. It is now an
+    // ordinary path component.
     #[test]
-    fn test_try_resolve_rejects_path_traversal() {
-        let root = SysRoot::new(Some(Path::new("/mnt/chroot")));
-        // Attempting to escape the prefix via ".." returns None.
-        assert_eq!(root.try_resolve("/../etc/shadow"), None);
-        assert_eq!(root.try_resolve("/home/../../etc/shadow"), None);
-    }
+    fn test_parent_dir_components_never_panic() {
+        let root = SysRoot::new(Some(Path::new("../chroot")));
+        assert_eq!(root.passwd_path(), PathBuf::from("../chroot/etc/passwd"));
 
-    #[test]
-    fn test_try_resolve_accepts_valid_paths() {
-        let root = SysRoot::new(Some(Path::new("/mnt/chroot")));
+        let root = SysRoot::new(Some(Path::new("/")));
         assert_eq!(
-            root.try_resolve("/etc/shadow"),
-            Some(PathBuf::from("/mnt/chroot/etc/shadow"))
+            root.resolve("/home/../srv/foo"),
+            PathBuf::from("/home/../srv/foo")
         );
     }
 }
