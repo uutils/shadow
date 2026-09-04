@@ -325,14 +325,15 @@ fn parse_options(matches: &clap::ArgMatches) -> Result<UseraddOptions, UseraddEr
         })
         .unwrap_or_default();
 
-    let system = matches.get_flag(options::SYSTEM);
-
     // Determine create-home: -m sets it, -M clears it, default depends on login.defs
     let explicit_create = matches.get_flag(options::CREATE_HOME);
     let explicit_no_create = matches.get_flag(options::NO_CREATE_HOME);
+    let system = matches.get_flag(options::SYSTEM);
     let create_home = if explicit_create {
         true
-    } else if explicit_no_create {
+    } else if explicit_no_create || system {
+        // useradd(8): -r "will not create a home directory ... regardless of
+        // CREATE_HOME" (verified against shadow-utils).
         false
     } else {
         defs.get("CREATE_HOME")
@@ -484,7 +485,11 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
 
     // Step 9: Validate supplementary groups exist.
     for grp_name in &opts.groups {
-        if !group_entries.iter().any(|g| g.name == *grp_name) {
+        // -G takes the same forms as -g: a group name or a GID.
+        let known = group_entries
+            .iter()
+            .any(|g| g.name == *grp_name || grp_name.parse::<u32>().is_ok_and(|id| g.gid == id));
+        if !known {
             drop(group_lock);
             drop(passwd_lock);
             return Err(
@@ -535,16 +540,33 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
 
     // Step 13: Write /etc/shadow entry (passwd+group locks still held).
     let shadow_path = opts.root.shadow_path();
-    let shadow_entry = ShadowEntry {
-        name: opts.login.clone(),
-        passwd: opts.password.clone(),
-        last_change: Some(today_days_since_epoch()?),
-        min_age: defs.get_i64("PASS_MIN_DAYS").or(Some(0)),
-        max_age: defs.get_i64("PASS_MAX_DAYS").or(Some(99999)),
-        warn_days: defs.get_i64("PASS_WARN_AGE").or(Some(7)),
-        inactive_days: opts.inactive,
-        expire_date: opts.expire_date,
-        reserved: String::new(),
+    // useradd(8): a system account is "created with no aging information in
+    // /etc/shadow" -- verified against shadow-utils, which writes
+    // `svc:!:20700::::::` for -r and the full policy for a regular account.
+    let shadow_entry = if opts.system {
+        ShadowEntry {
+            name: opts.login.clone(),
+            passwd: opts.password.clone(),
+            last_change: Some(today_days_since_epoch()?),
+            min_age: None,
+            max_age: None,
+            warn_days: None,
+            inactive_days: None,
+            expire_date: None,
+            reserved: String::new(),
+        }
+    } else {
+        ShadowEntry {
+            name: opts.login.clone(),
+            passwd: opts.password.clone(),
+            last_change: Some(today_days_since_epoch()?),
+            min_age: defs.get_i64("PASS_MIN_DAYS").or(Some(0)),
+            max_age: defs.get_i64("PASS_MAX_DAYS").or(Some(99999)),
+            warn_days: defs.get_i64("PASS_WARN_AGE").or(Some(7)),
+            inactive_days: opts.inactive,
+            expire_date: opts.expire_date,
+            reserved: String::new(),
+        }
     };
     write_shadow_entry(&shadow_path, &shadow_entry)?;
 
@@ -557,14 +579,18 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
 
     // Step 14: Allocate subordinate UID/GID ranges for rootless containers.
     // Only done when the relevant file exists (matching GNU shadow-utils behavior).
+    // useradd(8) allocates subordinate ranges for regular accounts only;
+    // verified that shadow-utils leaves /etc/subuid untouched for -r.
     let subuid_path = opts.root.subuid_path();
-    if subuid_path.exists()
+    if !opts.system
+        && subuid_path.exists()
         && let Err(e) = append_subid_entry(&subuid_path, &opts.login, 65_536)
     {
         uucore::show_error!("warning: failed to add subordinate UID range: {e}");
     }
     let subgid_path = opts.root.subgid_path();
-    if subgid_path.exists()
+    if !opts.system
+        && subgid_path.exists()
         && let Err(e) = append_subid_entry(&subgid_path, &opts.login, 65_536)
     {
         uucore::show_error!("warning: failed to add subordinate GID range: {e}");
@@ -579,7 +605,13 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     if opts.create_home {
         let resolved_home = opts.root.resolve(&home_dir);
         let resolved_skel = opts.root.resolve(&opts.skel_dir);
-        create_home_directory(&resolved_home, &resolved_skel, uid, gid)?;
+        // login.defs(5) HOME_MODE sets the mode of a new home directory;
+        // shadow-utils ships 0700 and we fall back to the same.
+        let home_mode = defs
+            .get("HOME_MODE")
+            .and_then(|v| u32::from_str_radix(v.trim_start_matches("0o"), 8).ok())
+            .unwrap_or(0o700);
+        create_home_directory(&resolved_home, &resolved_skel, uid, gid, home_mode)?;
     }
 
     // Step 17: Invalidate nscd caches.
@@ -702,17 +734,19 @@ fn determine_gid(
 
 /// Resolve a group argument (name or numeric GID) to a GID.
 fn resolve_group(gid_arg: &str, group_entries: &[GroupEntry]) -> Result<u32, UseraddError> {
-    // Try as numeric GID first.
-    if let Ok(gid) = gid_arg.parse::<u32>() {
-        return Ok(gid);
-    }
+    // useradd(8): the group given to -g or -G "must exist", named either way.
+    // A numeric GID naming no group used to be accepted, leaving the account
+    // pointing at a group that does not exist.
+    let found = if let Ok(gid) = gid_arg.parse::<u32>() {
+        group_entries.iter().find(|g| g.gid == gid).map(|g| g.gid)
+    } else {
+        group_entries
+            .iter()
+            .find(|g| g.name == gid_arg)
+            .map(|g| g.gid)
+    };
 
-    // Look up by name.
-    group_entries
-        .iter()
-        .find(|g| g.name == gid_arg)
-        .map(|g| g.gid)
-        .ok_or_else(|| UseraddError::GroupNotExist(format!("group '{gid_arg}' does not exist")))
+    found.ok_or_else(|| UseraddError::GroupNotExist(format!("group '{gid_arg}' does not exist")))
 }
 
 // ---------------------------------------------------------------------------
@@ -806,6 +840,18 @@ fn write_shadow_entry(shadow_path: &Path, new_entry: &ShadowEntry) -> UResult<()
     Ok(())
 }
 
+/// Whether `-G` named this group, by name or by GID.
+fn group_requested(requested: &[String], name: &str, gid: u32) -> bool {
+    requested
+        .iter()
+        .any(|g| g == name || g.parse::<u32>().is_ok_and(|id| id == gid))
+}
+
+/// The gshadow file carries no GID, so only the name can be matched there.
+fn gs_group_requested(requested: &[String], name: &str) -> bool {
+    requested.iter().any(|g| g == name)
+}
+
 /// Add the user to supplementary groups in `/etc/group` and `/etc/gshadow`.
 fn add_to_supplementary_groups(
     opts: &UseraddOptions,
@@ -819,7 +865,9 @@ fn add_to_supplementary_groups(
         .map_err(|e| UseraddError::CannotUpdateGroup(format!("{e}")))?;
 
     for entry in &mut entries {
-        if opts.groups.contains(&entry.name) && !entry.members.contains(&opts.login) {
+        if group_requested(&opts.groups, &entry.name, entry.gid)
+            && !entry.members.contains(&opts.login)
+        {
             entry.members.push(opts.login.clone());
         }
     }
@@ -838,7 +886,8 @@ fn add_to_supplementary_groups(
             .map_err(|e| UseraddError::CannotUpdateGroup(format!("{e}")))?;
 
         for entry in &mut gs_entries {
-            if opts.groups.contains(&entry.name) && !entry.members.contains(&opts.login) {
+            if gs_group_requested(&opts.groups, &entry.name) && !entry.members.contains(&opts.login)
+            {
                 entry.members.push(opts.login.clone());
             }
         }
@@ -916,7 +965,13 @@ fn append_subid_entry(path: &Path, name: &str, count: u64) -> UResult<()> {
 /// Create the home directory and copy skeleton files.
 ///
 /// Paths must already be resolved through `SysRoot` by the caller.
-fn create_home_directory(home_path: &Path, skel_path: &Path, uid: u32, gid: u32) -> UResult<()> {
+fn create_home_directory(
+    home_path: &Path,
+    skel_path: &Path,
+    uid: u32,
+    gid: u32,
+    mode: u32,
+) -> UResult<()> {
     // The kernel does not reset umask across setuid, so a caller-controlled
     // inherited umask may still be in effect in our process. A non-zero umask
     // can mask off requested permission bits, so even mkdir(0o700) is not
@@ -926,9 +981,30 @@ fn create_home_directory(home_path: &Path, skel_path: &Path, uid: u32, gid: u32)
     // environment; umask can only make the result less permissive than the
     // mode we requested, never more. Scoped to the mkdir call only — chown
     // doesn't need it, and copy_skel manages its own umask internally.
+    // useradd(8) -b: with -m the base directory is created if it is missing,
+    // so a home under a path that does not exist yet works. Ancestors get the
+    // conventional 0755 and stay root-owned; only the home itself takes `mode`
+    // and the user's ownership.
+    if let Some(parent) = home_path.parent()
+        && !parent.as_os_str().is_empty()
+        && !parent.exists()
+    {
+        let _umask = shadow_core::atomic::UmaskGuard::zero();
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o755)
+            .create(parent)
+            .map_err(|e| {
+                UseraddError::CannotCreateHome(format!(
+                    "cannot create directory '{}': {e}",
+                    parent.display()
+                ))
+            })?;
+    }
+
     let mkdir_result = {
         let _umask = shadow_core::atomic::UmaskGuard::zero();
-        std::fs::DirBuilder::new().mode(0o700).create(home_path)
+        std::fs::DirBuilder::new().mode(mode).create(home_path)
     };
 
     // Use DirBuilder::mode() so mkdir(2) is called with 0o700 atomically.
@@ -1554,8 +1630,17 @@ mod tests {
 
     #[test]
     fn test_resolve_group_by_gid() {
-        let groups: Vec<GroupEntry> = vec![];
+        let groups = vec![GroupEntry {
+            name: "staff".into(),
+            passwd: "x".into(),
+            gid: 500,
+            members: vec![],
+        }];
         assert_eq!(resolve_group("500", &groups).expect("numeric"), 500);
+        assert_eq!(resolve_group("staff", &groups).expect("by name"), 500);
+        // useradd(8): the group must exist, whichever form names it.
+        assert!(resolve_group("501", &groups).is_err());
+        assert!(resolve_group("nosuch", &groups).is_err());
     }
 
     #[test]
@@ -1828,7 +1913,7 @@ mod tests {
         fs::create_dir_all(&skel).expect("create skel");
         fs::write(skel.join(".bashrc"), "# bashrc\n").expect("write bashrc");
 
-        create_home_directory(&home, &skel, 1000, 1000).expect("create home");
+        create_home_directory(&home, &skel, 1000, 1000, 0o700).expect("create home");
 
         assert!(home.exists());
         assert!(home.join(".bashrc").exists());
@@ -1884,7 +1969,7 @@ mod tests {
         // umask when this scope exits.
         let _restore = UmaskRestore(rustix::process::umask(rustix::fs::Mode::empty()));
 
-        create_home_directory(&home, &skel, 1000, 1000).expect("create home");
+        create_home_directory(&home, &skel, 1000, 1000, 0o700).expect("create home");
 
         let meta = fs::metadata(&home).expect("metadata");
         assert_eq!(
@@ -1906,7 +1991,7 @@ mod tests {
         fs::create_dir_all(&home).expect("create home");
 
         // Should succeed with a warning, not copy skel.
-        create_home_directory(&home, Path::new("/nonexistent/skel"), 1000, 1000)
+        create_home_directory(&home, Path::new("/nonexistent/skel"), 1000, 1000, 0o700)
             .expect("should succeed for existing home");
     }
 

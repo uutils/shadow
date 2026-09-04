@@ -118,6 +118,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `useradd -r` now matches `useradd(8)`: a system account gets no home
+  directory (regardless of `CREATE_HOME`), no aging information in
+  `/etc/shadow`, and no subordinate UID/GID ranges (#244)
+- `useradd -g` and `-G` require the group to exist, named or numbered, and
+  exit 6 when it does not. A numeric GID naming no group was accepted, leaving
+  the account pointing at a group that did not exist; `-G` also rejected the
+  numeric form the man page allows (#244)
+- UIDs and GIDs are allocated past the highest already in use rather than in
+  the first gap, so a new account no longer inherits a deleted one's ID — and
+  its leftover files. The first free ID is still used once the range top is
+  taken (#244)
+- `useradd` honours `HOME_MODE` from login.defs and creates missing parent
+  directories of the home, instead of always using `0700` and failing when the
+  base directory does not exist (#244)
+- Usernames and group names may contain upper case and end with `$`, both of
+  which shadow-utils accepts — the latter is how Samba names machine accounts.
+  Refusing them meant refusing accounts that exist on real systems (#244)
 - The password-aging fields reject a negative day count other than `-1`.
   `chage -M -5` and `passwd -x -5` stored the value verbatim and left a
   nonsensical policy behind; they now exit 2 and 6 respectively, the codes

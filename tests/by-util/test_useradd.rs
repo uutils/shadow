@@ -337,9 +337,15 @@ fn test_create_user_with_group() {
     }
 
     let dir = setup_root_dir();
-    // Use numeric GID to avoid needing the group to exist by name.
+    // useradd(8): the group given to -g must exist, named or numbered.
+    std::fs::write(dir.path().join("etc/group"), "root:x:0:\nstaff:x:1000:\n")
+        .expect("write group");
+
     let code = run_with_root(&dir, &["-g", "1000", "-N", "grpuser"]);
-    assert_eq!(code, 0, "useradd -g 1000 should exit 0");
+    assert_eq!(
+        code, 0,
+        "useradd -g 1000 should exit 0 when GID 1000 exists"
+    );
 
     let passwd = read_passwd(&dir);
     // The GID (4th field) should be 1000.
@@ -653,5 +659,55 @@ fn test_comments_and_compat_lines_survive_useradd() {
     assert!(
         group.contains("# Local groups") && group.contains("+:::"),
         "group comments and compat lines must survive, got: {group}"
+    );
+}
+
+#[test]
+fn test_primary_group_must_exist() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    // useradd(8) exit 6: "specified group doesn't exist". A numeric GID that
+    // names no group used to be accepted, leaving the account pointing at a
+    // group that does not exist.
+    let dir = setup_root_dir();
+    assert_eq!(run_with_root(&dir, &["-g", "12345", "-N", "u"]), 6);
+    assert_eq!(run_with_root(&dir, &["-g", "nosuchgroup", "-N", "u"]), 6);
+    assert!(!read_passwd(&dir).contains("u:"), "nothing may be written");
+}
+
+#[test]
+fn test_system_account_has_no_home_and_no_aging() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    // useradd(8): -r creates no home "regardless of CREATE_HOME" and leaves
+    // "no aging information in /etc/shadow" (both verified against GNU).
+    let dir = setup_root_dir();
+    let etc = dir.path().join("etc");
+    let defs = std::fs::read_to_string(etc.join("login.defs")).unwrap();
+    std::fs::write(
+        etc.join("login.defs"),
+        defs.replace("CREATE_HOME no", "CREATE_HOME yes"),
+    )
+    .unwrap();
+
+    assert_eq!(run_with_root(&dir, &["-r", "svc"]), 0);
+    assert!(
+        !dir.path().join("home/svc").exists(),
+        "-r must not create a home even with CREATE_HOME yes"
+    );
+    let shadow = read_shadow(&dir);
+    let line = shadow
+        .lines()
+        .find(|l| l.starts_with("svc:"))
+        .expect("svc in shadow");
+    let fields: Vec<&str> = line.split(':').collect();
+    assert_eq!(
+        (fields[3], fields[4], fields[5]),
+        ("", "", ""),
+        "a system account carries no aging information, got: {line}"
     );
 }
