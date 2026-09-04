@@ -47,6 +47,7 @@ enum UsermodError {
     BadArgument(String),
     UserNotFound(String),
     UidInUse(String),
+    NameInUse(String),
 }
 
 impl fmt::Display for UsermodError {
@@ -55,7 +56,8 @@ impl fmt::Display for UsermodError {
             Self::CantUpdate(msg)
             | Self::BadArgument(msg)
             | Self::UserNotFound(msg)
-            | Self::UidInUse(msg) => f.write_str(msg),
+            | Self::UidInUse(msg)
+            | Self::NameInUse(msg) => f.write_str(msg),
         }
     }
 }
@@ -69,6 +71,7 @@ impl UError for UsermodError {
             Self::BadArgument(_) => 3,
             Self::UserNotFound(_) => 6,
             Self::UidInUse(_) => 4,
+            Self::NameInUse(_) => 9,
         }
     }
 }
@@ -114,6 +117,17 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         }
     }
 
+    // Parse the expiry date before anything is written, so a malformed value
+    // cannot leave the passwd change committed and the shadow change not.
+    // usermod(8) documents YYYY-MM-DD; days since the epoch stays accepted.
+    let expire_date = match matches.get_one::<String>(options::EXPIREDATE) {
+        Some(exp) => Some(
+            shadow_core::date::parse_expire_date(exp)
+                .map_err(|e| UsermodError::BadArgument(e.to_string()))?,
+        ),
+        None => None,
+    };
+
     // Modify /etc/passwd.
     let passwd_path = root.passwd_path();
     let lock = FileLock::acquire(&passwd_path)
@@ -156,7 +170,18 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let new_login = matches.get_one::<String>(options::LOGIN);
     if let Some(new_name) = new_login {
         validate::validate_username(new_name)
-            .map_err(|e| UsermodError::CantUpdate(format!("invalid login name: {e}")))?;
+            .map_err(|e| UsermodError::BadArgument(format!("invalid login name: {e}")))?;
+        // usermod(8) exit 9: the new name must not already be taken, or the
+        // rename would produce two entries with the same login.
+        if entries
+            .iter()
+            .any(|e| e.name == *new_name && e.name != *login)
+        {
+            drop(lock);
+            return Err(
+                UsermodError::NameInUse(format!("user '{new_name}' already exists")).into(),
+            );
+        }
         entries[idx].name.clone_from(new_name);
     }
 
@@ -184,7 +209,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let shadow_path = root.shadow_path();
     let do_lock = matches.get_flag(options::LOCK);
     let do_unlock = matches.get_flag(options::UNLOCK);
-    let expire = matches.get_one::<String>(options::EXPIREDATE);
     let inactive = matches.get_one::<i64>(options::INACTIVE);
     let new_password = matches.get_one::<String>(options::PASSWORD);
 
@@ -192,7 +216,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     if shadow_path.exists()
         && (do_lock
             || do_unlock
-            || expire.is_some()
+            || expire_date.is_some()
             || inactive.is_some()
             || new_password.is_some()
             || login_changing)
@@ -217,16 +241,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         if do_unlock {
             s.unlock();
         }
-        if let Some(exp) = expire {
-            s.expire_date = if exp == "-1" || exp.is_empty() {
-                None
-            } else {
-                Some(exp.parse::<i64>().map_err(|_| {
-                    UsermodError::CantUpdate(format!(
-                        "invalid expire date '{exp}' (expected days since epoch)"
-                    ))
-                })?)
-            };
+        if let Some(parsed) = expire_date {
+            s.expire_date = parsed;
         }
         if let Some(&i) = inactive {
             s.inactive_days = if i < 0 { None } else { Some(i) };

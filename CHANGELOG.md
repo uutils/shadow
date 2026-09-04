@@ -105,6 +105,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `usermod -l` refuses a login name that already exists (exit 9). Renaming
+  onto an existing account produced two entries with the same name in
+  `/etc/passwd` and `/etc/shadow` — `usermod -l root alice` gave a second
+  `root` (#242)
+- `usermod -e` accepts the `YYYY-MM-DD` form its man page documents, not only
+  days since the epoch, so `usermod -e 2030-01-01` (what Ansible and most
+  scripts pass) works. The date is parsed before anything is written, so an
+  invalid one no longer leaves an already-committed passwd change behind.
+  `useradd` and `usermod` now share one calendar implementation in
+  `shadow-core::date` (#242)
 - `userdel` now removes the user's private group (the `USERGROUPS_ENAB` group
   named after the login) when it has no other members, purges the user's
   `/etc/subuid` and `/etc/subgid` ranges so a later same-named user does not

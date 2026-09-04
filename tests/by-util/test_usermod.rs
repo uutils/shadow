@@ -478,3 +478,76 @@ fn test_set_password_preserves_other_fields() {
     assert_eq!(fields.len(), 9, "shadow entry should have exactly 9 fields");
     assert_eq!(fields[8], "", "reserved field should be empty");
 }
+
+// ---------------------------------------------------------------------------
+// usermod(8): rename collisions and date formats
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_rename_to_existing_login_is_rejected() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "root:x:0:0:root:/root:/bin/bash\n\
+         alice:x:1000:1000:Alice:/home/alice:/bin/bash\n",
+        "root:*:19500:0:99999:7:::\nalice:$6$h:19500:0:99999:7:::\n",
+        "alice:x:1000:\n",
+    );
+
+    let code = run_with_prefix(&dir, &["-l", "root", "alice"]);
+    assert_eq!(code, 9, "renaming onto an existing login must exit 9");
+
+    let passwd = read_passwd(&dir);
+    assert_eq!(
+        passwd.matches("root:x:0:").count(),
+        1,
+        "there must still be exactly one root entry, got: {passwd}"
+    );
+    assert!(passwd.contains("alice:x:1000:"), "alice must be unchanged");
+}
+
+#[test]
+fn test_expiredate_accepts_iso_date() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "alice:x:1000:1000:Alice:/home/alice:/bin/bash\n",
+        "alice:$6$h:19500:0:99999:7:::\n",
+        "alice:x:1000:\n",
+    );
+
+    // 2024-02-29 is 19782 days after the epoch.
+    let code = run_with_prefix(&dir, &["-e", "2024-02-29", "alice"]);
+    assert_eq!(code, 0, "YYYY-MM-DD must be accepted");
+    assert!(
+        read_shadow(&dir).contains(":19782:"),
+        "expiry should be stored as days since epoch, got: {}",
+        read_shadow(&dir)
+    );
+}
+
+#[test]
+fn test_bad_expiredate_changes_nothing() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "alice:x:1000:1000:Alice:/home/alice:/bin/bash\n",
+        "alice:$6$h:19500:0:99999:7:::\n",
+        "alice:x:1000:\n",
+    );
+    let before = read_passwd(&dir);
+
+    let code = run_with_prefix(&dir, &["-c", "New Name", "-e", "2023-02-29", "alice"]);
+    assert_eq!(code, 3, "an impossible date is a bad argument");
+    assert_eq!(
+        read_passwd(&dir),
+        before,
+        "no field may be committed when a later argument is invalid"
+    );
+}
