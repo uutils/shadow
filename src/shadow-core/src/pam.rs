@@ -854,4 +854,71 @@ mod tests {
         let rc = conversation(1, ptr::null_mut(), &raw mut resp, appdata);
         assert_eq!(rc, return_code::PAM_CONV_ERR);
     }
+
+    // -----------------------------------------------------------------------
+    // The PAM stack, end to end
+    //
+    // Against two throwaway services the Docker images define: one backed by
+    // pam_permit, one by pam_deny. Until these existed the only PAM coverage
+    // was the deployment image authenticating a real account, which cannot
+    // exercise a *refusal* without relying on a wrong password being wrong --
+    // and could not tell a refusal apart from a broken conversation.
+    // -----------------------------------------------------------------------
+
+    /// Whether the test services are installed. They are absent on a
+    /// developer's own machine, where these tests are skipped.
+    fn test_services_present() -> bool {
+        std::path::Path::new("/etc/pam.d/shadow-rs-test-permit").exists()
+            && std::path::Path::new("/etc/pam.d/shadow-rs-test-deny").exists()
+    }
+
+    #[test]
+    fn test_permit_stack_authenticates() {
+        if !test_services_present() {
+            return;
+        }
+        let mut pam = PamContext::new("shadow-rs-test-permit", "root", ConvMode::Stdin)
+            .expect("pam_start on a permit stack");
+        pam.authenticate(0).expect("pam_permit must authenticate");
+        pam.acct_mgmt(0)
+            .expect("pam_permit must pass account management");
+    }
+
+    /// The refusal path, which is the one that matters for a setuid tool: it
+    /// must fail, and fail with the stack's answer rather than a conversation
+    /// error.
+    #[test]
+    fn test_deny_stack_refuses() {
+        if !test_services_present() {
+            return;
+        }
+        let mut pam = PamContext::new("shadow-rs-test-deny", "root", ConvMode::Stdin)
+            .expect("pam_start on a deny stack");
+        let err = pam.authenticate(0).expect_err("pam_deny must refuse");
+        let message = err.to_string();
+        assert!(
+            !message.contains("conversation"),
+            "the refusal should come from the stack, not a broken conversation: {message}"
+        );
+    }
+
+    /// A service with no configuration at all: PAM falls through to `other`,
+    /// which on every distribution here denies. A setuid tool must not treat
+    /// that as success.
+    #[test]
+    fn test_unknown_service_does_not_authenticate() {
+        if !test_services_present() {
+            return;
+        }
+        let Ok(mut pam) =
+            PamContext::new("shadow-rs-no-such-service-9f3a", "root", ConvMode::Stdin)
+        else {
+            // Refusing at pam_start is an equally correct answer.
+            return;
+        };
+        assert!(
+            pam.authenticate(0).is_err(),
+            "an unconfigured service must not authenticate"
+        );
+    }
 }

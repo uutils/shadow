@@ -51,6 +51,10 @@ jobs:
       # Release binaries are built with `pam` (see dist-workspace.toml), so the
       # PAM code path has to be linted too — it is invisible to the run above.
       - run: cargo clippy --workspace --all-targets --features pam -- -D warnings
+      # Every optional module compiled at once. `completions` and the
+      # shadow-core feature gates are otherwise built by nobody, so a lint or a
+      # compile error in them reaches main unnoticed.
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   test:
     name: Test

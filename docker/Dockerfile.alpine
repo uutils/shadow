@@ -20,6 +20,13 @@ RUN apk add --no-cache \
     curl
 
 RUN rustup component add clippy rustfmt
+# Two throwaway PAM services so the PAM wrapper can be tested against a stack
+# whose answer is known. Without them the only coverage is the end-to-end image
+# authenticating a real account, which cannot exercise a *refusal* without
+# depending on a wrong password being wrong.
+RUN printf 'auth required pam_permit.so\naccount required pam_permit.so\npassword required pam_permit.so\nsession required pam_permit.so\n' > /etc/pam.d/shadow-rs-test-permit \
+    && printf 'auth required pam_deny.so\naccount required pam_deny.so\npassword required pam_deny.so\nsession required pam_deny.so\n' > /etc/pam.d/shadow-rs-test-deny
+
 
 # cargo-deny: pinned, checksum-verified prebuilt binary. The static musl build
 # runs on glibc too, so every image shares one asset. Installing the binary

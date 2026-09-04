@@ -69,6 +69,7 @@ check:
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets -- -D warnings
 	cargo clippy --workspace --all-targets --features pam -- -D warnings
+	cargo clippy --workspace --all-targets --all-features -- -D warnings
 	$(MAKE) test
 
 # `install` ships binaries built with pam, so the tests must cover that build
