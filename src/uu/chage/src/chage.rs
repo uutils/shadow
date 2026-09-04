@@ -9,11 +9,12 @@
 //! Drop-in replacement for GNU shadow-utils `chage(1)`.
 
 use std::fmt;
-use std::io::Write as _;
+use std::io::Write;
 use std::path::Path;
 
 use clap::{Arg, ArgAction, Command};
 
+use shadow_core::date;
 use shadow_core::lock::FileLock;
 use shadow_core::shadow::{self, ShadowEntry};
 use shadow_core::sysroot::SysRoot;
@@ -31,6 +32,7 @@ mod options {
     pub const MAXDAYS: &str = "maxdays";
     pub const ROOT: &str = "root";
     pub const WARNDAYS: &str = "warndays";
+    pub const PREFIX: &str = "prefix";
 }
 
 /// Exit code constants for `chage(1)`.
@@ -43,6 +45,7 @@ mod exit_codes {
     pub const PERMISSION_DENIED: i32 = 1;
     pub const INVALID_SYNTAX: i32 = 2;
     pub const SHADOW_NOT_FOUND: i32 = 15;
+    pub const USER_NOT_FOUND: i32 = 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,8 +65,13 @@ enum ChageError {
     UnexpectedFailure(String),
     /// Exit 5 — could not acquire the shadow lock file.
     FileBusy(String),
-    /// Exit 15 — shadow entry not found for user.
+    /// Exit 15 — the shadow file itself could not be read.
     ShadowNotFound(String),
+    /// Exit 1 — the account does not exist.
+    ///
+    /// chage(1) reserves 15 for "can't find the shadow password file"; a
+    /// missing *account* is an ordinary failure, and GNU exits 1 for it.
+    UserNotFound(String),
     /// Exit 2 — a numeric option was given a value outside its range.
     InvalidArgument(String),
 }
@@ -75,6 +83,7 @@ impl fmt::Display for ChageError {
             | Self::UnexpectedFailure(msg)
             | Self::FileBusy(msg)
             | Self::ShadowNotFound(msg)
+            | Self::UserNotFound(msg)
             | Self::InvalidArgument(msg) => f.write_str(msg),
         }
     }
@@ -85,7 +94,10 @@ impl std::error::Error for ChageError {}
 impl UError for ChageError {
     fn code(&self) -> i32 {
         match self {
-            Self::PermissionDenied(_) => 1,
+            // A missing account is an ordinary failure, and shares the general
+            // failure code with a refused one; chage(1) reserves 15 for the
+            // shadow *file*.
+            Self::PermissionDenied(_) | Self::UserNotFound(_) => 1,
             Self::UnexpectedFailure(_) => 3,
             Self::FileBusy(_) => 5,
             Self::ShadowNotFound(_) => 15,
@@ -98,125 +110,21 @@ impl UError for ChageError {
 // Date parsing
 // ---------------------------------------------------------------------------
 
-/// Parse a date argument that can be either days since epoch or YYYY-MM-DD.
+/// Parse a date argument: `YYYY-MM-DD`, days since the epoch, or `-1`.
 ///
-/// Returns days since epoch. The value `-1` means "remove the field".
+/// `-1` reaches the caller as `-1` rather than `None`, because chage(1) uses
+/// it to clear the field and the caller has to tell "clear it" from "leave it
+/// alone" -- an absent option.
 fn parse_date_arg(input: &str) -> Result<i64, String> {
-    // Try plain integer (days since epoch) first.
-    if let Ok(days) = input.parse::<i64>() {
-        return Ok(days);
+    if input == "-1" {
+        return Ok(-1);
     }
-
-    // Try YYYY-MM-DD format.
-    parse_yyyy_mm_dd(input)
-}
-
-/// Parse `YYYY-MM-DD` into days since epoch using pure calendar math.
-///
-/// Uses the Howard Hinnant algorithm to avoid timezone-dependent `mktime`.
-fn parse_yyyy_mm_dd(input: &str) -> Result<i64, String> {
-    let parts: Vec<&str> = input.split('-').collect();
-    if parts.len() != 3 {
-        return Err(format!(
-            "invalid date '{input}' (expected YYYY-MM-DD or days since epoch)"
-        ));
+    match date::parse_expire_date(input) {
+        Ok(Some(days)) => Ok(days),
+        // An empty argument is not a date; only `-1` clears a field.
+        Ok(None) => Err(format!("invalid date '{input}'")),
+        Err(e) => Err(e.to_string()),
     }
-
-    let year: i64 = parts[0]
-        .parse()
-        .map_err(|_| format!("invalid year in '{input}'"))?;
-    let month: i64 = parts[1]
-        .parse()
-        .map_err(|_| format!("invalid month in '{input}'"))?;
-    let day: i64 = parts[2]
-        .parse()
-        .map_err(|_| format!("invalid day in '{input}'"))?;
-
-    if !(1..=12).contains(&month) {
-        return Err(format!("invalid month {month} in '{input}'"));
-    }
-
-    let max_day = days_in_month(year, month);
-    if day < 1 || day > max_day {
-        return Err(format!(
-            "invalid day {day} for {year}-{month:02} in '{input}'"
-        ));
-    }
-
-    Ok(days_since_epoch(year, month, day))
-}
-
-/// Calculate days since Unix epoch (1970-01-01) for a given date.
-///
-/// Uses the algorithm from <https://howardhinnant.github.io/date_algorithms.html>.
-/// Pure arithmetic, no timezone dependency.
-fn days_since_epoch(year: i64, month: i64, day: i64) -> i64 {
-    let y = if month <= 2 { year - 1 } else { year };
-    let m = if month <= 2 { month + 9 } else { month - 3 };
-
-    let era = y / 400;
-    let yoe = y - era * 400;
-    let doy = (153 * m + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
-/// Whether `year` is a leap year in the Gregorian calendar.
-fn is_leap_year(year: i64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
-}
-
-/// Number of days in a given month (1-indexed) for `year`.
-fn days_in_month(year: i64, month: i64) -> i64 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            if is_leap_year(year) {
-                29
-            } else {
-                28
-            }
-        }
-        // Month range is already validated before calling this function.
-        _ => 0,
-    }
-}
-
-/// Convert days since epoch back to (year, month, day).
-///
-/// Inverse of `days_since_epoch`, also from the Hinnant algorithms.
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
-}
-
-/// Convert days since epoch to a human-readable date string (e.g., "Mar 23, 2026").
-///
-/// Uses pure calendar math instead of `localtime_r` to avoid timezone issues.
-fn format_date_human(days: i64) -> String {
-    let (year, month, day) = civil_from_days(days);
-
-    let month_names = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-
-    let month_name = usize::try_from(month - 1)
-        .ok()
-        .and_then(|idx| month_names.get(idx))
-        .copied()
-        .unwrap_or("???");
-
-    format!("{month_name} {day:02}, {year:04}")
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +145,13 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         do_chroot(chroot_dir)?;
     }
 
-    let root = SysRoot::default();
+    // --prefix points a setuid binary at files of the caller's choosing, so
+    // like --root it is root-only.
+    let prefix = matches.get_one::<String>(options::PREFIX).map(Path::new);
+    if prefix.is_some() && !shadow_core::hardening::caller_is_root() {
+        return Err(ChageError::PermissionDenied("only root may use --prefix".into()).into());
+    }
+    let root = SysRoot::new(prefix);
 
     // The LOGIN argument is required by clap.
     let login = matches
@@ -417,6 +331,13 @@ pub fn uu_app() -> Command {
                 .value_name("CHROOT_DIR"),
         )
         .arg(
+            Arg::new(options::PREFIX)
+                .short('P')
+                .long("prefix")
+                .help("directory prefix")
+                .value_name("PREFIX_DIR"),
+        )
+        .arg(
             Arg::new(options::WARNDAYS)
                 .short('W')
                 .long("warndays")
@@ -447,39 +368,62 @@ fn cmd_list(root: &SysRoot, login: &str) -> UResult<()> {
     let entry = entries
         .iter()
         .find(|e| e.name == login)
-        .ok_or_else(|| ChageError::ShadowNotFound(format!("user '{login}' does not exist")))?;
+        .ok_or_else(|| ChageError::UserNotFound(format!("user '{login}' does not exist")))?;
 
     print_aging_info(entry);
     Ok(())
 }
 
-/// Print the aging information in the GNU `chage -l` format.
+/// A `max_age` at or above this many days disables expiry.
+///
+/// chage(1) prints `never` for the two password lines at this value and a real
+/// date one day below it, verified against GNU shadow 4.17: `-M 9999` shows a
+/// date, `-M 10000` shows `never`.
+const MAX_AGE_NEVER: i64 = 10_000;
+
+/// Print the aging information to stdout in the GNU `chage -l` format.
 fn print_aging_info(entry: &ShadowEntry) {
-    let last_change = match entry.last_change {
-        Some(0) => "password must be changed".to_string(),
-        Some(days) => format_date_human(days),
-        None => "never".to_string(),
-    };
-
-    let password_expires = compute_expiry_display(entry.last_change, entry.max_age);
-    let password_inactive =
-        compute_inactive_display(entry.last_change, entry.max_age, entry.inactive_days);
-    let account_expires = match entry.expire_date {
-        Some(days) if days >= 0 => format_date_human(days),
-        _ => "never".to_string(),
-    };
-
-    let min_days = entry
-        .min_age
-        .map_or_else(|| "-1".to_string(), |v| v.to_string());
-    let max_days = entry
-        .max_age
-        .map_or_else(|| "-1".to_string(), |v| v.to_string());
-    let warn_days = entry
-        .warn_days
-        .map_or_else(|| "-1".to_string(), |v| v.to_string());
-
     let mut out = std::io::stdout().lock();
+    write_aging_info(entry, &mut out);
+}
+
+/// Render the aging information, so the exact output can be asserted on.
+fn write_aging_info<W: Write>(entry: &ShadowEntry, out: &mut W) {
+    // A last-change day of 0 is the "expired, must change at next login" marker
+    // that `passwd -e` writes. It is not a date, and it makes the two derived
+    // dates meaningless too, so all three lines say so.
+    let must_change = entry.last_change == Some(0);
+
+    let never = || "never".to_string();
+    let last_change = if must_change {
+        MUST_CHANGE.to_string()
+    } else {
+        entry
+            .last_change
+            .and_then(date::format_human)
+            .unwrap_or_else(never)
+    };
+    let password_expires = if must_change {
+        MUST_CHANGE.to_string()
+    } else {
+        expiry_display(entry.last_change, entry.max_age)
+    };
+    let password_inactive = if must_change {
+        MUST_CHANGE.to_string()
+    } else {
+        inactive_display(entry.last_change, entry.max_age, entry.inactive_days)
+    };
+    let account_expires = entry
+        .expire_date
+        .filter(|d| *d >= 0)
+        .and_then(date::format_human)
+        .unwrap_or_else(never);
+
+    let field = |v: Option<i64>| v.map_or_else(|| "-1".to_string(), |v| v.to_string());
+    let min_days = field(entry.min_age);
+    let max_days = field(entry.max_age);
+    let warn_days = field(entry.warn_days);
+
     let _ = writeln!(out, "Last password change\t\t\t\t\t: {last_change}");
     let _ = writeln!(out, "Password expires\t\t\t\t\t: {password_expires}");
     let _ = writeln!(out, "Password inactive\t\t\t\t\t: {password_inactive}");
@@ -498,26 +442,35 @@ fn print_aging_info(entry: &ShadowEntry) {
     );
 }
 
-/// Compute the password expiry display string.
-fn compute_expiry_display(last_change: Option<i64>, max_age: Option<i64>) -> String {
+/// What `chage -l` prints in place of a date for an expired password.
+const MUST_CHANGE: &str = "password must be changed";
+
+/// The date the password expires, or `never`.
+fn expiry_display(last_change: Option<i64>, max_age: Option<i64>) -> String {
     match (last_change, max_age) {
-        (Some(lc), Some(max)) if (0..99999).contains(&max) => format_date_human(lc + max),
-        _ => "never".to_string(),
+        (Some(lc), Some(max)) if (0..MAX_AGE_NEVER).contains(&max) => {
+            date::format_human_sum(&[lc, max])
+        }
+        _ => None,
     }
+    .unwrap_or_else(|| "never".to_string())
 }
 
-/// Compute the password inactive display string.
-fn compute_inactive_display(
+/// The date the account goes inactive, or `never`.
+fn inactive_display(
     last_change: Option<i64>,
     max_age: Option<i64>,
     inactive_days: Option<i64>,
 ) -> String {
     match (last_change, max_age, inactive_days) {
-        (Some(lc), Some(max), Some(inactive)) if (0..99999).contains(&max) && inactive >= 0 => {
-            format_date_human(lc + max + inactive)
+        (Some(lc), Some(max), Some(inactive))
+            if (0..MAX_AGE_NEVER).contains(&max) && inactive >= 0 =>
+        {
+            date::format_human_sum(&[lc, max, inactive])
         }
-        _ => "never".to_string(),
+        _ => None,
     }
+    .unwrap_or_else(|| "never".to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -588,7 +541,7 @@ where
     // Find the target user.
     let Some(entry) = entries.iter_mut().find(|e| e.name == username) else {
         drop(lock);
-        return Err(ChageError::ShadowNotFound(format!(
+        return Err(ChageError::UserNotFound(format!(
             "user '{username}' does not exist in {}",
             shadow_path.display()
         ))
@@ -799,138 +752,103 @@ mod tests {
         assert!(parse_date_arg("2026-06-00").is_err());
     }
 
-    #[test]
-    fn test_parse_yyyy_mm_dd_epoch() {
-        let days = parse_yyyy_mm_dd("1970-01-01").expect("should parse epoch date");
-        assert_eq!(days, 0);
-    }
-
-    #[test]
-    fn test_parse_yyyy_mm_dd_known_date() {
-        // 2000-01-01 should be exactly 10957 days since epoch.
-        let days = parse_yyyy_mm_dd("2000-01-01").expect("should parse 2000-01-01");
-        assert!(
-            (10956..=10958).contains(&days),
-            "expected ~10957, got {days}"
-        );
-    }
-
     // -----------------------------------------------------------------------
-    // Display formatting tests
+    // `chage -l` output
+    //
+    // The expected text is GNU shadow 4.17's, captured from the Debian image:
+    // the label columns, the "password must be changed" wording and the
+    // `never` threshold all have to match for scripts that parse this.
     // -----------------------------------------------------------------------
 
-    #[test]
-    fn test_format_date_human_epoch() {
-        let result = format_date_human(0);
-        assert!(
-            result.contains("1970"),
-            "epoch should show 1970, got: {result}"
-        );
-        assert!(
-            result.contains("Jan"),
-            "epoch should show Jan, got: {result}"
-        );
+    fn aging_lines(entry: &ShadowEntry) -> Vec<String> {
+        let mut out = Vec::new();
+        write_aging_info(entry, &mut out);
+        String::from_utf8(out)
+            .expect("utf-8")
+            .lines()
+            .map(|l| {
+                let (label, value) = l.rsplit_once(": ").unwrap_or((l, ""));
+                format!("{}|{value}", label.trim_end_matches(['\t', ' ']))
+            })
+            .collect()
     }
 
-    #[test]
-    fn test_format_date_human_known_date() {
-        // Day 10957 = 2000-01-01
-        let result = format_date_human(10957);
-        assert!(
-            result.contains("2000"),
-            "day 10957 should show 2000, got: {result}"
-        );
-    }
-
-    #[test]
-    fn test_compute_expiry_display_never_no_fields() {
-        assert_eq!(compute_expiry_display(None, None), "never");
-    }
-
-    #[test]
-    fn test_compute_expiry_display_never_no_max() {
-        assert_eq!(compute_expiry_display(Some(19500), None), "never");
-    }
-
-    #[test]
-    fn test_compute_expiry_display_never_large_max() {
-        assert_eq!(compute_expiry_display(Some(19500), Some(99999)), "never");
-    }
-
-    #[test]
-    fn test_compute_expiry_display_date() {
-        let result = compute_expiry_display(Some(0), Some(90));
-        // 0 + 90 = day 90 since epoch.
-        assert!(
-            result.contains("1970"),
-            "should show 1970 date, got: {result}"
-        );
-    }
-
-    #[test]
-    fn test_compute_inactive_display_never() {
-        assert_eq!(compute_inactive_display(None, None, None), "never");
-        assert_eq!(
-            compute_inactive_display(Some(19500), Some(90), None),
-            "never"
-        );
-        assert_eq!(
-            compute_inactive_display(Some(19500), None, Some(30)),
-            "never"
-        );
-    }
-
-    #[test]
-    fn test_compute_inactive_display_date() {
-        let result = compute_inactive_display(Some(0), Some(90), Some(30));
-        // 0 + 90 + 30 = day 120 since epoch.
-        assert!(
-            result.contains("1970"),
-            "should show 1970 date, got: {result}"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // print_aging_info smoke test
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_print_aging_info_no_panic() {
-        let entry = ShadowEntry {
-            name: "testuser".into(),
+    fn entry_with(last_change: Option<i64>, max_age: Option<i64>) -> ShadowEntry {
+        ShadowEntry {
+            name: "u".into(),
             passwd: "$6$hash".into(),
-            last_change: Some(19500),
+            last_change,
             min_age: Some(0),
-            max_age: Some(99999),
+            max_age,
             warn_days: Some(7),
             inactive_days: None,
             expire_date: None,
             reserved: String::new(),
-        };
-        // Verify it doesn't panic.
-        print_aging_info(&entry);
+        }
     }
 
     #[test]
-    fn test_print_aging_info_expired_password() {
-        let entry = ShadowEntry {
-            name: "expired".into(),
-            passwd: "$6$hash".into(),
-            last_change: Some(0),
-            min_age: Some(0),
-            max_age: Some(90),
-            warn_days: Some(7),
-            inactive_days: Some(30),
-            expire_date: Some(20000),
-            reserved: String::new(),
-        };
-        print_aging_info(&entry);
+    fn test_aging_output_has_the_gnu_labels_and_order() {
+        let lines = aging_lines(&entry_with(Some(20454), Some(99999)));
+        let labels: Vec<&str> = lines
+            .iter()
+            .map(|l| l.split('|').next().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "Last password change",
+                "Password expires",
+                "Password inactive",
+                "Account expires",
+                "Minimum number of days between password change",
+                "Maximum number of days between password change",
+                "Number of days of warning before password expires",
+            ]
+        );
+    }
+
+    /// A last-change day of 0 is `passwd -e`'s "must change at next login"
+    /// marker, not a date, and it makes both derived dates meaningless too.
+    #[test]
+    fn test_last_change_zero_reports_must_be_changed_on_three_lines() {
+        let mut entry = entry_with(Some(0), Some(90));
+        entry.inactive_days = Some(30);
+        entry.expire_date = Some(0);
+        let lines = aging_lines(&entry);
+        assert_eq!(lines[0], "Last password change|password must be changed");
+        assert_eq!(lines[1], "Password expires|password must be changed");
+        assert_eq!(lines[2], "Password inactive|password must be changed");
+        // The account expiry is a separate field and keeps its own date.
+        assert_eq!(lines[3], "Account expires|Jan 01, 1970");
+    }
+
+    /// GNU shows a date at `-M 9999` and `never` at `-M 10000`.
+    #[test]
+    fn test_max_age_never_threshold_is_10000() {
+        let base = shadow_core::date::days_from_civil(2026, 1, 1);
+        let lines = aging_lines(&entry_with(Some(base), Some(9999)));
+        assert_eq!(lines[1], "Password expires|May 18, 2053");
+        let lines = aging_lines(&entry_with(Some(base), Some(10000)));
+        assert_eq!(lines[1], "Password expires|never");
+        let lines = aging_lines(&entry_with(Some(base), Some(99999)));
+        assert_eq!(lines[1], "Password expires|never");
     }
 
     #[test]
-    fn test_print_aging_info_all_none() {
-        let entry = ShadowEntry {
-            name: "minimal".into(),
+    fn test_inactive_date_is_the_sum_of_three_fields() {
+        let base = shadow_core::date::days_from_civil(2026, 1, 1);
+        let mut entry = entry_with(Some(base), Some(90));
+        entry.inactive_days = Some(30);
+        let lines = aging_lines(&entry);
+        assert_eq!(lines[1], "Password expires|Apr 01, 2026");
+        assert_eq!(lines[2], "Password inactive|May 01, 2026");
+    }
+
+    #[test]
+    fn test_unset_fields_report_never_and_minus_one() {
+        let lines = aging_lines(&ShadowEntry {
+            name: "u".into(),
             passwd: "*".into(),
             last_change: None,
             min_age: None,
@@ -939,8 +857,36 @@ mod tests {
             inactive_days: None,
             expire_date: None,
             reserved: String::new(),
-        };
-        print_aging_info(&entry);
+        });
+        assert_eq!(lines[0], "Last password change|never");
+        assert_eq!(lines[1], "Password expires|never");
+        assert_eq!(lines[2], "Password inactive|never");
+        assert_eq!(lines[3], "Account expires|never");
+        assert_eq!(
+            lines[4],
+            "Minimum number of days between password change|-1"
+        );
+        assert_eq!(
+            lines[5],
+            "Maximum number of days between password change|-1"
+        );
+        assert_eq!(
+            lines[6],
+            "Number of days of warning before password expires|-1"
+        );
+    }
+
+    /// Anyone who can write /etc/shadow can put a value in it that overflows
+    /// the `lastchg + max + inactive` sums. That must show as `never`, not
+    /// wrap into a plausible-looking date or panic in a debug build.
+    #[test]
+    fn test_absurd_field_values_report_never() {
+        let mut entry = entry_with(Some(i64::MAX), Some(90));
+        entry.inactive_days = Some(i64::MAX);
+        let lines = aging_lines(&entry);
+        assert_eq!(lines[0], "Last password change|never");
+        assert_eq!(lines[1], "Password expires|never");
+        assert_eq!(lines[2], "Password inactive|never");
     }
 
     // -----------------------------------------------------------------------
@@ -960,6 +906,12 @@ mod tests {
         assert_eq!(
             ChageError::ShadowNotFound("test".into()).code(),
             exit_codes::SHADOW_NOT_FOUND
+        );
+        // A missing account is not a missing shadow file: chage(1) reserves 15
+        // for the file, and GNU exits 1 for an unknown login.
+        assert_eq!(
+            ChageError::UserNotFound("test".into()).code(),
+            exit_codes::USER_NOT_FOUND
         );
         assert_eq!(
             shadow_core::cli::AlreadyPrinted(exit_codes::INVALID_SYNTAX).code(),
@@ -992,7 +944,7 @@ mod tests {
     #[test]
     fn test_reject_feb_29_non_leap_year() {
         assert!(
-            parse_yyyy_mm_dd("2025-02-29").is_err(),
+            parse_date_arg("2025-02-29").is_err(),
             "2025 is not a leap year, Feb 29 should be rejected"
         );
     }
@@ -1000,7 +952,7 @@ mod tests {
     #[test]
     fn test_reject_feb_31() {
         assert!(
-            parse_yyyy_mm_dd("2025-02-31").is_err(),
+            parse_date_arg("2025-02-31").is_err(),
             "February never has 31 days"
         );
     }
@@ -1008,7 +960,7 @@ mod tests {
     #[test]
     fn test_accept_feb_29_leap_year() {
         assert!(
-            parse_yyyy_mm_dd("2024-02-29").is_ok(),
+            parse_date_arg("2024-02-29").is_ok(),
             "2024 is a leap year, Feb 29 should be accepted"
         );
     }
@@ -1016,7 +968,7 @@ mod tests {
     #[test]
     fn test_reject_apr_31() {
         assert!(
-            parse_yyyy_mm_dd("2025-04-31").is_err(),
+            parse_date_arg("2025-04-31").is_err(),
             "April has 30 days, day 31 should be rejected"
         );
     }
@@ -1024,7 +976,7 @@ mod tests {
     #[test]
     fn test_accept_jan_31() {
         assert!(
-            parse_yyyy_mm_dd("2025-01-31").is_ok(),
+            parse_date_arg("2025-01-31").is_ok(),
             "January has 31 days, should be accepted"
         );
     }

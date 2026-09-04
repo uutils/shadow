@@ -69,6 +69,11 @@ mod exit_codes {
 enum PasswdError {
     /// Exit 1 — insufficient privileges.
     PermissionDenied(String),
+    /// Exit 1 — the account does not exist.
+    ///
+    /// Not an "unexpected failure": passwd(1) exits 1 for an unknown login,
+    /// and 3 is for something going wrong that the caller did not ask for.
+    UserNotFound(String),
     /// Exit 3 — an unexpected runtime failure.
     UnexpectedFailure(String),
     /// Exit 4 — `/etc/shadow` (or equivalent) does not exist.
@@ -86,6 +91,7 @@ impl fmt::Display for PasswdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PermissionDenied(msg)
+            | Self::UserNotFound(msg)
             | Self::UnexpectedFailure(msg)
             | Self::FileMissing(msg)
             | Self::FileBusy(msg)
@@ -100,7 +106,7 @@ impl std::error::Error for PasswdError {}
 impl UError for PasswdError {
     fn code(&self) -> i32 {
         match self {
-            Self::PermissionDenied(_) => 1,
+            Self::PermissionDenied(_) | Self::UserNotFound(_) => 1,
             Self::UnexpectedFailure(_) => 3,
             Self::FileMissing(_) => 4,
             Self::FileBusy(_) => 5,
@@ -493,7 +499,7 @@ fn cmd_status(root: &SysRoot, target_user: Option<&str>) -> UResult<()> {
     match target_user {
         Some(user) => {
             let Some(entry) = entries.iter().find(|e| e.name == user) else {
-                return Err(PasswdError::UnexpectedFailure(format!(
+                return Err(PasswdError::UserNotFound(format!(
                     "user '{user}' does not exist in {}",
                     shadow_path.display()
                 ))
@@ -662,22 +668,16 @@ fn format_status(entry: &ShadowEntry) -> String {
     )
 }
 
-/// Convert days since epoch to `YYYY-MM-DD` format (matching GNU `passwd -S`).
+/// Convert days since the epoch to the `YYYY-MM-DD` form `passwd -S` prints.
 ///
-/// Uses the Hinnant `civil_from_days` algorithm — pure Rust, no libc.
+/// A value that is not a representable date -- anything with write access to
+/// `/etc/shadow` can put one there -- shows as `never`, which is what GNU
+/// displays for a field it cannot make sense of.
 fn format_days_since_epoch(days: i64) -> String {
-    // Algorithm: https://howardhinnant.github.io/date_algorithms.html#civil_from_days
-    let z = days + 719_468;
-    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}")
+    shadow_core::date::civil_from_days(days).map_or_else(
+        || "never".to_string(),
+        |(y, m, d)| format!("{y:04}-{m:02}-{d:02}"),
+    )
 }
 
 /// Lock the shadow file, read entries, apply a mutation to one user's entry,
@@ -729,7 +729,7 @@ where
     // Find the target user.
     let Some(entry) = entries.iter_mut().find(|e| e.name == username) else {
         drop(lock);
-        return Err(PasswdError::UnexpectedFailure(format!(
+        return Err(PasswdError::UserNotFound(format!(
             "user '{username}' does not exist in {}",
             shadow_path.display()
         ))

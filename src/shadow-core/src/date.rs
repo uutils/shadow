@@ -100,6 +100,71 @@ pub fn parse_expire_date(s: &str) -> Result<Option<i64>, ShadowError> {
     Ok(Some(days_from_civil(year, month, day)))
 }
 
+/// The range of day counts this module will turn back into a calendar date.
+///
+/// The aging fields are read from a file anyone with write access to
+/// `/etc/shadow` can put anything in, and they are summed (`lastchg + max +
+/// inactive`) before being displayed. Bounding the input keeps every such sum
+/// inside `i64` and keeps the output a date a human can read: the limits are
+/// 0001-01-01 and 9999-12-31.
+const MIN_DAYS: i64 = -719_162;
+const MAX_DAYS: i64 = 2_932_896;
+
+/// The civil date `(year, month, day)` for `days` since the Unix epoch.
+///
+/// `None` for a value outside the representable range, which is how a corrupt
+/// or absurd field arrives here. The inverse of [`days_from_civil`].
+#[must_use]
+pub fn civil_from_days(days: i64) -> Option<(i64, i64, i64)> {
+    if !(MIN_DAYS..=MAX_DAYS).contains(&days) {
+        return None;
+    }
+
+    // Shift the epoch to 0000-03-01 so leap days fall at the end of the era.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+
+    Some((if m <= 2 { y + 1 } else { y }, m, d))
+}
+
+/// Format `days` since the epoch the way `chage -l` prints a date, for example
+/// `Jan 01, 2026`.
+///
+/// `None` for a value that is not a representable date; every caller displays
+/// `never` in that case, which is also what GNU `chage` shows for a field it
+/// cannot make sense of.
+#[must_use]
+pub fn format_human(days: i64) -> Option<String> {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let (year, month, day) = civil_from_days(days)?;
+    let name = MONTHS.get(usize::try_from(month - 1).ok()?)?;
+    Some(format!("{name} {day:02}, {year}"))
+}
+
+/// Format the sum of `days` as a date, or `None` if any term overflows or the
+/// total is not a representable date.
+///
+/// `chage -l` adds `lastchg + max` and `lastchg + max + inactive`, each read
+/// from the file. Plain `+` would wrap in release builds and panic in debug
+/// ones, so the addition is checked here once for every caller.
+#[must_use]
+pub fn format_human_sum(days: &[i64]) -> Option<String> {
+    let mut total: i64 = 0;
+    for d in days {
+        total = total.checked_add(*d)?;
+    }
+    format_human(total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,6 +194,60 @@ mod tests {
         assert_eq!(parse_expire_date("2024-02-29").unwrap(), Some(19782));
         // A bare integer is already days since the epoch.
         assert_eq!(parse_expire_date("19782").unwrap(), Some(19782));
+    }
+
+    #[test]
+    fn test_civil_from_days_round_trips() {
+        for (y, m, d) in [
+            (1970, 1, 1),
+            (1970, 1, 2),
+            (2000, 2, 29),
+            (2024, 2, 29),
+            (2026, 1, 1),
+            (2053, 5, 18),
+            (1, 1, 1),
+            (9999, 12, 31),
+        ] {
+            let days = days_from_civil(y, m, d);
+            assert_eq!(
+                civil_from_days(days),
+                Some((y, m, d)),
+                "round trip failed for {y}-{m}-{d}"
+            );
+        }
+    }
+
+    /// The aging fields come from a file, so the arithmetic must survive
+    /// anything that can be written into one rather than wrapping or panicking.
+    #[test]
+    fn test_out_of_range_days_have_no_date() {
+        assert_eq!(civil_from_days(i64::MAX), None);
+        assert_eq!(civil_from_days(i64::MIN), None);
+        assert_eq!(civil_from_days(MAX_DAYS + 1), None);
+        assert_eq!(civil_from_days(MIN_DAYS - 1), None);
+        assert_eq!(format_human(i64::MAX), None);
+    }
+
+    #[test]
+    fn test_format_human_matches_the_chage_form() {
+        assert_eq!(
+            format_human(days_from_civil(2026, 1, 1)).as_deref(),
+            Some("Jan 01, 2026")
+        );
+        assert_eq!(format_human(0).as_deref(), Some("Jan 01, 1970"));
+    }
+
+    /// `lastchg + max + inactive` is three file-supplied values added together.
+    #[test]
+    fn test_format_human_sum_is_checked() {
+        let base = days_from_civil(2026, 1, 1);
+        assert_eq!(
+            format_human_sum(&[base, 9999]).as_deref(),
+            Some("May 18, 2053")
+        );
+        assert_eq!(format_human_sum(&[i64::MAX, 1]), None);
+        assert_eq!(format_human_sum(&[i64::MAX, i64::MAX]), None);
+        assert_eq!(format_human_sum(&[i64::MIN, -1]), None);
     }
 
     #[test]

@@ -165,9 +165,9 @@ fn test_nonexistent_user_fails() {
     }
     let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
     let code = run_with_prefix(&dir, &["-S", "nosuchuser"]);
-    assert_ne!(code, 0, "nonexistent user should fail");
-    // GNU passwd exits 3 for unexpected failures (user not found is exit 3).
-    assert_eq!(code, 3, "nonexistent user should exit 3");
+    // GNU passwd exits 1 for an unknown login (verified against shadow 4.17);
+    // 3 is reserved for an unexpected failure the caller did not ask for.
+    assert_eq!(code, 1, "nonexistent user should exit 1");
 }
 
 #[test]
