@@ -28,6 +28,7 @@ mod options {
     pub const MD5: &str = "md5";
     pub const ROOT: &str = "root";
     pub const SHA_ROUNDS: &str = "sha-rounds";
+    pub const PREFIX: &str = "prefix";
 }
 
 // ---------------------------------------------------------------------------
@@ -148,8 +149,13 @@ fn read_pairs_from_stdin() -> Result<Vec<PasswordPair>, ChpasswdError> {
     let mut pairs = Vec::new();
 
     for (idx, line) in reader.lines().enumerate() {
-        let line = line
-            .map_err(|e| ChpasswdError::UnexpectedFailure(format!("error reading stdin: {e}")))?;
+        // Every input line carries a password. Own it in a Zeroizing so the
+        // buffer is scrubbed when it drops, rather than left in freed heap for
+        // a core dump or the next allocation to expose.
+        let line =
+            zeroize::Zeroizing::new(line.map_err(|e| {
+                ChpasswdError::UnexpectedFailure(format!("error reading stdin: {e}"))
+            })?);
 
         // Skip empty lines.
         if line.trim().is_empty() {
@@ -184,7 +190,8 @@ fn days_since_epoch() -> Result<i64, ChpasswdError> {
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let _clean_env = shadow_core::hardening::harden_process();
 
-    let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 1)? else {
+    // chpasswd(8) exits 2 for invalid command syntax; every other failure is 1.
+    let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 2)? else {
         return Ok(());
     };
 
@@ -193,7 +200,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         do_chroot(chroot_dir)?;
     }
 
-    let root = SysRoot::default();
+    let prefix = matches.get_one::<String>(options::PREFIX).map(Path::new);
+    let root = SysRoot::new(prefix);
 
     // chpasswd always requires root.
     if !shadow_core::hardening::caller_is_root() {
@@ -240,7 +248,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let hash_config = if is_encrypted {
         None
     } else {
-        let method = resolve_crypt_method(crypt_method.map(String::as_str))?;
+        let method = resolve_crypt_method(crypt_method.map(String::as_str), &root)?;
         if sha_rounds.is_some() && method == shadow_core::crypt::CryptMethod::Yescrypt {
             return Err(ChpasswdError::UnexpectedFailure(
                 "--sha-rounds is not supported with YESCRYPT".into(),
@@ -276,10 +284,12 @@ pub fn uu_app() -> Command {
                 .value_parser(["SHA256", "SHA512", "YESCRYPT", "DES", "MD5"]),
         )
         .arg(
+            // chpasswd(8): "the -c, -e, and -m flags are exclusive".
             Arg::new(options::ENCRYPTED)
                 .short('e')
                 .long("encrypted")
                 .help("treat input passwords as already hashed")
+                .conflicts_with_all([options::CRYPT_METHOD, options::MD5])
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -297,12 +307,23 @@ pub fn uu_app() -> Command {
                 .value_name("CHROOT_DIR"),
         )
         .arg(
+            // chpasswd(8): "the -s flag is only allowed with the -c flag". A
+            // rounds count is meaningless without a scheme that takes one, and
+            // silently ignoring it wrote a password the caller did not ask for.
             Arg::new(options::SHA_ROUNDS)
                 .short('s')
                 .long("sha-rounds")
-                .help("iteration count when hashing with SHA-2")
+                .help("iteration count when hashing with SHA-2 (requires -c)")
                 .value_name("ROUNDS")
+                .requires(options::CRYPT_METHOD)
                 .value_parser(clap::value_parser!(i64)),
+        )
+        .arg(
+            Arg::new(options::PREFIX)
+                .short('P')
+                .long("prefix")
+                .help("directory prefix")
+                .value_name("PREFIX_DIR"),
         )
 }
 
@@ -337,11 +358,6 @@ fn apply_password_changes(
         hashed.push((pair.username.as_str(), hash));
     }
 
-    // Consolidate real + effective UID to root for file operations.
-    if rustix::process::geteuid().is_root() {
-        let _ = shadow_core::process::setuid(0);
-    }
-
     // Block signals for the entire critical section.
     let _signals = shadow_core::hardening::SignalBlocker::block_critical()
         .map_err(|e| ChpasswdError::UnexpectedFailure(e.to_string()))?;
@@ -371,9 +387,19 @@ fn apply_password_changes(
 
     let today = days_since_epoch()?;
 
-    // Apply each pair.
+    // Index by name once. A linear scan per pair made the critical section --
+    // held with signals blocked -- quadratic in a batch the size of the file.
+    let index: std::collections::HashMap<&str, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.name.as_str(), i))
+        .collect();
+
+    // Resolve every pair before writing any, so an unknown account in the
+    // middle of a batch leaves the file untouched rather than half-applied.
+    let mut targets = Vec::with_capacity(hashed.len());
     for (username, hash) in hashed {
-        let Some(entry) = entries.iter_mut().find(|e| e.name == username) else {
+        let Some(&i) = index.get(username) else {
             drop(lock);
             return Err(ChpasswdError::InvalidInput(format!(
                 "user '{username}' does not exist in {}",
@@ -381,7 +407,17 @@ fn apply_password_changes(
             ))
             .into());
         };
+        targets.push((i, hash));
+    }
 
+    for (i, hash) in targets {
+        let Some(entry) = entries.get_mut(i) else {
+            drop(lock);
+            return Err(ChpasswdError::UnexpectedFailure(
+                "shadow entry vanished between indexing and writing".into(),
+            )
+            .into());
+        };
         entry.passwd = hash;
         entry.last_change = Some(today);
     }
@@ -412,23 +448,54 @@ fn apply_password_changes(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Map `-c` flag to a `CryptMethod`.
+/// The hashing scheme to use, from `-c` or, absent that, from login.defs.
+///
+/// chpasswd(8) takes its default from `ENCRYPT_METHOD` in login.defs, which is
+/// how a distribution chooses the scheme for the whole system -- Debian sets
+/// YESCRYPT, and hard-coding SHA512 quietly wrote weaker hashes than the rest
+/// of the system was configured to produce. SHA512 remains the fallback when
+/// the file names nothing usable.
 fn resolve_crypt_method(
     method: Option<&str>,
+    root: &SysRoot,
 ) -> Result<shadow_core::crypt::CryptMethod, ChpasswdError> {
+    match method {
+        Some(name) => parse_crypt_method(name).ok_or_else(|| {
+            ChpasswdError::UnexpectedFailure(match name {
+                "MD5" | "DES" => {
+                    "MD5 and DES are insecure and not supported for plaintext hashing".into()
+                }
+                other => format!("unknown crypt method: {other}"),
+            })
+        }),
+        None => Ok(default_crypt_method(root)),
+    }
+}
+
+/// Map a login.defs / `-c` method name to a `CryptMethod`.
+///
+/// `None` for a name that is not supported, including the insecure ones.
+fn parse_crypt_method(name: &str) -> Option<shadow_core::crypt::CryptMethod> {
     use shadow_core::crypt::CryptMethod;
 
-    match method {
-        Some("SHA256") => Ok(CryptMethod::Sha256),
-        Some("SHA512") | None => Ok(CryptMethod::Sha512),
-        Some("YESCRYPT") => Ok(CryptMethod::Yescrypt),
-        Some("MD5" | "DES") => Err(ChpasswdError::UnexpectedFailure(
-            "MD5 and DES are insecure and not supported for plaintext hashing".into(),
-        )),
-        Some(other) => Err(ChpasswdError::UnexpectedFailure(format!(
-            "unknown crypt method: {other}"
-        ))),
+    match name {
+        "SHA256" => Some(CryptMethod::Sha256),
+        "SHA512" => Some(CryptMethod::Sha512),
+        "YESCRYPT" => Some(CryptMethod::Yescrypt),
+        _ => None,
     }
+}
+
+/// The system's configured hashing scheme, or SHA-512 if there is none.
+///
+/// An unreadable login.defs, a missing `ENCRYPT_METHOD`, or one naming a scheme
+/// this build will not write (MD5, DES) all fall back rather than fail: the
+/// caller asked to set a password, not to audit the configuration.
+fn default_crypt_method(root: &SysRoot) -> shadow_core::crypt::CryptMethod {
+    shadow_core::login_defs::LoginDefs::load(&root.login_defs_path())
+        .ok()
+        .and_then(|d| d.get("ENCRYPT_METHOD").and_then(parse_crypt_method))
+        .unwrap_or(shadow_core::crypt::CryptMethod::Sha512)
 }
 
 /// Perform `chroot(2)` into the specified directory.
@@ -501,11 +568,12 @@ mod tests {
         assert!(result.is_err(), "invalid crypt method should fail");
     }
 
+    /// `-s` needs `-c`, so the value is read from the pair of them.
     #[test]
     fn test_sha_rounds_flag() {
         let m = uu_app()
-            .try_get_matches_from(["chpasswd", "-s", "5000"])
-            .expect("should parse -s 5000");
+            .try_get_matches_from(["chpasswd", "-c", "SHA512", "-s", "5000"])
+            .expect("should parse -c SHA512 -s 5000");
         assert_eq!(m.get_one::<i64>(options::SHA_ROUNDS).copied(), Some(5000));
     }
 
@@ -683,5 +751,110 @@ mod tests {
             days < 47500,
             "days since epoch should be < 47500, got {days}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Crypt method selection
+    // -----------------------------------------------------------------------
+
+    fn defs_root(contents: &str) -> (tempfile::TempDir, SysRoot) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let etc = dir.path().join("etc");
+        std::fs::create_dir_all(&etc).expect("etc");
+        std::fs::write(etc.join("login.defs"), contents).expect("write");
+        let root = SysRoot::new(Some(dir.path()));
+        (dir, root)
+    }
+
+    /// The default scheme is the system's, not a hard-coded one: Debian sets
+    /// YESCRYPT, and writing SHA-512 there produced weaker hashes than every
+    /// other tool on the host.
+    #[test]
+    fn test_default_method_comes_from_login_defs() {
+        use shadow_core::crypt::CryptMethod;
+
+        let (_d, root) = defs_root("ENCRYPT_METHOD YESCRYPT\n");
+        assert_eq!(default_crypt_method(&root), CryptMethod::Yescrypt);
+
+        let (_d, root) = defs_root("ENCRYPT_METHOD SHA256\n");
+        assert_eq!(default_crypt_method(&root), CryptMethod::Sha256);
+    }
+
+    /// A configuration this build will not honour must not stop a password
+    /// change; SHA-512 is the fallback.
+    #[test]
+    fn test_default_method_falls_back_to_sha512() {
+        use shadow_core::crypt::CryptMethod;
+
+        for defs in [
+            "",
+            "ENCRYPT_METHOD MD5\n",
+            "ENCRYPT_METHOD DES\n",
+            "# nothing\n",
+        ] {
+            let (_d, root) = defs_root(defs);
+            assert_eq!(
+                default_crypt_method(&root),
+                CryptMethod::Sha512,
+                "unexpected fallback for {defs:?}"
+            );
+        }
+
+        // An absent login.defs is not an error either.
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(
+            default_crypt_method(&SysRoot::new(Some(dir.path()))),
+            CryptMethod::Sha512
+        );
+    }
+
+    /// `-c` wins over the configured default, and names the tool refuses stay
+    /// refused rather than silently falling back.
+    #[test]
+    fn test_explicit_method_overrides_and_rejects() {
+        use shadow_core::crypt::CryptMethod;
+
+        let (_d, root) = defs_root("ENCRYPT_METHOD YESCRYPT\n");
+        assert_eq!(
+            resolve_crypt_method(Some("SHA256"), &root).expect("SHA256"),
+            CryptMethod::Sha256
+        );
+        for bad in ["MD5", "DES", "BCRYPT", "nonsense"] {
+            assert!(
+                resolve_crypt_method(Some(bad), &root).is_err(),
+                "'{bad}' should be refused"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Flag combinations chpasswd(8) rejects
+    // -----------------------------------------------------------------------
+
+    /// A rounds count without a scheme, and a scheme with pre-hashed input,
+    /// are both usage errors rather than options that quietly do nothing.
+    #[test]
+    fn test_exclusive_and_dependent_flags() {
+        for args in [
+            vec!["chpasswd", "-s", "5000"],
+            vec!["chpasswd", "-e", "-c", "SHA512"],
+            vec!["chpasswd", "-e", "-m"],
+        ] {
+            assert!(
+                uu_app().try_get_matches_from(args.clone()).is_err(),
+                "{args:?} should be a usage error"
+            );
+        }
+        // The combinations that are allowed still parse.
+        for args in [
+            vec!["chpasswd", "-c", "SHA512", "-s", "5000"],
+            vec!["chpasswd", "-e"],
+            vec!["chpasswd"],
+        ] {
+            assert!(
+                uu_app().try_get_matches_from(args.clone()).is_ok(),
+                "{args:?} should parse"
+            );
+        }
     }
 }
