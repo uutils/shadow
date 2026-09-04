@@ -9,6 +9,11 @@ on:
     paths:
       - "**/Cargo.toml"
       - "**/Cargo.lock"
+permissions:
+  contents: read
+  checks: write
+  issues: write
+
 jobs:
   audit:
     runs-on: ubuntu-latest
