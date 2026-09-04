@@ -120,6 +120,29 @@ fn read_shells(path: &Path) -> Result<Vec<String>, ChshError> {
     Ok(shells)
 }
 
+/// Whether the user's *current* login shell is listed in `/etc/shells`.
+///
+/// A user whose shell is not listed is a restricted account (shells(5)); such
+/// an account may not change its shell. A user with no passwd entry, or whose
+/// current shell cannot be read, is treated as restricted (fail closed). An
+/// empty current shell means the default `/bin/sh`, which is not restricted.
+fn current_shell_is_listed(root: &SysRoot, user: &str) -> bool {
+    let Ok(entries) = passwd::read_passwd_file(&root.passwd_path()) else {
+        return false;
+    };
+    let Some(entry) = entries.iter().find(|e| e.name == user) else {
+        return false;
+    };
+    if entry.shell.is_empty() {
+        return true;
+    }
+    match read_shells(&root.shells_path()) {
+        Ok(shells) if shells.is_empty() => entry.shell == "/bin/sh",
+        Ok(shells) => shells.contains(&entry.shell),
+        Err(_) => false,
+    }
+}
+
 /// Check if a shell is valid: must be an absolute path, must exist as a
 /// regular file, and must be listed in `/etc/shells` (unless caller is root).
 fn validate_shell(shell: &str, shells_path: &Path) -> Result<(), ChshError> {
@@ -270,6 +293,15 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             .map_err(|e| ChshError::Error(e.to_string()))?;
         if current_user != target_user {
             return Err(ChshError::Error("you may only change your own login shell".into()).into());
+        }
+        // chsh(1): an account whose current shell is not in /etc/shells is
+        // restricted and may not change it. Otherwise a deliberately confined
+        // account (e.g. /bin/rbash, kept out of /etc/shells) could escape.
+        if !current_shell_is_listed(&root, &current_user) {
+            return Err(ChshError::Error(format!(
+                "you may not change the shell for '{current_user}'"
+            ))
+            .into());
         }
         authenticate_caller(&current_user)?;
     }
@@ -454,6 +486,40 @@ mod tests {
         std::fs::write(&shells_path, "/bin/sh\n").expect("write");
         let result = validate_shell("bin/sh", &shells_path);
         assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // Restricted-account check
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_current_shell_is_listed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let etc = dir.path().join("etc");
+        std::fs::create_dir_all(&etc).expect("etc");
+        std::fs::write(etc.join("shells"), "/bin/sh\n/bin/bash\n").unwrap();
+        std::fs::write(
+            etc.join("passwd"),
+            "free:x:1000:1000::/home/free:/bin/bash\n\
+             restricted:x:1001:1001::/home/r:/bin/rbash\n\
+             defaulted:x:1002:1002::/home/d:\n",
+        )
+        .unwrap();
+        let root = SysRoot::new(Some(dir.path()));
+
+        assert!(current_shell_is_listed(&root, "free"), "listed shell");
+        assert!(
+            !current_shell_is_listed(&root, "restricted"),
+            "shell not in /etc/shells is restricted"
+        );
+        assert!(
+            current_shell_is_listed(&root, "defaulted"),
+            "empty shell means the default /bin/sh"
+        );
+        assert!(
+            !current_shell_is_listed(&root, "ghost"),
+            "unknown user fails closed"
+        );
     }
 
     // -----------------------------------------------------------------------

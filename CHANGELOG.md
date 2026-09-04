@@ -51,6 +51,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `chfn` now honours `CHFN_RESTRICT` from login.defs: a non-root user may
+  change only the GECOS sub-fields it lists (unset means none, per
+  login.defs(5)), instead of any field. GECOS values are also rejected if they
+  contain `=` or control characters, not only `:` and commas (#247)
+- `chsh` refuses to change the shell of a restricted account — one whose
+  current shell is not listed in `/etc/shells` — for a non-root caller, so a
+  deliberately confined login cannot escape by pointing itself at a normal
+  shell (#247)
 - `pwck -s` and `grpck -s` no longer rewrite the files when a line failed to
   parse. Sorting works on the entries that parsed, so the write silently
   dropped every line the tool had just reported as invalid, along with all

@@ -112,21 +112,35 @@ fn resolve_target_user(matches: &clap::ArgMatches) -> Result<String, ChfnError> 
     shadow_core::hardening::current_username().map_err(|e| ChfnError::Error(e.to_string()))
 }
 
-/// Validate that a GECOS sub-field does not contain illegal characters.
-/// Colons and newlines are forbidden; commas are forbidden in all fields
-/// except "other" which is the last sub-field.
+/// Validate a GECOS sub-field. Colons, newlines and other control characters
+/// are forbidden everywhere (they would break the record); commas and equal
+/// signs are additionally forbidden in every field except "other", the last
+/// sub-field (chfn(1): the other fields "should not contain any comma or equal
+/// sign"). `allow_comma` is true only for the "other" field.
 fn validate_gecos_field(value: &str, field_name: &str, allow_comma: bool) -> Result<(), ChfnError> {
-    if value.contains(':') || value.contains('\n') || value.contains('\0') {
+    shadow_core::validate::validate_field(field_name, value)
+        .map_err(|e| ChfnError::Error(e.to_string()))?;
+    if !allow_comma && (value.contains(',') || value.contains('=')) {
         return Err(ChfnError::Error(format!(
-            "{field_name}: invalid characters"
-        )));
-    }
-    if !allow_comma && value.contains(',') {
-        return Err(ChfnError::Error(format!(
-            "{field_name}: must not contain commas"
+            "{field_name}: must not contain ',' or '='"
         )));
     }
     Ok(())
+}
+
+/// The GECOS fields a non-root caller may change, from `CHFN_RESTRICT` in
+/// login.defs. `yes` means `rwh`; an explicit letter set is taken verbatim;
+/// unset (or unreadable) means none — chfn(1)/login.defs(5): "If not
+/// specified, only the superuser can make any changes." Letters: `f` full
+/// name, `r` room, `w` work phone, `h` home phone.
+fn chfn_restrict(root: &SysRoot) -> String {
+    shadow_core::login_defs::LoginDefs::load(&root.login_defs_path())
+        .ok()
+        .map_or_else(String::new, |d| match d.get("CHFN_RESTRICT") {
+            Some("yes") => "rwh".to_string(),
+            Some(set) => set.to_string(),
+            None => String::new(),
+        })
 }
 
 /// Perform `chroot(2)` into the specified directory.
@@ -286,9 +300,26 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         validate_gecos_field(v, "other", true)?;
     }
 
-    // Non-root users may not set the "other" field (matches GNU behavior).
-    if !shadow_core::hardening::caller_is_root() && new_other.is_some() {
-        return Err(ChfnError::Error("only root may change the 'other' field".into()).into());
+    // Non-root users may not set the "other" field, and may change the rest
+    // only within CHFN_RESTRICT (login.defs). Root is unrestricted.
+    if !shadow_core::hardening::caller_is_root() {
+        if new_other.is_some() {
+            return Err(ChfnError::Error("only root may change the 'other' field".into()).into());
+        }
+        let allowed = chfn_restrict(&root);
+        for (present, letter, name) in [
+            (has_full_name, 'f', "full name"),
+            (has_room, 'r', "room number"),
+            (has_work_phone, 'w', "work phone"),
+            (has_home_phone, 'h', "home phone"),
+        ] {
+            if present && !allowed.contains(letter) {
+                return Err(ChfnError::Error(format!(
+                    "you may not change the {name} (restricted by CHFN_RESTRICT)"
+                ))
+                .into());
+            }
+        }
     }
 
     mutate_passwd(&root, &target_user, |entry| {
@@ -508,6 +539,36 @@ mod tests {
     #[test]
     fn test_validate_gecos_field_accepts_normal() {
         assert!(validate_gecos_field("John Doe", "test", false).is_ok());
+    }
+
+    #[test]
+    fn test_validate_gecos_field_rejects_equal_sign() {
+        assert!(validate_gecos_field("a=b", "test", false).is_err());
+        // The trailing "other" field may contain '=' and ','.
+        assert!(validate_gecos_field("a=b,c", "other", true).is_ok());
+    }
+
+    #[test]
+    fn test_validate_gecos_field_rejects_control_char() {
+        assert!(validate_gecos_field("foo\tbar", "test", false).is_err());
+        assert!(validate_gecos_field("foo\x1bbar", "test", true).is_err());
+    }
+
+    #[test]
+    fn test_chfn_restrict_reading() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let etc = dir.path().join("etc");
+        std::fs::create_dir_all(&etc).expect("etc");
+        let root = SysRoot::new(Some(dir.path()));
+
+        std::fs::write(etc.join("login.defs"), "CHFN_RESTRICT rwh\n").unwrap();
+        assert_eq!(chfn_restrict(&root), "rwh");
+
+        std::fs::write(etc.join("login.defs"), "CHFN_RESTRICT yes\n").unwrap();
+        assert_eq!(chfn_restrict(&root), "rwh");
+
+        std::fs::write(etc.join("login.defs"), "UID_MIN 1000\n").unwrap();
+        assert_eq!(chfn_restrict(&root), "", "unset means nothing for non-root");
     }
 
     // -----------------------------------------------------------------------
