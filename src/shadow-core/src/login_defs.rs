@@ -110,6 +110,51 @@ pub fn parse_override(kv: &str) -> Result<(&str, &str), ShadowError> {
     }
 }
 
+/// Read `/etc/default/useradd`, the `KEY=VALUE` file `useradd -D` maintains.
+///
+/// It is a different format from `login.defs` (which is `KEY VALUE`) and holds
+/// a different set of keys: `GROUP`, `HOME`, `INACTIVE`, `EXPIRE`, `SHELL`,
+/// `SKEL` and `CREATE_MAIL_SPOOL`. A missing file yields no values, which is
+/// the same as every key being unset.
+///
+/// # Errors
+///
+/// Returns `ShadowError` if the file exists but cannot be read.
+pub fn read_useradd_defaults(path: &Path) -> Result<Vec<(String, String)>, ShadowError> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(ShadowError::IoPath(e, path.to_owned())),
+    };
+
+    let mut values = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            values.push((key.trim().to_string(), value.trim().to_string()));
+        }
+    }
+    Ok(values)
+}
+
+/// Write `/etc/default/useradd` from a full set of `KEY=VALUE` pairs.
+///
+/// # Errors
+///
+/// Returns `ShadowError` if the file cannot be replaced.
+pub fn write_useradd_defaults(path: &Path, values: &[(String, String)]) -> Result<(), ShadowError> {
+    crate::atomic::atomic_write(path, |f| {
+        writeln!(f, "# Defaults for useradd(8). Edit with `useradd -D`.")?;
+        for (key, value) in values {
+            writeln!(f, "{key}={value}")?;
+        }
+        Ok(())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

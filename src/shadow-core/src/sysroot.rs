@@ -90,6 +90,12 @@ impl SysRoot {
         self.resolve("/etc/skel")
     }
 
+    /// Path to `/etc/default/useradd`.
+    #[must_use]
+    pub fn useradd_defaults_path(&self) -> PathBuf {
+        self.resolve("/etc/default/useradd")
+    }
+
     /// Path to `/etc/shells`.
     #[must_use]
     pub fn shells_path(&self) -> PathBuf {
