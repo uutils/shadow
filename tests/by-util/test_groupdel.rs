@@ -251,3 +251,28 @@ fn test_delete_group_with_members() {
     let content = read_group(&dir);
     assert!(!content.contains("devteam"), "devteam should be removed");
 }
+
+#[test]
+fn test_force_and_sole_gshadow_entry() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    // groupdel(8) -f: succeed even when the group does not exist.
+    let dir = setup_root(
+        "only:x:1000:\n",
+        "only:!::\n",
+        "root:x:0:0:root:/root:/bin/sh\n",
+    );
+    let prefix = dir.path().to_str().unwrap();
+    assert_eq!(run(&["groupdel", "-P", prefix, "-f", "ghost"]), 0);
+
+    // The sole gshadow entry used to be left behind: the write was skipped
+    // whenever the result was empty.
+    assert_eq!(run(&["groupdel", "-P", prefix, "only"]), 0);
+    let gshadow = dir.path().join("etc/gshadow");
+    assert!(
+        !gshadow.exists() || !std::fs::read_to_string(&gshadow).unwrap().contains("only:"),
+        "the deleted group must not remain in gshadow"
+    );
+}

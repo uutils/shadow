@@ -27,6 +27,7 @@ mod options {
     pub const GROUP: &str = "GROUP";
     pub const ROOT: &str = "root";
     pub const PREFIX: &str = "prefix";
+    pub const FORCE: &str = "force";
 }
 
 mod exit_codes {
@@ -115,18 +116,24 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         GroupdelError::CantUpdate(format!("cannot read {}: {e}", group_path.display()))
     })?;
 
-    let target = entries
-        .iter()
-        .find(|g| g.name == *group_name)
-        .ok_or_else(|| {
-            GroupdelError::GroupNotFound(format!("group '{group_name}' does not exist"))
-        })?;
+    let force = matches.get_flag(options::FORCE);
+
+    let Some(target) = entries.iter().find(|g| g.name == *group_name) else {
+        // groupdel(8) -f: "succeed even if the group does not exist".
+        if force {
+            return Ok(());
+        }
+        return Err(
+            GroupdelError::GroupNotFound(format!("group '{group_name}' does not exist")).into(),
+        );
+    };
 
     let target_gid = target.gid;
 
-    // Check that no user has this group as their primary group.
+    // Check that no user has this group as their primary group; -f removes it
+    // regardless, which groupdel(8) documents.
     let passwd_path = root.passwd_path();
-    if passwd_path.exists() {
+    if !force && passwd_path.exists() {
         let passwd_entries = passwd::read_passwd_file(&passwd_path).map_err(|e| {
             GroupdelError::CantUpdate(format!("cannot read {}: {e}", passwd_path.display()))
         })?;
@@ -147,12 +154,19 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         .filter(|g| g.name != *group_name)
         .collect();
 
-    atomic::atomic_write(&group_path, |f| {
-        group::write_group_with_layout(&new_entries, &group_layout, f)
-    })
-    .map_err(|e| {
-        GroupdelError::CantUpdate(format!("cannot write {}: {e}", group_path.display()))
-    })?;
+    // Removing the last group empties the file, which the atomic writer
+    // refuses; an absent group file means the same thing and is only reached
+    // in a fully torn-down --prefix tree.
+    if new_entries.is_empty() && group_layout.is_empty() {
+        let _ = std::fs::remove_file(&group_path);
+    } else {
+        atomic::atomic_write(&group_path, |f| {
+            group::write_group_with_layout(&new_entries, &group_layout, f)
+        })
+        .map_err(|e| {
+            GroupdelError::CantUpdate(format!("cannot write {}: {e}", group_path.display()))
+        })?;
+    }
 
     drop(group_lock);
 
@@ -168,13 +182,20 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 GroupdelError::CantUpdate(format!("cannot read {}: {e}", gshadow_path.display()))
             })?;
 
+        let before = gs_entries.len();
         let new_gs: Vec<GshadowEntry> = gs_entries
             .into_iter()
             .filter(|g| g.name != *group_name)
             .collect();
+        let changed = new_gs.len() != before;
 
-        // Only write if we actually had gshadow entries to begin with.
-        if !new_gs.is_empty() {
+        // Write whenever the removal actually changed something. Skipping an
+        // empty result left the deleted group behind when it was the only
+        // entry; an emptied file is unlinked, since the atomic writer refuses
+        // a zero-length file and an absent gshadow means "no entries".
+        if changed && new_gs.is_empty() {
+            let _ = std::fs::remove_file(&gshadow_path);
+        } else if changed {
             atomic::atomic_write(&gshadow_path, |f| {
                 gshadow::write_gshadow_with_layout(&new_gs, &gshadow_layout, f)
             })
@@ -200,6 +221,13 @@ pub fn uu_app() -> Command {
         .override_usage("groupdel [options] GROUP")
         .version(shadow_core::cli::VERSION)
         .after_help(shadow_core::cli::AFTER_HELP)
+        .arg(
+            Arg::new(options::FORCE)
+                .short('f')
+                .long("force")
+                .help("Delete even if it is a user's primary group, and succeed if it is missing")
+                .action(clap::ArgAction::SetTrue),
+        )
         .arg(
             Arg::new(options::ROOT)
                 .short('R')

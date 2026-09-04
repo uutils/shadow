@@ -35,6 +35,7 @@ mod options {
     pub const SYSTEM: &str = "system";
     pub const ROOT: &str = "root";
     pub const PREFIX: &str = "prefix";
+    pub const USERS: &str = "users";
 }
 
 mod exit_codes {
@@ -125,6 +126,17 @@ fn do_groupadd(matches: &clap::ArgMatches) -> UResult<()> {
     shadow_core::validate::validate_field("password", &password)
         .map_err(|e| GroupaddError::BadArgument(e.to_string()))?;
 
+    let users: Vec<String> = matches
+        .get_one::<String>(options::USERS)
+        .map(|v| {
+            v.split(',')
+                .map(str::trim)
+                .filter(|u| !u.is_empty())
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+
     let prefix = matches.get_one::<String>(options::PREFIX).map(Path::new);
     let root_dir = matches.get_one::<String>(options::ROOT).map(Path::new);
     let root = SysRoot::new(prefix.or(root_dir));
@@ -147,14 +159,27 @@ fn do_groupadd(matches: &clap::ArgMatches) -> UResult<()> {
     validate::validate_username(&group_name)
         .map_err(|e| GroupaddError::BadArgument(format!("{e}")))?;
 
-    // Read existing groups.
     let group_path = root.group_path();
-    let existing_groups = if group_path.exists() {
-        group::read_group_file(&group_path).map_err(|e| {
+
+    // Block signals for the duration of the critical section so a SIGINT
+    // between lock acquisition and atomic_write cannot leave stale lock files.
+    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
+        .map_err(|e| GroupaddError::CantUpdate(format!("cannot block signals: {e}")))?;
+
+    // Take the lock *before* reading. The name check and the GID allocation
+    // used to run on a snapshot taken beforehand, so two concurrent
+    // `groupadd -r` calls could allocate the same GID, and two `groupadd www`
+    // could both decide the name was free.
+    let group_lock = FileLock::acquire(&group_path).map_err(|e| {
+        GroupaddError::CantUpdate(format!("cannot lock {}: {e}", group_path.display()))
+    })?;
+
+    let (existing_groups, group_layout) = if group_path.exists() {
+        group::read_group_with_layout(&group_path).map_err(|e| {
             GroupaddError::CantUpdate(format!("cannot read {}: {e}", group_path.display()))
         })?
     } else {
-        Vec::new()
+        (Vec::new(), group::Layout::default())
     };
 
     // Check if group name already exists.
@@ -170,16 +195,19 @@ fn do_groupadd(matches: &clap::ArgMatches) -> UResult<()> {
     // Determine GID.
     let gid = determine_gid(matches, &existing_groups, force, non_unique, system, &defs)?;
 
-    // Block signals for the duration of the critical section so a SIGINT
-    // between lock acquisition and atomic_write cannot leave stale lock files.
-    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
-        .map_err(|e| GroupaddError::CantUpdate(format!("cannot block signals: {e}")))?;
-
     // Write to /etc/group.
-    write_group_entry(&group_path, &group_name, gid)?;
+    write_group_entry(
+        &group_path,
+        existing_groups,
+        &group_layout,
+        &group_name,
+        gid,
+        &users,
+    )?;
+    drop(group_lock);
 
     // Write to /etc/gshadow.
-    write_gshadow_entry(&root.gshadow_path(), &group_name, &password)?;
+    write_gshadow_entry(&root.gshadow_path(), &group_name, &password, &users)?;
 
     nscd::invalidate_cache("group");
 
@@ -221,35 +249,28 @@ fn determine_gid(
 }
 
 /// Append a new group entry to /etc/group.
-fn write_group_entry(group_path: &Path, name: &str, gid: u32) -> Result<(), GroupaddError> {
-    let new_group = GroupEntry {
+fn write_group_entry(
+    group_path: &Path,
+    mut entries: Vec<GroupEntry>,
+    layout: &group::Layout,
+    name: &str,
+    gid: u32,
+    members: &[String],
+) -> Result<(), GroupaddError> {
+    entries.push(GroupEntry {
         name: name.to_string(),
         passwd: "x".to_string(),
         gid,
-        members: Vec::new(),
-    };
-
-    let group_lock = FileLock::acquire(group_path).map_err(|e| {
-        GroupaddError::CantUpdate(format!("cannot lock {}: {e}", group_path.display()))
-    })?;
-
-    let (mut entries, group_layout) = if group_path.exists() {
-        group::read_group_with_layout(group_path).map_err(|e| {
-            GroupaddError::CantUpdate(format!("cannot read {}: {e}", group_path.display()))
-        })?
-    } else {
-        (Vec::new(), group::Layout::default())
-    };
-    entries.push(new_group);
+        members: members.to_vec(),
+    });
 
     atomic::atomic_write(group_path, |f| {
-        group::write_group_with_layout(&entries, &group_layout, f)
+        group::write_group_with_layout(&entries, layout, f)
     })
     .map_err(|e| {
         GroupaddError::CantUpdate(format!("cannot write {}: {e}", group_path.display()))
     })?;
 
-    drop(group_lock);
     Ok(())
 }
 
@@ -258,6 +279,7 @@ fn write_gshadow_entry(
     gshadow_path: &Path,
     name: &str,
     password: &str,
+    members: &[String],
 ) -> Result<(), GroupaddError> {
     if !gshadow_path.exists() {
         return Ok(());
@@ -267,7 +289,7 @@ fn write_gshadow_entry(
         name: name.to_string(),
         passwd: password.to_string(),
         admins: Vec::new(),
-        members: Vec::new(),
+        members: members.to_vec(),
     };
 
     let gshadow_lock = FileLock::acquire(gshadow_path).map_err(|e| {
@@ -338,6 +360,13 @@ pub fn uu_app() -> Command {
                 .long("non-unique")
                 .help("Permit a duplicate GID (must accompany -g)")
                 .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new(options::USERS)
+                .short('U')
+                .long("users")
+                .value_name("USERS")
+                .help("Comma-separated list of users to make members of the new group"),
         )
         .arg(
             Arg::new(options::PASSWORD)

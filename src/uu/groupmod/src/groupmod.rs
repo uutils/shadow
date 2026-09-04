@@ -31,6 +31,8 @@ mod options {
     pub const PASSWORD: &str = "password";
     pub const ROOT: &str = "root";
     pub const PREFIX: &str = "prefix";
+    pub const USERS: &str = "users";
+    pub const APPEND: &str = "append";
 }
 
 mod exit_codes {
@@ -204,6 +206,28 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         entries[idx].name.clone_from(name);
     }
 
+    // groupmod(8) -U sets the member list; with -a the users are added to it.
+    if let Some(users) = matches.get_one::<String>(options::USERS) {
+        let requested: Vec<String> = users
+            .split(',')
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .map(ToOwned::to_owned)
+            .collect();
+        for name in &requested {
+            shadow_core::validate::validate_username(name)
+                .map_err(|e| GroupmodError::BadArgument(format!("invalid member name: {e}")))?;
+        }
+        if !matches.get_flag(options::APPEND) {
+            entries[idx].members.clear();
+        }
+        for name in requested {
+            if !entries[idx].members.contains(&name) {
+                entries[idx].members.push(name);
+            }
+        }
+    }
+
     let modified_gid = entries[idx].gid;
 
     // Write /etc/group.
@@ -247,6 +271,27 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     // Update /etc/gshadow.
     let gshadow_path = root.gshadow_path();
+    // Without a gshadow file the password belongs in the group file, which is
+    // where a system with no gshadow keeps it; otherwise -p was a silent no-op.
+    if !gshadow_path.exists()
+        && let Some(pw) = new_password
+    {
+        let (mut regroup, layout) = group::read_group_with_layout(&group_path).map_err(|e| {
+            GroupmodError::CantUpdate(format!("cannot read {}: {e}", group_path.display()))
+        })?;
+        if let Some(g) = regroup
+            .iter_mut()
+            .find(|g| g.name == *new_name.unwrap_or(group_name))
+        {
+            g.passwd.clone_from(pw);
+        }
+        atomic::atomic_write(&group_path, |f| {
+            group::write_group_with_layout(&regroup, &layout, f)
+        })
+        .map_err(|e| {
+            GroupmodError::CantUpdate(format!("cannot write {}: {e}", group_path.display()))
+        })?;
+    }
     if gshadow_path.exists() && (new_name.is_some() || new_password.is_some()) {
         let gs_lock = FileLock::acquire(&gshadow_path).map_err(|e| {
             GroupmodError::CantUpdate(format!("cannot lock {}: {e}", gshadow_path.display()))
@@ -317,6 +362,21 @@ pub fn uu_app() -> Command {
                 .long("password")
                 .value_name("PASSWORD")
                 .help("Replace the group password (PASSWORD must be a crypt(3) hash)"),
+        )
+        .arg(
+            Arg::new(options::USERS)
+                .short('U')
+                .long("users")
+                .value_name("USERS")
+                .help("Set the group's member list (comma-separated)"),
+        )
+        .arg(
+            Arg::new(options::APPEND)
+                .short('a')
+                .long("append")
+                .requires(options::USERS)
+                .help("With -U, add the users instead of replacing the member list")
+                .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new(options::ROOT)

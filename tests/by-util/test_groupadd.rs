@@ -293,3 +293,23 @@ fn test_key_missing_equals_exits_bad_argument() {
         "nothing must be written"
     );
 }
+
+#[test]
+fn test_users_flag_sets_members() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    // groupadd(8) -U: the new group starts with these members.
+    let dir = setup_prefix("root:x:0:\n", "GID_MIN 1000\nGID_MAX 60000\n");
+    let prefix = dir.path().to_str().unwrap();
+    assert_eq!(
+        run(&["groupadd", "-P", prefix, "-U", "alice,bob", "devs"]),
+        0
+    );
+    let group = read_group(&dir);
+    assert!(
+        group.contains("devs:x:") && group.contains(":alice,bob"),
+        "members should be set, got: {group}"
+    );
+}

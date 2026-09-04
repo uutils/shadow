@@ -123,6 +123,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `groupadd` takes the group lock *before* reading `/etc/group`. The name
+  check and the GID allocation ran on a snapshot taken beforehand, so two
+  concurrent `groupadd -r` calls could allocate the same GID and two
+  `groupadd www` could both decide the name was free (#245)
+- `groupadd -U` and `groupmod -U`/`-a` set a group's member list, and
+  `groupdel -f` removes a group that is a user's primary group and succeeds
+  when the group does not exist — all four documented and all four previously
+  a usage error (#245)
+- `groupmod -p` writes the password into `/etc/group` when there is no
+  `/etc/gshadow`, instead of silently doing nothing (#245)
+- `groupdel` no longer leaves the deleted group behind in `/etc/gshadow` when
+  it was the only entry there, and can delete the last group in `/etc/group`
+  (#245)
 - `usermod -g` takes a group name as well as a GID, and requires the group to
   exist (exit 6). A numeric GID naming no group was written through, leaving a
   primary group that does not exist (#242)
