@@ -8,7 +8,7 @@
 #       SELinux is enforcing, which affects file context on /etc/passwd, /etc/shadow.
 
 # Pinned: see the note in Dockerfile.debian.
-FROM fedora:44
+FROM fedora:46
 
 RUN dnf install -y \
     gcc \
