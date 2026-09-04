@@ -591,6 +591,114 @@ test_self_service() {
     userdel -r selftest_user 2>/dev/null || true
 }
 
+# ── Aging fields, batch input and newgrp ────────────────────────────
+
+# Print the value column of one `chage -l` line, e.g. aging_field 2 alice
+# for "Password expires".
+aging_field() {
+    chage -l "$2" | sed -n "$1p" | sed 's/.*: //'
+}
+
+test_aging_and_input() {
+    section "Aging fields, batch input, newgrp"
+
+    userdel -r aging_user 2>/dev/null || true
+    assert_ok "useradd -m aging_user" useradd -m aging_user
+
+    # A last-change day of 0 is `passwd -e`'s marker, not a date, and it makes
+    # both derived dates meaningless too.
+    assert_ok "chage -d 0 aging_user" chage -d 0 aging_user
+    assert_ok "last change reports 'password must be changed'" \
+        test "$(aging_field 1 aging_user)" = "password must be changed"
+    assert_ok "password expiry reports 'password must be changed'" \
+        test "$(aging_field 2 aging_user)" = "password must be changed"
+    assert_ok "password inactive reports 'password must be changed'" \
+        test "$(aging_field 3 aging_user)" = "password must be changed"
+
+    # The threshold above which a maximum age means "no expiry" is 10000.
+    assert_ok "chage -d 2026-01-01 -M 9999 aging_user" \
+        chage -d 2026-01-01 -M 9999 aging_user
+    assert_ok "max 9999 gives a real expiry date" \
+        test "$(aging_field 2 aging_user)" = "May 18, 2053"
+    assert_ok "chage -M 10000 aging_user" chage -M 10000 aging_user
+    assert_ok "max 10000 means never" \
+        test "$(aging_field 2 aging_user)" = "never"
+
+    # -1 clears a field; anything else negative is a usage error.
+    assert_ok "chage -M -1 clears the maximum" chage -M -1 aging_user
+    assert_ok "cleared maximum reads back as -1" \
+        test "$(aging_field 6 aging_user)" = "-1"
+    assert_fail "chage -M -5 is refused" chage -M -5 aging_user
+    assert_fail "chage -d -5 is refused" chage -d -5 aging_user
+
+    # An unknown login is an ordinary failure (1), not "no shadow file" (15).
+    assert_ok "chage -l on an unknown login exits 1" \
+        bash -c 'chage -l no-such-user-4b2 >/dev/null 2>&1; [ "$?" -eq 1 ]'
+    assert_ok "passwd -S on an unknown login exits 1" \
+        bash -c 'passwd -S no-such-user-4b2 >/dev/null 2>&1; [ "$?" -eq 1 ]'
+
+    # chpasswd takes its default hashing scheme from login.defs, as the rest
+    # of the system does; hard-coding one wrote weaker hashes than configured.
+    assert_ok "ENCRYPT_METHOD YESCRYPT in login.defs" \
+        bash -c "sed -i '/^ENCRYPT_METHOD/d' /etc/login.defs; echo 'ENCRYPT_METHOD YESCRYPT' >>/etc/login.defs"
+    assert_ok "chpasswd hashes aging_user" \
+        bash -c "echo 'aging_user:BatchPass123' | chpasswd"
+    assert_file_contains "chpasswd used yescrypt as configured" \
+        /etc/shadow 'aging_user:\$y\$'
+    assert_ok "ENCRYPT_METHOD SHA512 in login.defs" \
+        bash -c "sed -i 's/^ENCRYPT_METHOD.*/ENCRYPT_METHOD SHA512/' /etc/login.defs"
+    assert_ok "chpasswd hashes aging_user again" \
+        bash -c "echo 'aging_user:BatchPass456' | chpasswd"
+    assert_file_contains "chpasswd followed the changed configuration" \
+        /etc/shadow 'aging_user:\$6\$'
+    assert_ok "-c overrides the configured default" \
+        bash -c "echo 'aging_user:BatchPass789' | chpasswd -c SHA256"
+    assert_file_contains "explicit -c wins" /etc/shadow 'aging_user:\$5\$'
+
+    # Flag combinations chpasswd(8) documents as errors.
+    assert_ok "-s without -c is a usage error (exit 2)" \
+        bash -c 'echo "aging_user:x" | chpasswd -s 5000 >/dev/null 2>&1; [ "$?" -eq 2 ]'
+    assert_ok "-e with -c is a usage error (exit 2)" \
+        bash -c 'echo "aging_user:x" | chpasswd -e -c SHA512 >/dev/null 2>&1; [ "$?" -eq 2 ]'
+
+    # --prefix on chage and chpasswd, so their behaviour is testable without
+    # touching the live files.
+    local pfx
+    pfx=$(mktemp -d)
+    mkdir -p "$pfx/etc"
+    printf 'pfxuser:x:4000:4000::/home/pfxuser:/bin/sh\n' >"$pfx/etc/passwd"
+    printf 'pfxuser:!:19000:0:99999:7:::\n' >"$pfx/etc/shadow"
+    assert_ok "chage --prefix reads the prefixed shadow file" \
+        chage -P "$pfx" -l pfxuser
+    assert_ok "chage --prefix writes the prefixed shadow file" \
+        chage -P "$pfx" -M 42 pfxuser
+    assert_file_contains "prefixed maximum age written" \
+        "$pfx/etc/shadow" 'pfxuser:!:19000:0:42:'
+    assert_ok "chpasswd --prefix writes the prefixed shadow file" \
+        bash -c "echo 'pfxuser:PrefixPass1' | chpasswd -P '$pfx'"
+    assert_ok "the live shadow file was untouched by --prefix" \
+        bash -c "! grep -q '^pfxuser:' /etc/shadow"
+    rm -rf "$pfx"
+
+    # newgrp: without '-' the environment and working directory survive; with
+    # '-' the shell is a login shell in a reinitialized environment.
+    groupadd -f newgrp_grp >/dev/null 2>&1
+    usermod -aG newgrp_grp aging_user
+    assert_ok "newgrp switches the primary group" \
+        bash -c "su -s /bin/bash aging_user -c 'echo id -gn | newgrp newgrp_grp' | grep -qx newgrp_grp"
+    assert_ok "newgrp keeps the caller's environment" \
+        bash -c "su -s /bin/bash aging_user -c 'MARKER=kept; export MARKER; echo \"echo \\\$MARKER\" | newgrp newgrp_grp' | grep -qx kept"
+    assert_ok "newgrp - reinitializes the environment" \
+        bash -c "su -s /bin/bash aging_user -c 'MARKER=kept; export MARKER; echo \"echo m=\\\$MARKER\" | newgrp - newgrp_grp' | grep -qx 'm='"
+    assert_ok "newgrp - still switches the group" \
+        bash -c "su -s /bin/bash aging_user -c 'echo id -gn | newgrp - newgrp_grp' | grep -qx newgrp_grp"
+    assert_fail "newgrp rejects a misplaced dash" \
+        su -s /bin/bash aging_user -c "newgrp newgrp_grp - </dev/null"
+
+    groupdel newgrp_grp 2>/dev/null || true
+    userdel -r aging_user 2>/dev/null || true
+}
+
 # ── nscd cache invalidation ────────────────────────────────────────
 
 test_nscd() {
@@ -700,6 +808,7 @@ main() {
     test_individual_tools
     test_pam_auth
     test_self_service
+    test_aging_and_input
     test_nscd
     test_landlock
     test_ansible

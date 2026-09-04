@@ -23,7 +23,7 @@ Techniques adopted from OpenBSD and best practices for setuid-root tools.
       one-probe-at-a-time oracle for paths the caller cannot stat
 - [x] `chfn` and `chsh` validate the new value *before* the PAM conversation,
       so a rejected value never costs the caller a password prompt
-- [x] Neither `chfn` nor `chsh` calls `setuid(0)` before writing: euid 0 is all
+- [x] Neither `chfn`, `chsh` nor `chpasswd` calls `setuid(0)` before writing: euid 0 is all
       the lock and the atomic write need, and raising the *real* uid would make
       `caller_is_root()` answer true for every caller
 - [x] `passwd --prefix` and `--root` are root-only: they point a setuid binary
@@ -58,6 +58,13 @@ Techniques adopted from OpenBSD and best practices for setuid-root tools.
       shares, unless `-f`
 - [x] Path resolution is total: no `unreachable!()` reachable from a `--prefix`
       argument or a home directory read out of `/etc/passwd`
+- [x] The aging arithmetic is checked. `lastchg + max + inactive` sums three
+      values read from a file anyone with write access to `/etc/shadow` can
+      choose; the sum is bounded rather than wrapped, and an unrepresentable
+      date displays as `never` instead of an arithmetic artefact
+- [x] `chpasswd` resolves every account in a batch before writing any of them,
+      so an unknown login mid-list leaves the file untouched rather than half
+      applied
 
 ### Locking
 
@@ -84,6 +91,13 @@ Techniques adopted from OpenBSD and best practices for setuid-root tools.
 - [x] Core dumps suppressed with `PR_SET_DUMPABLE` **and** `RLIMIT_CORE=0` — the
       limit alone is ignored when cores are piped to a handler
 - [x] Resource limit hardening (#44 — `raise_file_size_limit()`)
+- [x] The copy of the password `crypt(3)` requires as a C string is owned in a
+      zeroizing buffer with its capacity reserved up front, so neither the copy
+      nor a reallocation of it is left in freed heap
+- [x] Each `user:password` line `chpasswd` reads is owned in a zeroizing buffer
+- [x] The PAM response scrub uses volatile writes and a compiler fence: a plain
+      `write_bytes` into a buffer freed on the next line is a dead store the
+      optimiser may delete
 - [x] Ctrl-C at a password prompt no longer leaves the terminal with echo off.
       `shadow_core::tty` blocks `SIGINT`/`SIGQUIT`/`SIGTSTP` for the duration
       of the read — `readpassphrase(3)` semantics — so the `EchoGuard`
@@ -95,6 +109,12 @@ Techniques adopted from OpenBSD and best practices for setuid-root tools.
       shadow file directly. Deliberately **not** applied around a PAM
       conversation: `restrict_self` sets `no_new_privs`, which strips the setgid
       bit from `unix_chkpwd` and blocks `dlopen` of the PAM modules
+- [x] `PAM_TTY` and `PAM_RUSER` are set on every PAM handle, so `pam_unix` and
+      `pam_faillock` can record which terminal and which caller a failed
+      authentication came from instead of logging `tty=?`
+- [x] `newgrp` without `-` keeps the caller's environment and execs a
+      non-login shell; only `newgrp -` builds a login environment, and it
+      builds it explicitly rather than passing the caller's through
 - [x] Absolute paths for subprocess execution (`/usr/sbin/nscd`)
 - [x] Environment sanitization for spawned children (#40 — `sanitized_env()`)
 - [x] Targeted hardening in `newgrp` (no `RLIMIT_FSIZE` leak to the exec'd shell)
