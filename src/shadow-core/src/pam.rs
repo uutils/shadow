@@ -426,6 +426,25 @@ fn alloc_c_response(s: &str) -> Result<*mut libc::c_char, ()> {
     Ok(buf)
 }
 
+/// The name of the controlling terminal, as PAM records it in `PAM_TTY`.
+///
+/// stdin, stdout and stderr are tried in turn: a tool invoked with its input
+/// redirected can still be attached to a terminal on one of the other two.
+/// `None` when none of them is a terminal.
+fn controlling_tty() -> Option<String> {
+    use std::os::fd::AsFd;
+
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    let stderr = std::io::stderr();
+    for fd in [stdin.as_fd(), stdout.as_fd(), stderr.as_fd()] {
+        if let Ok(name) = rustix::termios::ttyname(fd, Vec::new()) {
+            return name.into_string().ok();
+        }
+    }
+    None
+}
+
 /// Free partially-filled PAM responses on error.
 ///
 /// Frees the `resp` strings for responses `0..count`, then frees the array.
@@ -436,9 +455,16 @@ fn free_responses(responses: *mut PamResponse, count: usize) {
         unsafe {
             let r = &mut *responses.add(i);
             if !r.resp.is_null() {
-                // Zero out the response before freeing (may contain a password).
+                // The response may be a password. `ptr::write_bytes` into a
+                // buffer that is freed on the next line is a dead store the
+                // optimiser is free to delete, which would leave the password
+                // in the heap; volatile writes cannot be elided.
                 let len = libc::strlen(r.resp.cast::<libc::c_char>());
-                ptr::write_bytes(r.resp, 0, len);
+                let bytes = r.resp.cast::<u8>();
+                for off in 0..len {
+                    ptr::write_volatile(bytes.add(off), 0);
+                }
+                std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
                 libc::free(r.resp.cast::<libc::c_void>());
             }
         }
@@ -535,12 +561,31 @@ impl PamContext {
             ));
         }
 
-        Ok(Self {
+        let mut ctx = Self {
             handle,
             last_status: rc,
             _conv_data: conv_data,
             _conv: conv,
-        })
+        };
+        ctx.set_default_items();
+        Ok(ctx)
+    }
+
+    /// Tell the stack who is asking and from which terminal.
+    ///
+    /// Without these, `pam_unix` and `pam_faillock` log `tty=?` and no
+    /// requesting user, which makes their records useless for tracing a failed
+    /// authentication back to a session -- and `pam_faillock`'s per-tty
+    /// behaviour cannot work at all. Best effort: a tool with no controlling
+    /// terminal (a cron job, a `su -c`) still has to be able to authenticate,
+    /// so a failure here is not a failure to start.
+    fn set_default_items(&mut self) {
+        if let Some(tty) = controlling_tty() {
+            let _ = self.set_item_str(item_type::PAM_TTY, &tty);
+        }
+        if let Ok(user) = crate::hardening::current_username() {
+            let _ = self.set_item_str(item_type::PAM_RUSER, &user);
+        }
     }
 
     /// Authenticate the user.

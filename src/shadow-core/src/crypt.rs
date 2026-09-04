@@ -24,12 +24,41 @@
 use std::ffi::CString;
 
 use subtle::ConstantTimeEq;
+use zeroize::Zeroizing;
 
 use crate::error::ShadowError;
 
 #[cfg_attr(not(target_env = "musl"), link(name = "crypt"))]
 unsafe extern "C" {
     fn crypt(key: *const libc::c_char, salt: *const libc::c_char) -> *mut libc::c_char;
+}
+
+/// A NUL-terminated copy of a secret that is scrubbed when it drops.
+///
+/// crypt(3) takes C strings, so a copy of the password has to exist. Making it
+/// with `CString::new` leaves that copy in freed heap when it drops: the
+/// caller's `Zeroizing<String>` scrubs its own buffer and never learns about
+/// this one. Owning the bytes here is what closes that gap.
+struct SecretCString(Zeroizing<Vec<u8>>);
+
+impl SecretCString {
+    /// Copy `secret` into a scrubbing buffer, appending the NUL crypt(3) needs.
+    fn new(secret: &str) -> Result<Self, ShadowError> {
+        if secret.as_bytes().contains(&0) {
+            return Err(ShadowError::Auth("password contains null byte".into()));
+        }
+        // Reserve the exact length up front: a reallocation would leave the
+        // first copy of the password behind, unzeroed, in freed memory.
+        let mut buf = Zeroizing::new(Vec::with_capacity(secret.len() + 1));
+        buf.extend_from_slice(secret.as_bytes());
+        buf.push(0);
+        Ok(Self(buf))
+    }
+
+    /// A pointer to the NUL-terminated bytes, valid while `self` is alive.
+    fn as_ptr(&self) -> *const libc::c_char {
+        self.0.as_ptr().cast()
+    }
 }
 
 /// crypt(3) salt alphabet (POSIX: [a-zA-Z0-9./]).
@@ -105,8 +134,7 @@ pub fn hash_password(
     rounds: Option<u32>,
 ) -> Result<String, ShadowError> {
     let salt = generate_salt(method, rounds)?;
-    let c_password = CString::new(password)
-        .map_err(|_| ShadowError::Auth("password contains null byte".into()))?;
+    let c_password = SecretCString::new(password)?;
     let c_salt = CString::new(salt.as_str())
         .map_err(|_| ShadowError::Auth("salt contains null byte".into()))?;
 
@@ -151,8 +179,7 @@ pub fn hash_password(
 /// static buffer on glibc. Concurrent calls from multiple threads will
 /// corrupt each other's results. All shadow-rs tools are single-threaded.
 pub fn verify_password(password: &str, hash: &str) -> Result<bool, ShadowError> {
-    let c_password = CString::new(password)
-        .map_err(|_| ShadowError::Auth("password contains null byte".into()))?;
+    let c_password = SecretCString::new(password)?;
     let c_hash =
         CString::new(hash).map_err(|_| ShadowError::Auth("hash contains null byte".into()))?;
 
