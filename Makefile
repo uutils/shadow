@@ -69,10 +69,10 @@ install: build
 	@echo "  setuid (4755): $(SETUID_TOOLS)"
 	@echo "  root-only (0755): $(ROOT_TOOLS)"
 
-# Opt-in install: single multicall binary with symlinks. Smaller footprint but
-# larger setuid attack surface — the binary is installed setuid-root, so all 14
-# applets run with euid=root when invoked via symlink. Intended for
-# container/embedded use where disk savings matter and attack surface does not.
+# Opt-in install: single multicall binary with symlinks. Smaller footprint.
+# The binary is installed setuid-root for passwd/chfn/chsh/newgrp; the other
+# applets drop back to the caller's uid before running, so the privilege model
+# matches the per-tool layout. Intended for container/embedded use.
 install-multicall: build-multicall
 	install -Dm4755 target/release/shadow-rs $(DESTDIR)$(BINDIR)/shadow-rs
 	@for tool in $(ALL_TOOLS); do \

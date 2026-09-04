@@ -96,9 +96,10 @@ sudo make install PREFIX=/usr/local
 ```
 
 Alternative: single multicall binary with symlinks. Smaller footprint (~14×
-disk savings) but larger setuid attack surface — the binary is installed
-setuid-root, so all 14 applets run with `euid=root` when invoked via symlink.
-Intended for container/embedded use cases.
+disk savings). The binary is installed setuid-root so that `passwd`, `chfn`,
+`chsh` and `newgrp` can serve unprivileged callers; every other applet drops
+back to the caller's uid before it runs, so the privilege model is the same
+as the per-tool layout. Intended for container/embedded use cases.
 
 ```shell
 sudo make install-multicall PREFIX=/usr/local
@@ -145,9 +146,10 @@ for tool in passwd chfn chsh newgrp chage chpasswd groupadd groupdel \
 done
 ```
 
-Mode `4755` makes every applet run `euid=root`; see the setuid trade-off noted
-above. Run `shadow-rs --list` to see the applets a given build contains, and
-`sha256sum -c uu_shadow-*.tar.gz.sha256` to verify a download.
+Mode `4755` is what the four self-service applets need; the others give the
+privilege up before running. Run `shadow-rs --list` to see the applets a
+given build contains, and `sha256sum -c uu_shadow-*.tar.gz.sha256` to verify
+a download.
 
 ### Test
 

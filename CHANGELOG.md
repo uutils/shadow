@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- In the multicall layout, applets other than `passwd`, `chfn`, `chsh` and
+  `newgrp` drop to the caller's uid before running. The setuid binary let any
+  local user run `pwck -s` or `grpck -s` with euid 0 and rewrite
+  `/etc/passwd`, `/etc/shadow`, `/etc/group` and `/etc/gshadow`. The two
+  install layouts now have the same privilege model
 - Rewritten account files keep their owner, group and SELinux label. The
   atomic writer created the replacement file as `root:<effective gid>`, so
   any administrative change turned `/etc/shadow` from `root:shadow` into
