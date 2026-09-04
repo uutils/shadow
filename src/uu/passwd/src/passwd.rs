@@ -112,24 +112,44 @@ impl UError for PasswdError {
 // Security hardening — landlock filesystem restriction
 // ---------------------------------------------------------------------------
 
-/// Restrict filesystem access using landlock (Linux 5.13+).
+/// Restrict filesystem access with Landlock (Linux 5.13+) on the code paths
+/// that read and write the shadow file themselves: `-S`, the lock / unlock /
+/// delete / expire flags and the aging flags.
 ///
-/// Best-effort Landlock sandboxing for passwd. Silently does nothing on
-/// kernels without Landlock support or when the feature is disabled.
+/// The PAM path is deliberately left unsandboxed. Landlock's `restrict_self`
+/// sets `no_new_privs`, which strips the setgid bit from `unix_chkpwd` and
+/// the setuid bit from every other helper PAM execs, and a rule set applied
+/// before `pam_start` also blocked `dlopen` of `pam_unix.so`. Both made
+/// `passwd` unable to change any password.
 ///
-/// Restricts filesystem access to only what passwd needs:
-/// read+write `/etc/` (passwd/shadow files) and `/dev/` (tty for prompts),
-/// execute `/usr/sbin/` (`nscd`/`sss_cache` invalidation).
+/// What the sandboxed paths need: the account files under `<prefix>/etc`
+/// (read-write), the real `/etc` for the NSS configuration, `/dev` for the
+/// terminal, `/run` and `/var` for the NSS backends and the `nscd` /
+/// `sss_cache` sockets, and read+execute on the library and binary trees so
+/// those helpers can start. Best effort: kernels without Landlock run
+/// unsandboxed.
 #[allow(unused_variables)]
 fn apply_landlock(root: &SysRoot) {
-    // Landlock is irreversible per-process, skip during tests
+    // Landlock is irreversible per-thread and the integration tests call
+    // uumain in-process, so the sandbox is compiled out of test builds.
     #[cfg(not(test))]
     {
         let etc = root.resolve("/etc");
-        let dev = Path::new("/dev");
-        let usr_sbin = Path::new("/usr/sbin");
-
-        shadow_core::hardening::apply_landlock(&[etc.as_path(), dev], &[], &[usr_sbin]);
+        let writable = [
+            etc.as_path(),
+            Path::new("/dev"),
+            Path::new("/run"),
+            Path::new("/var"),
+        ];
+        let readable = [Path::new("/etc")];
+        let executable = [
+            Path::new("/usr"),
+            Path::new("/lib"),
+            Path::new("/lib64"),
+            Path::new("/bin"),
+            Path::new("/sbin"),
+        ];
+        shadow_core::hardening::apply_landlock(&writable, &readable, &executable);
     }
 }
 
@@ -158,12 +178,14 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         do_chroot(chroot_dir)?;
     }
 
+    // --prefix points a setuid binary at files of the caller's choosing; like
+    // --root it is a provisioning option for root only.
     let prefix = matches.get_one::<String>(options::PREFIX).map(Path::new);
+    if prefix.is_some() && !shadow_core::hardening::caller_is_root() {
+        return Err(PasswdError::PermissionDenied("only root may use --prefix".into()).into());
+    }
     let root = SysRoot::new(prefix);
     let quiet = matches.get_flag(options::QUIET);
-
-    // Best-effort filesystem restriction — silently skipped on older kernels.
-    apply_landlock(&root);
 
     // Determine target user.
     let target_user = resolve_target_user(&matches)?;
@@ -429,6 +451,8 @@ pub fn uu_app() -> Command {
 
 /// `passwd -S [user]` / `passwd -Sa` — display account status.
 fn cmd_status(root: &SysRoot, target_user: Option<&str>) -> UResult<()> {
+    apply_landlock(root);
+
     let shadow_path = root.shadow_path();
     let entries = match shadow::read_shadow_file(&shadow_path) {
         Ok(e) => e,
@@ -503,19 +527,15 @@ fn cmd_pam_change(matches: &clap::ArgMatches, target_user: &str) -> UResult<()> 
             }
         };
 
-        // Drop privileges to caller's real UID during PAM conversation.
-        // Re-elevate automatically when _priv_drop goes out of scope.
-        let _priv_drop = shadow_core::process::PrivDrop::drop_to(
-            rustix::process::getuid().as_raw(),
-        )
-        .map_err(|e| PasswdError::UnexpectedFailure(format!("cannot drop privileges: {e}")))?;
-
-        // Non-root users changing their own password must authenticate first.
-        if !shadow_core::hardening::caller_is_root()
-            && let Err(e) = pam.authenticate(0)
-        {
-            return Err(PasswdError::PamError(e.to_string()).into());
-        }
+        // No pam_authenticate and no privilege drop. The `passwd` PAM service
+        // defines only a `password` stack (Debian's is a bare
+        // `@include common-password`), so pam_authenticate has nothing to run
+        // and fails before any prompt. Verifying the current password is
+        // pam_unix's job inside pam_chauthtok: it prompts for and checks it
+        // whenever the *real* uid is not root — which a setuid binary leaves
+        // as the caller's — while euid 0 lets pam_unix's helpers and its
+        // rewrite of /etc/shadow succeed. Dropping the effective uid instead
+        // strips the setgid bit from `unix_chkpwd` and blocks the write.
 
         // Validate that the account is in good standing.
         if let Err(e) = pam.acct_mgmt(0) {

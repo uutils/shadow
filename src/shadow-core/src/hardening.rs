@@ -70,8 +70,13 @@ pub fn sanitized_env() -> Vec<(String, String)> {
 /// Restrict filesystem access via Landlock (Linux 5.13+).
 ///
 /// Best-effort: silently does nothing on kernels without Landlock support.
-/// `rw_paths` get read+write access, `ro_paths` get read-only access,
-/// `exec_paths` get execute access. Everything else is denied.
+/// `writable` paths get full access, `readable` paths read-only, `exec_paths`
+/// read and execute; everything else is denied. The restriction inherits into
+/// child processes and applies to shared objects `dlopen` loads later, and
+/// `restrict_self` sets `no_new_privs` — which strips the setuid/setgid bits
+/// from any helper exec'd afterwards. Do not apply it before a PAM
+/// conversation: PAM `dlopen`s its modules and execs setgid helpers such as
+/// `unix_chkpwd`. A path that does not exist is skipped, not an error.
 #[cfg(all(feature = "landlock", target_os = "linux"))]
 pub fn apply_landlock(
     writable: &[&std::path::Path],
