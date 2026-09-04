@@ -9,7 +9,8 @@
 #   docker compose run --rm e2e bash       # debug interactively
 
 # ── Stage 1: build shadow-rs ────────────────────────────────────────
-FROM rust:latest AS builder
+# Pinned: see the note in Dockerfile.debian.
+FROM rust:1.98-trixie AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpam0g-dev \
@@ -37,8 +38,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     login \
     && rm -rf /var/lib/apt/lists/*
 
-# Overwrite GNU binaries with shadow-rs
+# Overwrite GNU binaries with shadow-rs. Both directories: the tools an
+# ordinary user runs live in bin, as they do in the GNU package, and sbin is
+# not on a normal user's PATH.
 COPY --from=builder /install/usr/sbin/ /usr/sbin/
+COPY --from=builder /install/usr/bin/ /usr/bin/
 
 # Setuid-root — chmod on symlink sets the bit on the target binary
 RUN chmod 4755 /usr/sbin/shadow-rs

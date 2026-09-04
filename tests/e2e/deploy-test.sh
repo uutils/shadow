@@ -102,7 +102,21 @@ hash_password() {
 
 TOOLS="passwd pwck useradd userdel usermod chpasswd chage groupadd groupdel groupmod grpck chfn chsh newgrp"
 SETUID_TOOLS="passwd chfn chsh newgrp"
+
+# The tools an unprivileged user runs are installed in bin, the rest in sbin,
+# which is the split the GNU package uses: sbin is not on a normal user's
+# PATH, so `passwd` there would be "command not found".
+USER_TOOLS="passwd chfn chsh newgrp chage"
 BINDIR="/usr/sbin"
+USER_BINDIR="/usr/bin"
+
+# Where a given tool's symlink was installed.
+tool_path() {
+    case " $USER_TOOLS " in
+    *" $1 "*) echo "/usr/bin/$1" ;;
+    *) echo "/usr/sbin/$1" ;;
+    esac
+}
 
 # ── Preflight ───────────────────────────────────────────────────────
 
@@ -113,9 +127,17 @@ preflight() {
     assert_ok "shadow-rs --list succeeds" "$BINDIR/shadow-rs" --list
 
     for tool in $TOOLS; do
-        assert_ok "symlink exists: $tool" test -L "$BINDIR/$tool"
+        local path
+        path=$(tool_path "$tool")
+        assert_ok "symlink exists: $path" test -L "$path"
         assert_ok "symlink $tool resolves to shadow-rs" \
-            bash -c "readlink -f '$BINDIR/$tool' | grep -q 'shadow-rs'"
+            bash -c "readlink -f '$path' | grep -q 'shadow-rs'"
+    done
+
+    # An unprivileged user must be able to run their own tools by name.
+    for tool in $USER_TOOLS; do
+        assert_ok "$tool is on an unprivileged user's PATH" \
+            su -s /bin/bash testrunner -c "command -v $tool >/dev/null"
     done
 }
 
@@ -125,7 +147,7 @@ test_symlink_dispatch() {
     section "Symlink dispatch (argv[0])"
 
     for tool in $TOOLS; do
-        assert_ok "$tool --help via symlink" "$BINDIR/$tool" --help
+        assert_ok "$tool --help via symlink" "$(tool_path "$tool")" --help
     done
 }
 
@@ -158,7 +180,7 @@ test_setuid() {
     # Verify each setuid tool symlink resolves to the setuid binary
     for tool in $SETUID_TOOLS; do
         local resolved_perms
-        resolved_perms=$(stat -L -c '%a' "$BINDIR/$tool" 2>/dev/null || echo "0")
+        resolved_perms=$(stat -L -c '%a' "$(tool_path "$tool")" 2>/dev/null || echo "0")
         if [[ "$resolved_perms" == "4755" ]]; then
             echo -e "  ${GREEN}✓${NC} $tool resolves to setuid binary (4755)"
             PASS=$((PASS + 1))
@@ -175,12 +197,12 @@ test_setuid() {
     # change, so a build without the feature refuses every non-root use.
     for tool in passwd chfn chsh; do
         assert_ok "$tool is linked against PAM" \
-            sh -c "ldd $BINDIR/$tool | grep -q libpam"
+            sh -c "ldd $(tool_path "$tool") | grep -q libpam"
     done
 
     # Non-root user should be able to run passwd -S on themselves
     assert_ok "testrunner can run passwd -S" \
-        su -s /bin/bash testrunner -c "$BINDIR/passwd -S testrunner"
+        su -s /bin/bash testrunner -c "$USER_BINDIR/passwd -S testrunner"
 
     # Non-root user should NOT be able to change another user's password
     assert_fail "testrunner cannot passwd root" \
@@ -392,7 +414,7 @@ change_own_password() {
     expect -c "
         set timeout 20
         log_user 0
-        spawn su -s /bin/bash $1 -c $BINDIR/passwd
+        spawn su -s /bin/bash $1 -c $USER_BINDIR/passwd
         expect {
             -nocase -re {current.*password:|\\(current\\).*:} { send \"$2\r\"; exp_continue }
             -nocase -re {new.*password:} { send \"$3\r\"; exp_continue }
@@ -409,7 +431,7 @@ set_password_as_root() {
     expect -c "
         set timeout 20
         log_user 0
-        spawn $BINDIR/passwd $1
+        spawn $USER_BINDIR/passwd $1
         expect {
             -nocase -re {new.*password:} { send \"$2\r\"; exp_continue }
             -nocase -re {(retype|again).*:} { send \"$2\r\"; exp_continue }
@@ -466,7 +488,7 @@ chsh_interactive() {
     expect -c "
         set timeout 20
         log_user 0
-        spawn su -s /bin/bash $1 -c $BINDIR/chsh
+        spawn su -s /bin/bash $1 -c $USER_BINDIR/chsh
         expect {
             -nocase -re {login shell.*:} { send \"$2\r\"; exp_continue }
             -nocase -re {password:} { send \"$3\r\"; exp_continue }
@@ -482,7 +504,7 @@ chfn_interactive() {
     expect -c "
         set timeout 20
         log_user 0
-        spawn su -s /bin/bash $1 -c $BINDIR/chfn
+        spawn su -s /bin/bash $1 -c $USER_BINDIR/chfn
         expect {
             -nocase -re {room number.*:} { send \"$2\r\"; exp_continue }
             -nocase -re {(full name|work phone|home phone).*:} { send \"\r\"; exp_continue }
@@ -500,7 +522,7 @@ chsh_refused_without_prompt() {
     expect -c "
         set timeout 20
         log_user 0
-        spawn su -s /bin/bash $1 -c {$BINDIR/chsh -s $2}
+        spawn su -s /bin/bash $1 -c {$USER_BINDIR/chsh -s $2}
         expect {
             -nocase -re {password:} { exit 20 }
             -nocase {$3} { exp_continue }
@@ -516,7 +538,7 @@ chsh_message_absent() {
     expect -c "
         set timeout 20
         log_user 0
-        spawn su -s /bin/bash $1 -c {$BINDIR/chsh -s $2}
+        spawn su -s /bin/bash $1 -c {$USER_BINDIR/chsh -s $2}
         expect {
             -nocase {$3} { exit 22 }
             eof { exit 0 }
@@ -582,7 +604,7 @@ test_self_service() {
     # 'f' is absent from CHFN_RESTRICT, so the full name is not the caller's
     # to change — and the refusal must arrive without a password prompt.
     assert_fail "selftest_user may not change the full name under CHFN_RESTRICT=rwh" \
-        su -s /bin/bash selftest_user -c "$BINDIR/chfn -f Nope </dev/null"
+        su -s /bin/bash selftest_user -c "$USER_BINDIR/chfn -f Nope </dev/null"
     assert_ok "root may still change the full name" \
         chfn -f "Self Test User" selftest_user
     assert_file_contains "root-set full name written" \
