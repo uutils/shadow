@@ -165,7 +165,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         GroupmodError::CantUpdate(format!("cannot lock {}: {e}", group_path.display()))
     })?;
 
-    let mut entries = group::read_group_file(&group_path).map_err(|e| {
+    let (mut entries, group_layout) = group::read_group_with_layout(&group_path).map_err(|e| {
         GroupmodError::CantUpdate(format!("cannot read {}: {e}", group_path.display()))
     })?;
 
@@ -207,7 +207,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let modified_gid = entries[idx].gid;
 
     // Write /etc/group.
-    atomic::atomic_write(&group_path, |f| group::write_group(&entries, f)).map_err(|e| {
+    atomic::atomic_write(&group_path, |f| {
+        group::write_group_with_layout(&entries, &group_layout, f)
+    })
+    .map_err(|e| {
         GroupmodError::CantUpdate(format!("cannot write {}: {e}", group_path.display()))
     })?;
 
@@ -218,9 +221,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         && new_gid_val != old_gid
         && update_passwd
     {
-        let mut pw_entries = passwd::read_passwd_file(&passwd_path).map_err(|e| {
-            GroupmodError::CantUpdate(format!("cannot read {}: {e}", passwd_path.display()))
-        })?;
+        let (mut pw_entries, passwd_layout) = passwd::read_passwd_with_layout(&passwd_path)
+            .map_err(|e| {
+                GroupmodError::CantUpdate(format!("cannot read {}: {e}", passwd_path.display()))
+            })?;
         let mut changed = false;
         for e in &mut pw_entries {
             if e.gid == old_gid {
@@ -229,14 +233,12 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             }
         }
         if changed {
-            atomic::atomic_write(&passwd_path, |f| passwd::write_passwd(&pw_entries, f)).map_err(
-                |e| {
-                    GroupmodError::CantUpdate(format!(
-                        "cannot write {}: {e}",
-                        passwd_path.display()
-                    ))
-                },
-            )?;
+            atomic::atomic_write(&passwd_path, |f| {
+                passwd::write_passwd_with_layout(&pw_entries, &passwd_layout, f)
+            })
+            .map_err(|e| {
+                GroupmodError::CantUpdate(format!("cannot write {}: {e}", passwd_path.display()))
+            })?;
         }
     }
 
@@ -250,9 +252,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             GroupmodError::CantUpdate(format!("cannot lock {}: {e}", gshadow_path.display()))
         })?;
 
-        let mut gs_entries = gshadow::read_gshadow_file(&gshadow_path).map_err(|e| {
-            GroupmodError::CantUpdate(format!("cannot read {}: {e}", gshadow_path.display()))
-        })?;
+        let (mut gs_entries, gshadow_layout) = gshadow::read_gshadow_with_layout(&gshadow_path)
+            .map_err(|e| {
+                GroupmodError::CantUpdate(format!("cannot read {}: {e}", gshadow_path.display()))
+            })?;
 
         if let Some(gs) = gs_entries.iter_mut().find(|g| g.name == *group_name) {
             if let Some(name) = new_name {
@@ -263,9 +266,12 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             }
         }
 
-        atomic::atomic_write(&gshadow_path, |f| gshadow::write_gshadow(&gs_entries, f)).map_err(
-            |e| GroupmodError::CantUpdate(format!("cannot write {}: {e}", gshadow_path.display())),
-        )?;
+        atomic::atomic_write(&gshadow_path, |f| {
+            gshadow::write_gshadow_with_layout(&gs_entries, &gshadow_layout, f)
+        })
+        .map_err(|e| {
+            GroupmodError::CantUpdate(format!("cannot write {}: {e}", gshadow_path.display()))
+        })?;
 
         drop(gs_lock);
     }

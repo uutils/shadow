@@ -573,7 +573,7 @@ where
     })?;
 
     // Read current entries.
-    let mut entries = match shadow::read_shadow_file(&shadow_path) {
+    let (mut entries, layout) = match shadow::read_shadow_with_layout(&shadow_path) {
         Ok(e) => e,
         Err(e) => {
             drop(lock);
@@ -603,7 +603,7 @@ where
 
     // Write back atomically.
     let write_result = atomic::atomic_write(&shadow_path, |file| {
-        shadow::write_shadow(&entries, file)?;
+        shadow::write_shadow_with_layout(&entries, &layout, file)?;
         Ok(())
     });
 

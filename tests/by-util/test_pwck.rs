@@ -422,3 +422,33 @@ fn test_read_only_and_sort_conflict() {
     let code = run(&["pwck", "-r", "-s", "-R", prefix]);
     assert_ne!(code, 0, "-r and -s cannot be combined");
 }
+
+#[test]
+fn test_sort_keeps_each_comment_with_its_entry() {
+    let dir = setup_root(
+        "# top comment\n\
+         z:x:3000:3000::/home/z:/bin/sh\n\
+         # about a\n\
+         a:x:1000:1000::/home/a:/bin/sh\n\
+         +@staff\n",
+        "z:!:1::::::\na:!:1::::::\n",
+        "z:x:3000:\na:x:1000:\n",
+    );
+    // Home directories, so the checks report nothing and -s may write.
+    std::fs::create_dir_all(dir.path().join("home/a")).unwrap();
+    std::fs::create_dir_all(dir.path().join("home/z")).unwrap();
+    std::fs::write(dir.path().join("etc/shells"), "/bin/sh\n").unwrap();
+
+    let prefix = dir.path().to_str().unwrap();
+    assert_eq!(run(&["pwck", "-s", "-R", prefix]), 0, "clean file sorts");
+
+    assert_eq!(
+        read_etc(&dir, "passwd"),
+        "# about a\n\
+         a:x:1000:1000::/home/a:/bin/sh\n\
+         # top comment\n\
+         z:x:3000:3000::/home/z:/bin/sh\n\
+         +@staff\n",
+        "each comment follows the entry it described, and the compat line stays last"
+    );
+}

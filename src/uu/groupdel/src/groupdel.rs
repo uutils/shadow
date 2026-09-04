@@ -111,7 +111,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         GroupdelError::CantUpdate(format!("cannot lock {}: {e}", group_path.display()))
     })?;
 
-    let entries = group::read_group_file(&group_path).map_err(|e| {
+    let (entries, group_layout) = group::read_group_with_layout(&group_path).map_err(|e| {
         GroupdelError::CantUpdate(format!("cannot read {}: {e}", group_path.display()))
     })?;
 
@@ -147,7 +147,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         .filter(|g| g.name != *group_name)
         .collect();
 
-    atomic::atomic_write(&group_path, |f| group::write_group(&new_entries, f)).map_err(|e| {
+    atomic::atomic_write(&group_path, |f| {
+        group::write_group_with_layout(&new_entries, &group_layout, f)
+    })
+    .map_err(|e| {
         GroupdelError::CantUpdate(format!("cannot write {}: {e}", group_path.display()))
     })?;
 
@@ -160,9 +163,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             GroupdelError::CantUpdate(format!("cannot lock {}: {e}", gshadow_path.display()))
         })?;
 
-        let gs_entries = gshadow::read_gshadow_file(&gshadow_path).map_err(|e| {
-            GroupdelError::CantUpdate(format!("cannot read {}: {e}", gshadow_path.display()))
-        })?;
+        let (gs_entries, gshadow_layout) = gshadow::read_gshadow_with_layout(&gshadow_path)
+            .map_err(|e| {
+                GroupdelError::CantUpdate(format!("cannot read {}: {e}", gshadow_path.display()))
+            })?;
 
         let new_gs: Vec<GshadowEntry> = gs_entries
             .into_iter()
@@ -171,14 +175,12 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
         // Only write if we actually had gshadow entries to begin with.
         if !new_gs.is_empty() {
-            atomic::atomic_write(&gshadow_path, |f| gshadow::write_gshadow(&new_gs, f)).map_err(
-                |e| {
-                    GroupdelError::CantUpdate(format!(
-                        "cannot write {}: {e}",
-                        gshadow_path.display()
-                    ))
-                },
-            )?;
+            atomic::atomic_write(&gshadow_path, |f| {
+                gshadow::write_gshadow_with_layout(&new_gs, &gshadow_layout, f)
+            })
+            .map_err(|e| {
+                GroupdelError::CantUpdate(format!("cannot write {}: {e}", gshadow_path.display()))
+            })?;
         }
 
         drop(gs_lock);

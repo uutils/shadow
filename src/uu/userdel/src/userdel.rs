@@ -413,8 +413,8 @@ where
 fn remove_from_group_members(path: &Path, login: &str) -> Result<(), String> {
     let lock = FileLock::acquire(path).map_err(|e| format!("cannot lock group file: {e}"))?;
 
-    let mut entries =
-        group::read_group_file(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let (mut entries, layout) = group::read_group_with_layout(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
 
     let mut changed = false;
     for entry in &mut entries {
@@ -426,8 +426,10 @@ fn remove_from_group_members(path: &Path, login: &str) -> Result<(), String> {
     }
 
     if changed {
-        atomic::atomic_write(path, |f| group::write_group(&entries, f))
-            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        atomic::atomic_write(path, |f| {
+            group::write_group_with_layout(&entries, &layout, f)
+        })
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     }
 
     drop(lock);
@@ -438,7 +440,7 @@ fn remove_from_group_members(path: &Path, login: &str) -> Result<(), String> {
 fn remove_from_gshadow_members(path: &Path, login: &str) -> Result<(), String> {
     let lock = FileLock::acquire(path).map_err(|e| format!("cannot lock gshadow file: {e}"))?;
 
-    let mut entries = gshadow::read_gshadow_file(path)
+    let (mut entries, layout) = gshadow::read_gshadow_with_layout(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
 
     let mut changed = false;
@@ -453,8 +455,10 @@ fn remove_from_gshadow_members(path: &Path, login: &str) -> Result<(), String> {
     }
 
     if changed {
-        atomic::atomic_write(path, |f| gshadow::write_gshadow(&entries, f))
-            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        atomic::atomic_write(path, |f| {
+            gshadow::write_gshadow_with_layout(&entries, &layout, f)
+        })
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     }
 
     drop(lock);
@@ -482,8 +486,8 @@ fn remove_user_private_group(
 
     let group_lock =
         FileLock::acquire(&group_path).map_err(|e| format!("cannot lock group file: {e}"))?;
-    let mut entries =
-        group::read_group_file(&group_path).map_err(|e| format!("cannot read group: {e}"))?;
+    let (mut entries, group_layout) = group::read_group_with_layout(&group_path)
+        .map_err(|e| format!("cannot read group: {e}"))?;
 
     let Some(idx) = entries.iter().position(|g| g.name == login) else {
         return Ok(());
@@ -504,7 +508,8 @@ fn remove_user_private_group(
     }
 
     entries.remove(idx);
-    write_group_or_empty(&group_path, &entries).map_err(|e| format!("cannot write group: {e}"))?;
+    write_group_or_empty(&group_path, &entries, &group_layout)
+        .map_err(|e| format!("cannot write group: {e}"))?;
     drop(group_lock);
 
     // Mirror the removal in gshadow.
@@ -512,11 +517,11 @@ fn remove_user_private_group(
     if gshadow_path.exists() {
         let gs_lock =
             FileLock::acquire(&gshadow_path).map_err(|e| format!("cannot lock gshadow: {e}"))?;
-        if let Ok(mut gs) = gshadow::read_gshadow_file(&gshadow_path) {
+        if let Ok((mut gs, gshadow_layout)) = gshadow::read_gshadow_with_layout(&gshadow_path) {
             let before = gs.len();
             gs.retain(|g| g.name != login);
             if gs.len() != before {
-                write_gshadow_or_empty(&gshadow_path, &gs)
+                write_gshadow_or_empty(&gshadow_path, &gs, &gshadow_layout)
                     .map_err(|e| format!("cannot write gshadow: {e}"))?;
             }
         }
@@ -540,14 +545,16 @@ fn remove_subid_rows(path: &Path, login: &str) {
     let Ok(lock) = FileLock::acquire(path) else {
         return;
     };
-    if let Ok(mut entries) = subid::read_subid_file(path) {
+    if let Ok((mut entries, layout)) = subid::read_subid_with_layout(path) {
         let before = entries.len();
         entries.retain(|e| e.name != login);
         if entries.len() != before {
-            if entries.is_empty() {
+            if entries.is_empty() && layout.is_empty() {
                 let _ = std::fs::remove_file(path);
             } else {
-                let _ = atomic::atomic_write(path, |f| subid::write_subid(&entries, f));
+                let _ = atomic::atomic_write(path, |f| {
+                    subid::write_subid_with_layout(&entries, &layout, f)
+                });
             }
         }
     }
@@ -560,24 +567,28 @@ fn remove_subid_rows(path: &Path, login: &str) {
 fn write_group_or_empty(
     path: &Path,
     entries: &[group::GroupEntry],
+    layout: &group::Layout,
 ) -> Result<(), shadow_core::error::ShadowError> {
-    if entries.is_empty() {
+    if entries.is_empty() && layout.is_empty() {
         let _ = std::fs::remove_file(path);
         Ok(())
     } else {
-        atomic::atomic_write(path, |f| group::write_group(entries, f))
+        atomic::atomic_write(path, |f| group::write_group_with_layout(entries, layout, f))
     }
 }
 
 fn write_gshadow_or_empty(
     path: &Path,
     entries: &[gshadow::GshadowEntry],
+    layout: &gshadow::Layout,
 ) -> Result<(), shadow_core::error::ShadowError> {
-    if entries.is_empty() {
+    if entries.is_empty() && layout.is_empty() {
         let _ = std::fs::remove_file(path);
         Ok(())
     } else {
-        atomic::atomic_write(path, |f| gshadow::write_gshadow(entries, f))
+        atomic::atomic_write(path, |f| {
+            gshadow::write_gshadow_with_layout(entries, layout, f)
+        })
     }
 }
 

@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rewriting an account file no longer deletes its comments, blank lines and
+  NIS compatibility lines. Every tool dropped them on read, so the first
+  `useradd`, `usermod`, `groupadd`… erased every comment in `/etc/passwd` and
+  `/etc/group`; and because `+user`, `+@netgroup` and `-user` do not parse as
+  records, on a host using `compat` in `nsswitch.conf` every tool failed
+  outright. Those lines are now preserved and each one stays anchored to the
+  entry it preceded, so a comment follows its account even when `pwck -s`
+  reorders the file (#241)
 - The lock loop no longer spins at 100% CPU when a stale `.lock` cannot be
   removed (e.g. made immutable), and a filesystem without hard links now fails
   immediately instead of waiting out the full 15-second timeout (#240)

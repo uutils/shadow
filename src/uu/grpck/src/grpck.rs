@@ -172,12 +172,7 @@ fn run_checks(opts: &GrpckOptions) -> UResult<()> {
     // Sort by GID if requested. `-r` and `-s` cannot be combined (rejected by
     // clap), so the read-only guard is defensive.
     if opts.sort && !opts.read_only {
-        sort_and_write(
-            &opts.group_path,
-            &opts.gshadow_path,
-            &group_entries,
-            &gshadow_entries,
-        )?;
+        sort_and_write(&opts.group_path, &opts.gshadow_path)?;
     }
 
     Ok(())
@@ -191,8 +186,9 @@ fn read_raw_lines(path: &Path) -> Result<Vec<String>, std::io::Error> {
 
     for line in reader.lines() {
         let line = line?;
-        let trimmed = line.trim_start();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+        // Comments, blank lines and NIS compat lines are not entries to check;
+        // they are preserved verbatim when -s rewrites the file.
+        if shadow_core::records::is_raw_line(&line) {
             continue;
         }
         lines.push(line);
@@ -292,38 +288,50 @@ fn load_gshadow_file(path: &Path, quiet: bool) -> Vec<GshadowEntry> {
 /// blank lines from the original file. A lossless (comment-preserving)
 /// sort would require a significantly different parser that tracks raw
 /// lines alongside parsed entries. This matches GNU `grpck -s` behavior.
-fn sort_and_write(
-    group_path: &Path,
-    gshadow_path: &Path,
-    group_entries: &[GroupEntry],
-    gshadow_entries: &[GshadowEntry],
-) -> UResult<()> {
-    let mut sorted_groups = group_entries.to_vec();
-    sorted_groups.sort_by_key(|g| g.gid);
-
-    if sorted_groups == group_entries {
-        return Ok(());
-    }
-
+fn sort_and_write(group_path: &Path, gshadow_path: &Path) -> UResult<()> {
     let group_lock = FileLock::acquire(group_path)
         .map_err(|e| GrpckError::CantLock(format!("cannot lock {}: {e}", group_path.display())))?;
 
-    atomic::atomic_write(group_path, |f| group::write_group(&sorted_groups, f)).map_err(|e| {
-        GrpckError::CantUpdate(format!("cannot update {}: {e}", group_path.display()))
-    })?;
+    // Re-read under the lock: the entries checked above were read before it.
+    // The layout keeps comments, blank lines and NIS compat lines, each
+    // anchored to the entry it preceded, so a comment follows its group.
+    let (mut sorted_groups, group_layout) =
+        group::read_group_with_layout(group_path).map_err(|e| {
+            GrpckError::CantUpdate(format!("cannot read {}: {e}", group_path.display()))
+        })?;
+    let original = sorted_groups.clone();
+    sorted_groups.sort_by_key(|g| g.gid);
+
+    if sorted_groups == original {
+        drop(group_lock);
+        return Ok(());
+    }
+
+    atomic::atomic_write(group_path, |f| {
+        group::write_group_with_layout(&sorted_groups, &group_layout, f)
+    })
+    .map_err(|e| GrpckError::CantUpdate(format!("cannot update {}: {e}", group_path.display())))?;
 
     // Sort gshadow to match the new group order.
-    if gshadow_path.exists() && !gshadow_entries.is_empty() {
+    if gshadow_path.exists() {
         let gs_lock = FileLock::acquire(gshadow_path).map_err(|e| {
             GrpckError::CantLock(format!("cannot lock {}: {e}", gshadow_path.display()))
         })?;
 
-        let sorted_gshadow = sort_gshadow_by_group(&sorted_groups, gshadow_entries);
+        let (gshadow_entries, gshadow_layout) = gshadow::read_gshadow_with_layout(gshadow_path)
+            .map_err(|e| {
+                GrpckError::CantUpdate(format!("cannot read {}: {e}", gshadow_path.display()))
+            })?;
 
-        atomic::atomic_write(gshadow_path, |f| gshadow::write_gshadow(&sorted_gshadow, f))
+        if !gshadow_entries.is_empty() {
+            let sorted_gshadow = sort_gshadow_by_group(&sorted_groups, &gshadow_entries);
+            atomic::atomic_write(gshadow_path, |f| {
+                gshadow::write_gshadow_with_layout(&sorted_gshadow, &gshadow_layout, f)
+            })
             .map_err(|e| {
                 GrpckError::CantUpdate(format!("cannot update {}: {e}", gshadow_path.display()))
             })?;
+        }
 
         drop(gs_lock);
     }

@@ -202,13 +202,7 @@ fn run_checks(opts: &PwckOptions) -> UResult<()> {
     }
 
     if opts.sort {
-        sort_and_write(
-            &opts.passwd_path,
-            &opts.shadow_path,
-            &passwd_entries,
-            &shadow_entries,
-            opts.read_only,
-        )?;
+        sort_and_write(&opts.passwd_path, &opts.shadow_path, opts.read_only)?;
     } else {
         uucore::show_error!("no changes");
     }
@@ -251,20 +245,7 @@ fn load_group_file(path: &Path, quiet: bool) -> Vec<GroupEntry> {
 /// comments or blank lines. Comment preservation is tracked in #241; until
 /// then a `-s` that reorders the file drops them. This only runs when there
 /// were no parse errors.
-fn sort_and_write(
-    passwd_path: &Path,
-    shadow_path: &Path,
-    passwd_entries: &[PasswdEntry],
-    shadow_entries: &[ShadowEntry],
-    read_only: bool,
-) -> UResult<()> {
-    let mut sorted_passwd = passwd_entries.to_vec();
-    sorted_passwd.sort_by_key(|e| e.uid);
-
-    if sorted_passwd == passwd_entries {
-        return Ok(());
-    }
-
+fn sort_and_write(passwd_path: &Path, shadow_path: &Path, read_only: bool) -> UResult<()> {
     if read_only {
         return Ok(());
     }
@@ -272,20 +253,46 @@ fn sort_and_write(
     let passwd_lock = FileLock::acquire(passwd_path)
         .map_err(|e| PwckError::CantLock(format!("cannot lock {}: {e}", passwd_path.display())))?;
 
-    atomic::atomic_write(passwd_path, |f| passwd::write_passwd(&sorted_passwd, f)).map_err(
-        |e| PwckError::CantUpdate(format!("cannot update {}: {e}", passwd_path.display())),
-    )?;
+    // Re-read under the lock: the entries checked above were read before it,
+    // so sorting those would overwrite anything that changed in between. The
+    // layout keeps comments, blank lines and NIS compat lines, each anchored
+    // to the entry it preceded, so a comment follows its account.
+    let (mut sorted_passwd, passwd_layout) =
+        passwd::read_passwd_with_layout(passwd_path).map_err(|e| {
+            PwckError::CantUpdate(format!("cannot read {}: {e}", passwd_path.display()))
+        })?;
+    let original = sorted_passwd.clone();
+    sorted_passwd.sort_by_key(|e| e.uid);
 
-    if shadow_path.exists() && !shadow_entries.is_empty() {
+    if sorted_passwd == original {
+        drop(passwd_lock);
+        return Ok(());
+    }
+
+    atomic::atomic_write(passwd_path, |f| {
+        passwd::write_passwd_with_layout(&sorted_passwd, &passwd_layout, f)
+    })
+    .map_err(|e| PwckError::CantUpdate(format!("cannot update {}: {e}", passwd_path.display())))?;
+
+    if shadow_path.exists() {
         let shadow_lock = FileLock::acquire(shadow_path).map_err(|e| {
             PwckError::CantLock(format!("cannot lock {}: {e}", shadow_path.display()))
         })?;
 
-        let sorted_shadow = sort_shadow_by_passwd(&sorted_passwd, shadow_entries);
+        let (shadow_entries, shadow_layout) = shadow::read_shadow_with_layout(shadow_path)
+            .map_err(|e| {
+                PwckError::CantUpdate(format!("cannot read {}: {e}", shadow_path.display()))
+            })?;
 
-        atomic::atomic_write(shadow_path, |f| shadow::write_shadow(&sorted_shadow, f)).map_err(
-            |e| PwckError::CantUpdate(format!("cannot update {}: {e}", shadow_path.display())),
-        )?;
+        if !shadow_entries.is_empty() {
+            let sorted_shadow = sort_shadow_by_passwd(&sorted_passwd, &shadow_entries);
+            atomic::atomic_write(shadow_path, |f| {
+                shadow::write_shadow_with_layout(&sorted_shadow, &shadow_layout, f)
+            })
+            .map_err(|e| {
+                PwckError::CantUpdate(format!("cannot update {}: {e}", shadow_path.display()))
+            })?;
+        }
 
         drop(shadow_lock);
     }
@@ -579,8 +586,9 @@ fn read_raw_lines(path: &Path) -> Result<Vec<String>, std::io::Error> {
 
     for line in reader.lines() {
         let line = line?;
-        let trimmed = line.trim_start();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+        // Comments, blank lines and NIS compat lines are not entries to check;
+        // they are preserved verbatim when -s rewrites the file.
+        if shadow_core::records::is_raw_line(&line) {
             continue;
         }
         lines.push(line);

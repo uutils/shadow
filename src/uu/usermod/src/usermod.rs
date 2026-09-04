@@ -133,7 +133,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let lock = FileLock::acquire(&passwd_path)
         .map_err(|e| UsermodError::CantUpdate(format!("cannot lock: {e}")))?;
 
-    let mut entries = passwd::read_passwd_file(&passwd_path)
+    let (mut entries, passwd_layout) = passwd::read_passwd_with_layout(&passwd_path)
         .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
 
     let Some(idx) = entries.iter().position(|e| e.name == *login) else {
@@ -187,8 +187,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     let new_uid = entries[idx].uid;
 
-    atomic::atomic_write(&passwd_path, |f| passwd::write_passwd(&entries, f))
-        .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
+    atomic::atomic_write(&passwd_path, |f| {
+        passwd::write_passwd_with_layout(&entries, &passwd_layout, f)
+    })
+    .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
     drop(lock);
 
     // Restore signals before potentially long-running recursive chown.
@@ -224,7 +226,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         let slock = FileLock::acquire(&shadow_path)
             .map_err(|e| UsermodError::CantUpdate(format!("cannot lock shadow: {e}")))?;
 
-        let mut se = shadow::read_shadow_file(&shadow_path)
+        let (mut se, shadow_layout) = shadow::read_shadow_with_layout(&shadow_path)
             .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
 
         let Some(s) = se.iter_mut().find(|e| e.name == *login) else {
@@ -257,8 +259,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             s.name.clone_from(new_name);
         }
 
-        atomic::atomic_write(&shadow_path, |f| shadow::write_shadow(&se, f))
-            .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
+        atomic::atomic_write(&shadow_path, |f| {
+            shadow::write_shadow_with_layout(&se, &shadow_layout, f)
+        })
+        .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
         drop(slock);
     }
 
@@ -269,7 +273,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             let glock = FileLock::acquire(&group_path)
                 .map_err(|e| UsermodError::CantUpdate(format!("cannot lock group: {e}")))?;
 
-            let mut ge = group::read_group_file(&group_path)
+            let (mut ge, group_layout) = group::read_group_with_layout(&group_path)
                 .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
 
             let mut changed = false;
@@ -281,8 +285,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             }
 
             if changed {
-                atomic::atomic_write(&group_path, |f| group::write_group(&ge, f))
-                    .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
+                atomic::atomic_write(&group_path, |f| {
+                    group::write_group_with_layout(&ge, &group_layout, f)
+                })
+                .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
             }
             drop(glock);
         }
@@ -298,7 +304,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             let glock = FileLock::acquire(&group_path)
                 .map_err(|e| UsermodError::CantUpdate(format!("cannot lock group: {e}")))?;
 
-            let mut ge = group::read_group_file(&group_path)
+            let (mut ge, group_layout) = group::read_group_with_layout(&group_path)
                 .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
 
             // Validate all requested groups exist before mutating anything.
@@ -325,8 +331,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 }
             }
 
-            atomic::atomic_write(&group_path, |f| group::write_group(&ge, f))
-                .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
+            atomic::atomic_write(&group_path, |f| {
+                group::write_group_with_layout(&ge, &group_layout, f)
+            })
+            .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
             drop(glock);
         }
     }

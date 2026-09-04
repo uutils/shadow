@@ -186,7 +186,7 @@ where
         ))
     })?;
 
-    let mut entries = match passwd::read_passwd_file(&passwd_path) {
+    let (mut entries, layout) = match passwd::read_passwd_with_layout(&passwd_path) {
         Ok(e) => e,
         Err(e) => {
             drop(lock);
@@ -211,7 +211,7 @@ where
     }
 
     let write_result = atomic::atomic_write(&passwd_path, |file| {
-        passwd::write_passwd(&entries, file)?;
+        passwd::write_passwd_with_layout(&entries, &layout, file)?;
         Ok(())
     });
 

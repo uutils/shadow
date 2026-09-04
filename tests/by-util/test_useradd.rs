@@ -611,3 +611,47 @@ fn test_key_missing_equals_exits_error() {
     let code = run_with_root(&dir, &["-K", "UID_MIN", "-M", "-N", "badkeyuser"]);
     assert_eq!(code, 3, "invalid KEY=VALUE should exit 3 (bad argument)");
 }
+
+// ---------------------------------------------------------------------------
+// Comments and NIS compat lines survive a rewrite
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_comments_and_compat_lines_survive_useradd() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    let etc = dir.path().join("etc");
+    std::fs::write(
+        etc.join("passwd"),
+        "# System accounts\n\
+         root:x:0:0:root:/root:/bin/bash\n\
+         \n\
+         # pulled from the directory\n\
+         +@staff\n\
+         +::::::\n",
+    )
+    .unwrap();
+    std::fs::write(etc.join("group"), "# Local groups\nroot:x:0:\n+:::\n").unwrap();
+
+    let code = run_with_root(&dir, &["-N", "alice"]);
+    assert_eq!(code, 0, "useradd must work on a compat host");
+
+    let passwd = read_passwd(&dir);
+    assert!(passwd.contains("alice:"), "the account was added");
+    assert!(
+        passwd.contains("# System accounts") && passwd.contains("# pulled from the directory"),
+        "comments must survive the rewrite, got: {passwd}"
+    );
+    assert!(
+        passwd.contains("+@staff") && passwd.contains("+::::::"),
+        "NIS compat lines must survive the rewrite, got: {passwd}"
+    );
+    let group = read_group(&dir);
+    assert!(
+        group.contains("# Local groups") && group.contains("+:::"),
+        "group comments and compat lines must survive, got: {group}"
+    );
+}

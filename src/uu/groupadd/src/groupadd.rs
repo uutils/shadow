@@ -233,16 +233,19 @@ fn write_group_entry(group_path: &Path, name: &str, gid: u32) -> Result<(), Grou
         GroupaddError::CantUpdate(format!("cannot lock {}: {e}", group_path.display()))
     })?;
 
-    let mut entries = if group_path.exists() {
-        group::read_group_file(group_path).map_err(|e| {
+    let (mut entries, group_layout) = if group_path.exists() {
+        group::read_group_with_layout(group_path).map_err(|e| {
             GroupaddError::CantUpdate(format!("cannot read {}: {e}", group_path.display()))
         })?
     } else {
-        Vec::new()
+        (Vec::new(), group::Layout::default())
     };
     entries.push(new_group);
 
-    atomic::atomic_write(group_path, |f| group::write_group(&entries, f)).map_err(|e| {
+    atomic::atomic_write(group_path, |f| {
+        group::write_group_with_layout(&entries, &group_layout, f)
+    })
+    .map_err(|e| {
         GroupaddError::CantUpdate(format!("cannot write {}: {e}", group_path.display()))
     })?;
 
@@ -271,14 +274,18 @@ fn write_gshadow_entry(
         GroupaddError::CantUpdate(format!("cannot lock {}: {e}", gshadow_path.display()))
     })?;
 
-    let mut gs_entries = gshadow::read_gshadow_file(gshadow_path).map_err(|e| {
-        GroupaddError::CantUpdate(format!("cannot read {}: {e}", gshadow_path.display()))
-    })?;
+    let (mut gs_entries, gshadow_layout) = gshadow::read_gshadow_with_layout(gshadow_path)
+        .map_err(|e| {
+            GroupaddError::CantUpdate(format!("cannot read {}: {e}", gshadow_path.display()))
+        })?;
     gs_entries.push(new_gshadow);
 
-    atomic::atomic_write(gshadow_path, |f| gshadow::write_gshadow(&gs_entries, f)).map_err(
-        |e| GroupaddError::CantUpdate(format!("cannot write {}: {e}", gshadow_path.display())),
-    )?;
+    atomic::atomic_write(gshadow_path, |f| {
+        gshadow::write_gshadow_with_layout(&gs_entries, &gshadow_layout, f)
+    })
+    .map_err(|e| {
+        GroupaddError::CantUpdate(format!("cannot write {}: {e}", gshadow_path.display()))
+    })?;
 
     drop(gshadow_lock);
     Ok(())
