@@ -190,6 +190,12 @@ pub fn write_gshadow_with_layout<W: Write>(
     })
 }
 
+impl crate::transaction::Record for GshadowEntry {
+    fn validate_fields(&self) -> Result<(), ShadowError> {
+        Self::validate_fields(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

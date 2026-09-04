@@ -15,10 +15,10 @@ use std::path::Path;
 
 use clap::{Arg, ArgAction, Command};
 
-use shadow_core::lock::FileLock;
+use shadow_core::nscd;
 use shadow_core::passwd::{self, PasswdEntry};
 use shadow_core::sysroot::SysRoot;
-use shadow_core::{atomic, nscd};
+use shadow_core::transaction::LockedFile;
 
 use uucore::error::{UError, UResult};
 
@@ -214,58 +214,27 @@ where
     // euid 0 is all the lock and the atomic write need. setuid(0) would also
     // change the *real* uid, after which caller_is_root() -- deliberately real
     // uid based -- would answer true for every caller.
-
-    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
-        .map_err(|e| ChshError::Error(e.to_string()))?;
-
     let passwd_path = root.passwd_path();
 
-    let lock = FileLock::acquire(&passwd_path).map_err(|_| {
-        ChshError::Error(format!(
-            "cannot lock {}: try again later",
-            passwd_path.display()
-        ))
-    })?;
+    // The transaction locks, then reads, and releases on every path out --
+    // including the error returns below, where the file is left untouched.
+    let mut passwd = LockedFile::<PasswdEntry>::open(&passwd_path)
+        .map_err(|e| ChshError::Error(format!("cannot open {}: {e}", passwd_path.display())))?;
 
-    let (mut entries, layout) = match passwd::read_passwd_with_layout(&passwd_path) {
-        Ok(e) => e,
-        Err(e) => {
-            drop(lock);
-            return Err(
-                ChshError::Error(format!("cannot read {}: {e}", passwd_path.display())).into(),
-            );
-        }
-    };
-
-    let Some(entry) = entries.iter_mut().find(|e| e.name == username) else {
-        drop(lock);
+    let Some(entry) = passwd.find_mut(username) else {
         return Err(ChshError::Error(format!(
             "user '{username}' does not exist in {}",
             passwd_path.display()
         ))
         .into());
     };
+    mutate(entry).map_err(ChshError::Error)?;
 
-    if let Err(msg) = mutate(entry) {
-        drop(lock);
-        return Err(ChshError::Error(msg).into());
-    }
+    passwd
+        .commit()
+        .map_err(|e| ChshError::Error(format!("failed to write {}: {e}", passwd_path.display())))?;
 
-    let write_result = atomic::atomic_write(&passwd_path, |file| {
-        passwd::write_passwd_with_layout(&entries, &layout, file)?;
-        Ok(())
-    });
-
-    if let Err(e) = write_result {
-        drop(lock);
-        return Err(
-            ChshError::Error(format!("failed to write {}: {e}", passwd_path.display())).into(),
-        );
-    }
-
-    drop(lock);
     nscd::invalidate_cache("passwd");
-
     Ok(())
 }
 

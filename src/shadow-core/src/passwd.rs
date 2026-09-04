@@ -204,6 +204,12 @@ pub fn write_passwd_with_layout<W: Write>(
     })
 }
 
+impl crate::transaction::Record for PasswdEntry {
+    fn validate_fields(&self) -> Result<(), ShadowError> {
+        Self::validate_fields(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

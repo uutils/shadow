@@ -315,6 +315,12 @@ pub fn write_shadow_with_layout<W: Write>(
     })
 }
 
+impl crate::transaction::Record for ShadowEntry {
+    fn validate_fields(&self) -> Result<(), ShadowError> {
+        Self::validate_fields(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

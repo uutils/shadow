@@ -30,6 +30,7 @@ pub mod shadow;
 pub mod skel;
 pub mod subid;
 pub mod sysroot;
+pub mod transaction;
 pub mod tty;
 pub mod uid_alloc;
 pub mod validate;

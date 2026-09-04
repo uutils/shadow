@@ -15,10 +15,10 @@ use std::path::Path;
 use clap::{Arg, ArgAction, Command};
 
 use shadow_core::date;
-use shadow_core::lock::FileLock;
+use shadow_core::nscd;
 use shadow_core::shadow::{self, ShadowEntry};
 use shadow_core::sysroot::SysRoot;
-use shadow_core::{atomic, nscd};
+use shadow_core::transaction::LockedFile;
 
 use uucore::error::{UError, UResult};
 
@@ -480,76 +480,46 @@ fn inactive_display(
 
 /// Lock the shadow file, read entries, apply a mutation to one user's entry,
 /// write back atomically, invalidate nscd cache.
+/// Map a failure to start the transaction onto chage(1)'s exit codes.
+///
+/// A file another process holds is exit 5, distinct from a file that cannot be
+/// read at all, which is 15. Collapsing the two would report a transient
+/// contention as a missing shadow file.
+fn open_error(e: shadow_core::error::ShadowError, path: &Path) -> ChageError {
+    match e {
+        shadow_core::error::ShadowError::Lock(_) => {
+            ChageError::FileBusy(format!("cannot lock {}: try again later", path.display()))
+        }
+        other => ChageError::ShadowNotFound(format!("Cannot open {}: {other}", path.display())),
+    }
+}
+
 fn mutate_shadow<F>(root: &SysRoot, username: &str, mutate: F) -> UResult<()>
 where
     F: FnOnce(&mut ShadowEntry) -> Result<(), String>,
 {
-    // Consolidate real + effective UID to root for file operations.
-    // Some filesystem configurations check real UID.
-    if rustix::process::geteuid().is_root() {
-        let _ = shadow_core::process::setuid(0);
-    }
-
-    // Block signals for the entire critical section (lock -> write -> unlock).
-    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
-        .map_err(|e| ChageError::UnexpectedFailure(e.to_string()))?;
-
+    // euid 0 is all the lock and the atomic write need; setuid(0) would also
+    // raise the real uid, after which caller_is_root() answers true for
+    // everyone for the rest of the process.
     let shadow_path = root.shadow_path();
 
-    // Acquire lock.
-    let lock = FileLock::acquire(&shadow_path).map_err(|_| {
-        ChageError::FileBusy(format!(
-            "cannot lock {}: try again later",
-            shadow_path.display()
-        ))
-    })?;
+    // The transaction locks, then reads, and releases on every path out --
+    // including the error returns below, where the file is left untouched.
+    let mut shadow =
+        LockedFile::<ShadowEntry>::open(&shadow_path).map_err(|e| open_error(e, &shadow_path))?;
 
-    // Read current entries.
-    let (mut entries, layout) = match shadow::read_shadow_with_layout(&shadow_path) {
-        Ok(e) => e,
-        Err(e) => {
-            drop(lock);
-            return Err(ChageError::ShadowNotFound(format!(
-                "Cannot open {}: {e}",
-                shadow_path.display()
-            ))
-            .into());
-        }
-    };
-
-    // Find the target user.
-    let Some(entry) = entries.iter_mut().find(|e| e.name == username) else {
-        drop(lock);
+    let Some(entry) = shadow.find_mut(username) else {
         return Err(ChageError::UserNotFound(format!(
             "user '{username}' does not exist in {}",
             shadow_path.display()
         ))
         .into());
     };
+    mutate(entry).map_err(ChageError::UnexpectedFailure)?;
 
-    // Apply the mutation.
-    if let Err(msg) = mutate(entry) {
-        drop(lock);
-        return Err(ChageError::UnexpectedFailure(msg).into());
-    }
-
-    // Write back atomically.
-    let write_result = atomic::atomic_write(&shadow_path, |file| {
-        shadow::write_shadow_with_layout(&entries, &layout, file)?;
-        Ok(())
-    });
-
-    if let Err(e) = write_result {
-        drop(lock);
-        return Err(ChageError::UnexpectedFailure(format!(
-            "failed to write {}: {e}",
-            shadow_path.display()
-        ))
-        .into());
-    }
-
-    // Release lock and invalidate caches.
-    drop(lock);
+    shadow.commit().map_err(|e| {
+        ChageError::UnexpectedFailure(format!("failed to write {}: {e}", shadow_path.display()))
+    })?;
     nscd::invalidate_cache("shadow");
 
     Ok(())

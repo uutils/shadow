@@ -180,6 +180,12 @@ pub fn write_group_with_layout<W: Write>(
     })
 }
 
+impl crate::transaction::Record for GroupEntry {
+    fn validate_fields(&self) -> Result<(), ShadowError> {
+        Self::validate_fields(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

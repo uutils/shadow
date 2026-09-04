@@ -15,10 +15,10 @@ use std::path::Path;
 use clap::{Arg, ArgAction, Command};
 
 use shadow_core::audit;
-use shadow_core::lock::FileLock;
+use shadow_core::nscd;
 use shadow_core::shadow::{self, ShadowEntry};
 use shadow_core::sysroot::SysRoot;
-use shadow_core::{atomic, nscd};
+use shadow_core::transaction::LockedFile;
 
 use uucore::error::{UError, UResult};
 
@@ -661,6 +661,21 @@ fn format_days_since_epoch(days: i64) -> String {
 
 /// Lock the shadow file, read entries, apply a mutation to one user's entry,
 /// write back atomically, invalidate nscd cache.
+/// Map a failure to start the transaction onto passwd(1)'s exit codes.
+///
+/// The three cases stay distinct: another process holding the file is 5, a
+/// missing shadow file is 4, and anything else is 3. Collapsing them would
+/// report transient contention as a missing file.
+fn open_error(e: shadow_core::error::ShadowError, path: &Path) -> PasswdError {
+    match e {
+        shadow_core::error::ShadowError::Lock(_) => {
+            PasswdError::FileBusy(format!("cannot lock {}: try again later", path.display()))
+        }
+        other if !path.exists() => PasswdError::FileMissing(other.to_string()),
+        other => PasswdError::UnexpectedFailure(other.to_string()),
+    }
+}
+
 fn mutate_shadow<F>(
     root: &SysRoot,
     username: &str,
@@ -671,73 +686,29 @@ fn mutate_shadow<F>(
 where
     F: FnOnce(&mut ShadowEntry) -> Result<(), String>,
 {
-    // Consolidate real + effective UID to root for file operations.
-    // Some filesystem configurations check real UID.
-    if rustix::process::geteuid().is_root() {
-        let _ = shadow_core::process::setuid(0);
-    }
-
-    // Block signals for the entire critical section (lock → write → unlock).
-    // The RAII guard restores the original signal mask when this function returns.
-    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
-        .map_err(|e| PasswdError::UnexpectedFailure(e.to_string()))?;
-
+    // euid 0 is all the lock and the atomic write need; setuid(0) would also
+    // raise the real uid, after which caller_is_root() answers true for
+    // everyone for the rest of the process.
     let shadow_path = root.shadow_path();
 
-    // Acquire lock.
-    let lock = FileLock::acquire(&shadow_path).map_err(|_| {
-        PasswdError::FileBusy(format!(
-            "cannot lock {}: try again later",
-            shadow_path.display()
-        ))
-    })?;
+    // The transaction locks, then reads, and releases on every path out --
+    // including the error returns below, where the file is left untouched.
+    let mut shadow =
+        LockedFile::<ShadowEntry>::open(&shadow_path).map_err(|e| open_error(e, &shadow_path))?;
 
-    // Read current entries.
-    let (mut entries, layout) = match shadow::read_shadow_with_layout(&shadow_path) {
-        Ok(e) => e,
-        Err(e) => {
-            drop(lock);
-            return if shadow_path.exists() {
-                Err(PasswdError::UnexpectedFailure(e.to_string()).into())
-            } else {
-                Err(PasswdError::FileMissing(e.to_string()).into())
-            };
-        }
-    };
-
-    // Find the target user.
-    let Some(entry) = entries.iter_mut().find(|e| e.name == username) else {
-        drop(lock);
+    let Some(entry) = shadow.find_mut(username) else {
         return Err(PasswdError::UserNotFound(format!(
             "user '{username}' does not exist in {}",
             shadow_path.display()
         ))
         .into());
     };
+    mutate(entry).map_err(PasswdError::UnexpectedFailure)?;
 
-    // Apply the mutation.
-    if let Err(msg) = mutate(entry) {
-        drop(lock);
-        return Err(PasswdError::UnexpectedFailure(msg).into());
-    }
+    shadow.commit().map_err(|e| {
+        PasswdError::UnexpectedFailure(format!("failed to write {}: {e}", shadow_path.display()))
+    })?;
 
-    // Write back atomically.
-    let write_result = atomic::atomic_write(&shadow_path, |file| {
-        shadow::write_shadow_with_layout(&entries, &layout, file)?;
-        Ok(())
-    });
-
-    if let Err(e) = write_result {
-        drop(lock);
-        return Err(PasswdError::UnexpectedFailure(format!(
-            "failed to write {}: {e}",
-            shadow_path.display()
-        ))
-        .into());
-    }
-
-    // Release lock and invalidate caches.
-    drop(lock);
     nscd::invalidate_cache("shadow");
 
     audit::log_user_event(

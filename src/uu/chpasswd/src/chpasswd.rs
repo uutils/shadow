@@ -15,10 +15,10 @@ use std::path::Path;
 
 use clap::{Arg, ArgAction, Command};
 
-use shadow_core::lock::FileLock;
-use shadow_core::shadow::{self};
+use shadow_core::nscd;
+use shadow_core::shadow::ShadowEntry;
 use shadow_core::sysroot::SysRoot;
-use shadow_core::{atomic, nscd};
+use shadow_core::transaction::LockedFile;
 
 use uucore::error::{UError, UResult};
 
@@ -359,41 +359,30 @@ fn apply_password_changes(
         hashed.push((pair.username.as_str(), hash));
     }
 
-    // Block signals for the entire critical section.
-    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
-        .map_err(|e| ChpasswdError::UnexpectedFailure(e.to_string()))?;
-
     let shadow_path = root.shadow_path();
 
-    // Acquire lock.
-    let lock = FileLock::acquire(&shadow_path).map_err(|_| {
-        ChpasswdError::FileBusy(format!(
+    // The transaction locks, then reads, and releases on every path out --
+    // including the error returns below, where the file is left untouched.
+    let mut shadow = LockedFile::<ShadowEntry>::open(&shadow_path).map_err(|e| match e {
+        shadow_core::error::ShadowError::Lock(_) => ChpasswdError::FileBusy(format!(
             "cannot lock {}: try again later",
             shadow_path.display()
-        ))
+        )),
+        other => ChpasswdError::UnexpectedFailure(format!(
+            "Cannot open {}: {other}",
+            shadow_path.display()
+        )),
     })?;
-
-    // Read current entries.
-    let (mut entries, layout) = match shadow::read_shadow_with_layout(&shadow_path) {
-        Ok(e) => e,
-        Err(e) => {
-            drop(lock);
-            return Err(ChpasswdError::UnexpectedFailure(format!(
-                "Cannot open {}: {e}",
-                shadow_path.display()
-            ))
-            .into());
-        }
-    };
 
     let today = days_since_epoch()?;
 
     // Index by name once. A linear scan per pair made the critical section --
     // held with signals blocked -- quadratic in a batch the size of the file.
-    let index: std::collections::HashMap<&str, usize> = entries
+    let index: std::collections::HashMap<String, usize> = shadow
+        .entries()
         .iter()
         .enumerate()
-        .map(|(i, e)| (e.name.as_str(), i))
+        .map(|(i, e)| (e.name.clone(), i))
         .collect();
 
     // Resolve every pair before writing any, so an unknown account in the
@@ -401,7 +390,6 @@ fn apply_password_changes(
     let mut targets = Vec::with_capacity(hashed.len());
     for (username, hash) in hashed {
         let Some(&i) = index.get(username) else {
-            drop(lock);
             return Err(ChpasswdError::InvalidInput(format!(
                 "user '{username}' does not exist in {}",
                 shadow_path.display()
@@ -412,8 +400,7 @@ fn apply_password_changes(
     }
 
     for (i, hash) in targets {
-        let Some(entry) = entries.get_mut(i) else {
-            drop(lock);
+        let Some(entry) = shadow.entries_mut().get_mut(i) else {
             return Err(ChpasswdError::UnexpectedFailure(
                 "shadow entry vanished between indexing and writing".into(),
             )
@@ -423,23 +410,10 @@ fn apply_password_changes(
         entry.last_change = Some(today);
     }
 
-    // Write back atomically.
-    let write_result = atomic::atomic_write(&shadow_path, |file| {
-        shadow::write_shadow_with_layout(&entries, &layout, file)?;
-        Ok(())
-    });
+    shadow.commit().map_err(|e| {
+        ChpasswdError::UnexpectedFailure(format!("failed to write {}: {e}", shadow_path.display()))
+    })?;
 
-    if let Err(e) = write_result {
-        drop(lock);
-        return Err(ChpasswdError::UnexpectedFailure(format!(
-            "failed to write {}: {e}",
-            shadow_path.display()
-        ))
-        .into());
-    }
-
-    // Release lock and invalidate caches.
-    drop(lock);
     nscd::invalidate_cache("shadow");
 
     Ok(())

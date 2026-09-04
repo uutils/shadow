@@ -14,14 +14,13 @@ use std::path::Path;
 use clap::{Arg, ArgAction, Command};
 use uucore::error::{UError, UResult};
 
-use shadow_core::atomic;
 use shadow_core::audit;
-use shadow_core::group::{self, GroupEntry};
-use shadow_core::gshadow::{self, GshadowEntry};
-use shadow_core::lock::FileLock;
+use shadow_core::group::GroupEntry;
+use shadow_core::gshadow::GshadowEntry;
 use shadow_core::login_defs::{self, LoginDefs};
 use shadow_core::nscd;
 use shadow_core::sysroot::SysRoot;
+use shadow_core::transaction::LockedFile;
 use shadow_core::uid_alloc;
 use shadow_core::validate;
 
@@ -168,26 +167,16 @@ fn do_groupadd(matches: &clap::ArgMatches) -> UResult<()> {
 
     let group_path = root.group_path();
 
-    // Block signals for the duration of the critical section so a SIGINT
-    // between lock acquisition and atomic_write cannot leave stale lock files.
-    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
-        .map_err(|e| GroupaddError::CantUpdate(format!("cannot block signals: {e}")))?;
-
-    // Take the lock *before* reading. The name check and the GID allocation
-    // used to run on a snapshot taken beforehand, so two concurrent
-    // `groupadd -r` calls could allocate the same GID, and two `groupadd www`
-    // could both decide the name was free.
-    let group_lock = FileLock::acquire(&group_path).map_err(|e| {
-        GroupaddError::CantUpdate(format!("cannot lock {}: {e}", group_path.display()))
+    // The transaction locks *before* reading, and blocks signals for its
+    // lifetime. The name check and the GID allocation used to run on a
+    // snapshot taken beforehand, so two concurrent `groupadd -r` calls could
+    // allocate the same GID and two `groupadd www` could both decide the name
+    // was free. A group file that does not exist yet reads as empty: a fresh
+    // --prefix tree has none.
+    let mut groups = LockedFile::<GroupEntry>::open_or_empty(&group_path).map_err(|e| {
+        GroupaddError::CantUpdate(format!("cannot open {}: {e}", group_path.display()))
     })?;
-
-    let (existing_groups, group_layout) = if group_path.exists() {
-        group::read_group_with_layout(&group_path).map_err(|e| {
-            GroupaddError::CantUpdate(format!("cannot read {}: {e}", group_path.display()))
-        })?
-    } else {
-        (Vec::new(), group::Layout::default())
-    };
+    let existing_groups = groups.entries().to_vec();
 
     // Check if group name already exists.
     if existing_groups.iter().any(|g| g.name == group_name) {
@@ -214,15 +203,15 @@ fn do_groupadd(matches: &clap::ArgMatches) -> UResult<()> {
     )?;
 
     // Write to /etc/group.
-    write_group_entry(
-        &group_path,
-        existing_groups,
-        &group_layout,
-        &group_name,
+    groups.entries_mut().push(GroupEntry {
+        name: group_name.clone(),
+        passwd: "x".to_string(),
         gid,
-        &users,
-    )?;
-    drop(group_lock);
+        members: users.clone(),
+    });
+    groups.commit().map_err(|e| {
+        GroupaddError::CantUpdate(format!("cannot write {}: {e}", group_path.display()))
+    })?;
 
     // Write to /etc/gshadow.
     write_gshadow_entry(&root.gshadow_path(), &group_name, &password, &users)?;
@@ -267,32 +256,6 @@ fn determine_gid(
     }
 }
 
-/// Append a new group entry to /etc/group.
-fn write_group_entry(
-    group_path: &Path,
-    mut entries: Vec<GroupEntry>,
-    layout: &group::Layout,
-    name: &str,
-    gid: u32,
-    members: &[String],
-) -> Result<(), GroupaddError> {
-    entries.push(GroupEntry {
-        name: name.to_string(),
-        passwd: "x".to_string(),
-        gid,
-        members: members.to_vec(),
-    });
-
-    atomic::atomic_write(group_path, |f| {
-        group::write_group_with_layout(&entries, layout, f)
-    })
-    .map_err(|e| {
-        GroupaddError::CantUpdate(format!("cannot write {}: {e}", group_path.display()))
-    })?;
-
-    Ok(())
-}
-
 /// Append a new gshadow entry if /etc/gshadow exists.
 fn write_gshadow_entry(
     gshadow_path: &Path,
@@ -311,25 +274,13 @@ fn write_gshadow_entry(
         members: members.to_vec(),
     };
 
-    let gshadow_lock = FileLock::acquire(gshadow_path).map_err(|e| {
-        GroupaddError::CantUpdate(format!("cannot lock {}: {e}", gshadow_path.display()))
+    let mut gshadow = LockedFile::<GshadowEntry>::open(gshadow_path).map_err(|e| {
+        GroupaddError::CantUpdate(format!("cannot open {}: {e}", gshadow_path.display()))
     })?;
-
-    let (mut gs_entries, gshadow_layout) = gshadow::read_gshadow_with_layout(gshadow_path)
-        .map_err(|e| {
-            GroupaddError::CantUpdate(format!("cannot read {}: {e}", gshadow_path.display()))
-        })?;
-    gs_entries.push(new_gshadow);
-
-    atomic::atomic_write(gshadow_path, |f| {
-        gshadow::write_gshadow_with_layout(&gs_entries, &gshadow_layout, f)
-    })
-    .map_err(|e| {
+    gshadow.entries_mut().push(new_gshadow);
+    gshadow.commit().map_err(|e| {
         GroupaddError::CantUpdate(format!("cannot write {}: {e}", gshadow_path.display()))
-    })?;
-
-    drop(gshadow_lock);
-    Ok(())
+    })
 }
 
 /// Allocate the next available GID from login.defs ranges.

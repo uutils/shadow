@@ -14,14 +14,13 @@ use std::path::Path;
 use clap::{Arg, Command};
 use uucore::error::{UError, UResult};
 
-use shadow_core::atomic;
 use shadow_core::audit;
-use shadow_core::group::{self, GroupEntry};
-use shadow_core::gshadow::{self, GshadowEntry};
-use shadow_core::lock::FileLock;
+use shadow_core::group::GroupEntry;
+use shadow_core::gshadow::GshadowEntry;
 use shadow_core::nscd;
 use shadow_core::passwd;
 use shadow_core::sysroot::SysRoot;
+use shadow_core::transaction::LockedFile;
 
 mod options {
     pub const GROUP: &str = "GROUP";
@@ -108,24 +107,16 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let prefix = matches.get_one::<String>(options::PREFIX).map(Path::new);
     let root = SysRoot::new(prefix);
 
-    // Block signals for the duration of the critical section so a SIGINT
-    // between lock acquisition and atomic_write cannot leave stale lock files.
-    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
-        .map_err(|e| GroupdelError::CantUpdate(format!("cannot block signals: {e}")))?;
-
-    // Read existing groups to find the target.
+    // The transaction locks, then reads, and blocks signals for its lifetime,
+    // so a SIGINT between the lock and the write cannot leave a stale lock.
     let group_path = root.group_path();
-    let group_lock = FileLock::acquire(&group_path).map_err(|e| {
-        GroupdelError::CantUpdate(format!("cannot lock {}: {e}", group_path.display()))
-    })?;
-
-    let (entries, group_layout) = group::read_group_with_layout(&group_path).map_err(|e| {
-        GroupdelError::CantUpdate(format!("cannot read {}: {e}", group_path.display()))
+    let mut groups = LockedFile::<GroupEntry>::open(&group_path).map_err(|e| {
+        GroupdelError::CantUpdate(format!("cannot open {}: {e}", group_path.display()))
     })?;
 
     let force = matches.get_flag(options::FORCE);
 
-    let Some(target) = entries.iter().find(|g| g.name == *group_name) else {
+    let Some(target) = groups.find(group_name) else {
         // groupdel(8) -f: "succeed even if the group does not exist".
         if force {
             return Ok(());
@@ -146,7 +137,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         })?;
 
         if let Some(user) = passwd_entries.iter().find(|u| u.gid == target_gid) {
-            drop(group_lock);
+            // `groups` drops here, releasing the lock with the file untouched.
             return Err(GroupdelError::PrimaryGroup(format!(
                 "cannot remove the primary group of user '{}'",
                 user.name
@@ -155,63 +146,25 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         }
     }
 
-    // Remove the group entry.
-    let new_entries: Vec<GroupEntry> = entries
-        .into_iter()
-        .filter(|g| g.name != *group_name)
-        .collect();
-
-    // Removing the last group empties the file, which the atomic writer
-    // refuses; an absent group file means the same thing and is only reached
-    // in a fully torn-down --prefix tree.
-    if new_entries.is_empty() && group_layout.is_empty() {
-        let _ = std::fs::remove_file(&group_path);
-    } else {
-        atomic::atomic_write(&group_path, |f| {
-            group::write_group_with_layout(&new_entries, &group_layout, f)
-        })
-        .map_err(|e| {
-            GroupdelError::CantUpdate(format!("cannot write {}: {e}", group_path.display()))
-        })?;
-    }
-
-    drop(group_lock);
+    // Remove the group entry. Removing the last one empties the file, and an
+    // absent group file means the same thing as an empty one, so the
+    // transaction unlinks rather than writing a zero-length file the atomic
+    // writer would refuse.
+    groups.entries_mut().retain(|g| g.name != *group_name);
+    groups.commit_or_remove().map_err(|e| {
+        GroupdelError::CantUpdate(format!("cannot write {}: {e}", group_path.display()))
+    })?;
 
     // Remove from /etc/gshadow.
     let gshadow_path = root.gshadow_path();
     if gshadow_path.exists() {
-        let gs_lock = FileLock::acquire(&gshadow_path).map_err(|e| {
-            GroupdelError::CantUpdate(format!("cannot lock {}: {e}", gshadow_path.display()))
+        let mut gshadow = LockedFile::<GshadowEntry>::open(&gshadow_path).map_err(|e| {
+            GroupdelError::CantUpdate(format!("cannot open {}: {e}", gshadow_path.display()))
         })?;
-
-        let (gs_entries, gshadow_layout) = gshadow::read_gshadow_with_layout(&gshadow_path)
-            .map_err(|e| {
-                GroupdelError::CantUpdate(format!("cannot read {}: {e}", gshadow_path.display()))
-            })?;
-
-        let before = gs_entries.len();
-        let new_gs: Vec<GshadowEntry> = gs_entries
-            .into_iter()
-            .filter(|g| g.name != *group_name)
-            .collect();
-        let changed = new_gs.len() != before;
-
-        // Write whenever the removal actually changed something. Skipping an
-        // empty result left the deleted group behind when it was the only
-        // entry; an emptied file is unlinked, since the atomic writer refuses
-        // a zero-length file and an absent gshadow means "no entries".
-        if changed && new_gs.is_empty() {
-            let _ = std::fs::remove_file(&gshadow_path);
-        } else if changed {
-            atomic::atomic_write(&gshadow_path, |f| {
-                gshadow::write_gshadow_with_layout(&new_gs, &gshadow_layout, f)
-            })
-            .map_err(|e| {
-                GroupdelError::CantUpdate(format!("cannot write {}: {e}", gshadow_path.display()))
-            })?;
-        }
-
-        drop(gs_lock);
+        gshadow.entries_mut().retain(|g| g.name != *group_name);
+        gshadow.commit_or_remove().map_err(|e| {
+            GroupdelError::CantUpdate(format!("cannot write {}: {e}", gshadow_path.display()))
+        })?;
     }
 
     nscd::invalidate_cache("group");

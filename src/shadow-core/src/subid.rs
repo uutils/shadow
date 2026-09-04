@@ -165,6 +165,12 @@ pub fn write_subid_with_layout<W: Write>(
     })
 }
 
+impl crate::transaction::Record for SubIdEntry {
+    fn validate_fields(&self) -> Result<(), ShadowError> {
+        Self::validate_fields(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
