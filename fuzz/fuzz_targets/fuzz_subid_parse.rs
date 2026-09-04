@@ -3,7 +3,7 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-//! Fuzz target for `/etc/shadow` line parsing.
+//! Fuzz target for `/etc/subuid` line parsing.
 //!
 //! "Does not panic" is the floor, not the property that matters. For a record
 //! file what matters is that a parsed entry survives being written back: if
@@ -14,7 +14,7 @@
 //!
 //!   1. **Round trip.** Rendering an entry and parsing it again yields an
 //!      entry that renders identically.
-//!   2. **No stray separator.** The rendered line carries exactly the 8
+//!   2. **No stray separator.** The rendered line carries exactly the 2
 //!      colons the format has. A field value holding one would shift every
 //!      following field on the next read, which is how an injected account
 //!      would appear.
@@ -22,16 +22,16 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use shadow_core::shadow::ShadowEntry;
+use shadow_core::subid::SubIdEntry;
 
-/// Field separators in a well-formed `/etc/shadow` line.
-const SEPARATORS: usize = 8;
+/// Field separators in a well-formed `/etc/subuid` line.
+const SEPARATORS: usize = 2;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {
         return;
     };
-    let Ok(entry) = text.parse::<ShadowEntry>() else {
+    let Ok(entry) = text.parse::<SubIdEntry>() else {
         return;
     };
 
@@ -39,11 +39,11 @@ fuzz_target!(|data: &[u8]| {
     assert_eq!(
         rendered.matches(':').count(),
         SEPARATORS,
-        "rendered shadow record has the wrong number of separators: {rendered:?}"
+        "rendered subuid record has the wrong number of separators: {rendered:?}"
     );
 
     let reparsed = rendered
-        .parse::<ShadowEntry>()
+        .parse::<SubIdEntry>()
         .expect("a rendered record must parse again");
     assert_eq!(
         reparsed.to_string(),

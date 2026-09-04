@@ -9,11 +9,17 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-shadow-core = { path = "../src/shadow-core", features = ["shadow", "login-defs", "group", "gshadow"] }
+# The record parsers are no longer behind features; only linkage is.
+shadow-core = { path = "../src/shadow-core" }
 tempfile = "3"
 
 [workspace]
 members = ["."]
+
+[[bin]]
+name = "fuzz_subid_parse"
+path = "fuzz_targets/fuzz_subid_parse.rs"
+doc = false
 
 [[bin]]
 name = "fuzz_passwd_parse"
