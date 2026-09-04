@@ -25,11 +25,20 @@ pub fn skip_unless_root() -> bool {
         return false;
     }
     assert!(
-        std::env::var_os(REQUIRE_ROOT).is_none(),
+        !require_root(),
         "{REQUIRE_ROOT} is set, but this test needs root and the suite is not \
          running as root"
     );
     true
+}
+
+/// Whether the run demands that root-only tests actually run.
+///
+/// An empty value counts as unset, so `-e SHADOW_TEST_REQUIRE_ROOT=` turns the
+/// requirement off rather than leaving it mysteriously on.
+#[must_use]
+pub fn require_root() -> bool {
+    std::env::var_os(REQUIRE_ROOT).is_some_and(|v| !v.is_empty())
 }
 
 /// A `Command` that runs the multicall binary as `argv[0] = <tool>`.
@@ -47,7 +56,7 @@ pub fn tool(name: &str) -> std::process::Command {
     // on output shaped by them.
     cmd.env_clear();
     cmd.env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
-    if std::env::var_os(REQUIRE_ROOT).is_some() {
+    if require_root() {
         cmd.env(REQUIRE_ROOT, "1");
     }
     cmd

@@ -45,6 +45,10 @@ fn chage(dir: &tempfile::TempDir, args: &[&str]) -> Output {
 }
 
 /// The value column of one `chage -l` line, counting from 1.
+///
+/// `chage -l` on an account other than the caller's needs root, whatever
+/// `--prefix` says: the identity check runs before any file is opened. Every
+/// test using this is guarded accordingly.
 fn field(dir: &tempfile::TempDir, line: usize) -> String {
     let out = chage(dir, &["-l", "testuser"]);
     out.assert_code(0);
@@ -97,6 +101,9 @@ fn test_list_conflicts_with_every_field_option() {
 /// else is not a policy a reader can act on.
 #[test]
 fn test_negative_aging_values_are_rejected() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
     let dir = prefix("testuser:$6$hash:19500:0:99999:7:::\n");
     let before = shadow_line(&dir);
     for flag in ["-m", "-M", "-W", "-I"] {
@@ -110,6 +117,9 @@ fn test_negative_aging_values_are_rejected() {
 /// find the shadow password file", and GNU exits 1 here.
 #[test]
 fn test_unknown_login_exits_one() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
     let dir = prefix("testuser:$6$hash:19500:0:99999:7:::\n");
     chage(&dir, &["-l", "ghost"]).assert_code(1);
     chage(&dir, &["-M", "10", "ghost"]).assert_code(1);
@@ -168,6 +178,9 @@ fn test_minus_one_clears_a_field() {
 /// A date that does not exist is refused, not rolled over into the next month.
 #[test]
 fn test_impossible_dates_are_rejected() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
     let dir = prefix("testuser:$6$hash:19500:0:99999:7:::\n");
     let before = shadow_line(&dir);
     for date in ["2025-02-29", "2025-04-31", "2025-13-01", "not-a-date"] {
@@ -185,6 +198,9 @@ fn test_impossible_dates_are_rejected() {
 
 #[test]
 fn test_list_prints_the_gnu_labels() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
     let dir = prefix("testuser:$6$hash:19500:0:99999:7:::\n");
     let out = chage(&dir, &["-l", "testuser"]);
     out.assert_code(0);
@@ -205,6 +221,9 @@ fn test_list_prints_the_gnu_labels() {
 /// a date, and it makes the two dates derived from it meaningless as well.
 #[test]
 fn test_last_change_zero_reports_must_be_changed() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
     let dir = prefix("testuser:$6$hash:0:0:90:7:30:0:\n");
     assert_eq!(field(&dir, 1), "password must be changed");
     assert_eq!(field(&dir, 2), "password must be changed");
@@ -216,6 +235,9 @@ fn test_last_change_zero_reports_must_be_changed() {
 /// Expiry is disabled at a maximum age of 10000 days, not 99999.
 #[test]
 fn test_never_threshold_is_ten_thousand_days() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
     let dir = prefix("testuser:$6$hash:20454:0:9999:7:::\n");
     assert_eq!(field(&dir, 2), "May 18, 2053");
 
@@ -225,6 +247,9 @@ fn test_never_threshold_is_ten_thousand_days() {
 
 #[test]
 fn test_unset_fields_report_never_and_minus_one() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
     let dir = prefix("testuser:$6$hash:::::::\n");
     assert_eq!(field(&dir, 1), "never");
     assert_eq!(field(&dir, 2), "never");
@@ -240,6 +265,9 @@ fn test_unset_fields_report_never_and_minus_one() {
 /// into a plausible-looking date.
 #[test]
 fn test_absurd_field_values_report_never() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
     let dir = prefix("testuser:$6$hash:9223372036854775807:0:90:7:9223372036854775807::\n");
     assert_eq!(field(&dir, 1), "never");
     assert_eq!(field(&dir, 2), "never");
@@ -249,6 +277,9 @@ fn test_absurd_field_values_report_never() {
 /// The two derived dates are sums of three separate fields.
 #[test]
 fn test_derived_dates_are_the_sums_of_their_fields() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
     let dir = prefix("testuser:$6$hash:20454:0:90:7:30::\n");
     assert_eq!(field(&dir, 1), "Jan 01, 2026");
     assert_eq!(field(&dir, 2), "Apr 01, 2026");
