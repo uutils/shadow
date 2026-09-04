@@ -187,10 +187,11 @@ Tools use `uucore` for the standard uutils API (`UResult`, `#[uucore::main]`,
 - File parsers for `/etc/passwd`, `/etc/shadow`, `/etc/group`, `/etc/gshadow`,
   `/etc/login.defs`, `/etc/subuid`, `/etc/subgid`
 - Atomic file writes (lock, write tmp, fsync, rename, unlock, invalidate nscd)
+  that keep the file's mode, owner, group and SELinux label
 - PAM integration (feature-gated)
-- Username/groupname validation
+- Username/groupname and field validation (no `:` or control characters can
+  reach a record)
 - UID/GID allocation
-- SELinux context handling (feature-gated)
 
 Each **tool crate** exports `uumain()` and `uu_app()`, following
 [uutils](https://github.com/uutils/coreutils) conventions exactly so a future

@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `..` in a `--prefix`, `-d` or `-k` argument, or in a home directory read
+  from `/etc/passwd`, no longer aborts the tool (`unreachable!` in the path
+  resolver); `useradd -d /home/../x` had written the account and then died
+  before creating the home. `useradd` now rejects a relative or climbing
+  `-d`/`-k` with exit 3
+- Writes to account files go through a buffer instead of one `write(2)` per
+  field
 - Cross-building for `x86_64-unknown-linux-musl` no longer fails at link time.
   `shadow-core` asked for `-lcrypt` unconditionally; musl implements crypt(3)
   inside libc and has no libcrypt, so the linker fell through to the host's
@@ -28,6 +35,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Rewritten account files keep their owner, group and SELinux label. The
+  atomic writer created the replacement file as `root:<effective gid>`, so
+  any administrative change turned `/etc/shadow` from `root:shadow` into
+  `root:root` — breaking every sgid-`shadow` authenticator such as
+  `unix_chkpwd` — and a rewrite performed by a setuid tool handed the file to
+  the caller's group
+- Every text field written to `passwd`, `shadow`, `group`, `gshadow`, `subuid`
+  or `subgid` is validated: `:`, newlines and other control characters are
+  refused by `useradd`, `usermod`, `groupadd` and `groupmod` (exit 3) and,
+  as a last line of defence, by the `shadow-core` writers. `useradd -c` with
+  a newline in the value could previously append an arbitrary `/etc/passwd`
+  record
+- Core dumps are disabled with `PR_SET_DUMPABLE` in addition to
+  `RLIMIT_CORE`; the limit alone is ignored when cores are piped to
+  `systemd-coredump` or `apport`
 - `chfn` and `chsh` now authenticate the caller before applying a change.
   Both are installed setuid-root and restricted non-root callers to their own
   account, but never verified who was asking — anyone with access to an
@@ -51,6 +73,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Requesting the `pam` feature in a statically linked musl build is now a
   compile-time error instead of a binary whose authentication path can never
   work: Linux-PAM loads its modules with `dlopen`, which static musl lacks
+
+### Removed
+
+- `shadow-core`'s `selinux` module and feature flag. Nothing compiled it; the
+  atomic writer now preserves the label itself
 
 ## [0.2.2] - 2026-09-03
 
