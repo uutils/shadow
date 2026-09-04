@@ -22,8 +22,8 @@ passwords, and groups on every Linux system.
 shadow-utils runs as **root or setuid-root on every Linux system**. It parses
 user-supplied input, writes to `/etc/passwd`, `/etc/shadow`, `/etc/group`, and
 has had recent CVEs (CVE-2023-4641: password leak in memory, CVE-2024-56433:
-subuid collision enabling account takeover). Until this project appear, there was **no
-Rust reimplementation** — not in uutils, not in Prossimo/Trifecta, not on
+subuid collision enabling account takeover). Before this project there was
+**no Rust reimplementation** — not in uutils, not in Prossimo/Trifecta, not on
 crates.io.
 
 [sudo-rs](https://github.com/trifectatechfoundation/sudo-rs) proved the model:
@@ -106,18 +106,37 @@ sudo make install-multicall PREFIX=/usr/local
 
 #### From a release archive
 
-Each release publishes `uu_shadow-x86_64-unknown-linux-gnu.tar.gz` (with a
-`.sha256` alongside), containing the `shadow-rs` multicall binary. Archives are
-built against glibc. A static musl archive is not published: such a build works
-but loses PAM, NSS and yescrypt support, so it is not equivalent to this one.
-See [docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md).
+Each [release](https://github.com/uutils/shadow/releases) publishes two
+archives, each with a `.sha256` alongside. They contain the same `shadow-rs`
+multicall binary but are **not interchangeable**:
 
-The archive ships a plain binary — nothing is installed, symlinked, or made
+| Archive | libc | Linking | Use it for |
+|---|---|---|---|
+| `uu_shadow-x86_64-unknown-linux-gnu.tar.gz` | glibc | dynamic | Any regular distribution. **This is the full build.** |
+| `uu_shadow-x86_64-unknown-linux-musl-static.tar.gz` | musl | static | Minimal containers and embedded images: local `/etc/passwd`, no directory service, no PAM stack. |
+
+The static archive has no runtime dependencies, and pays for that with three
+capabilities a static binary cannot have — none of them cosmetic for account
+tools:
+
+- **No PAM.** `passwd` cannot change a password interactively, and `chfn` /
+  `chsh` are root-only (they authenticate the caller through PAM and fail
+  closed without it).
+- **No NSS.** Users from LDAP, SSSD, Active Directory or systemd-userdb are
+  invisible to the five tools that look up the calling user.
+- **No yescrypt (`$y$`).** The default password hash on Debian 12+ and
+  Ubuntu 24.04 can be neither verified nor produced.
+
+If any of those matter on the host, use the glibc archive.
+[docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md) explains each gap, what
+still works, and how the archive is built.
+
+Either archive ships a plain binary — nothing is installed, symlinked, or made
 setuid by extracting it. To deploy it the same way `make install-multicall`
 would:
 
 ```shell
-tar xzf uu_shadow-x86_64-unknown-linux-gnu.tar.gz
+tar xzf uu_shadow-x86_64-unknown-linux-gnu.tar.gz   # or the -musl-static one
 sudo install -o root -g root -m 4755 \
     uu_shadow-*/shadow-rs /usr/local/bin/shadow-rs
 for tool in passwd chfn chsh newgrp chage chpasswd groupadd groupdel \
@@ -127,7 +146,8 @@ done
 ```
 
 Mode `4755` makes every applet run `euid=root`; see the setuid trade-off noted
-above. Run `shadow-rs --list` to see the applets a given build contains.
+above. Run `shadow-rs --list` to see the applets a given build contains, and
+`sha256sum -c uu_shadow-*.tar.gz.sha256` to verify a download.
 
 ### Test
 
@@ -184,10 +204,11 @@ merge is frictionless.
 | `alpine` | `rust:alpine` | musl | Linux-PAM | none |
 | `fedora` | `fedora:latest` | glibc | Linux-PAM | enforcing |
 
-musl is covered by the test matrix but is not a release target: a static musl
-build loses PAM, NSS and yescrypt. See
-[docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md) for what that means and
-why.
+The `alpine` image tests musl with dynamic linking, PAM included. The static
+musl release archive is a different build — no PAM, no NSS, no yescrypt — and
+has its own CI job that builds it and runs `shadow-core`'s unit tests against
+static musl on every pull request. See
+[docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md).
 
 ## Credits
 

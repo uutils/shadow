@@ -45,8 +45,8 @@ then write an original implementation. Never search for or view the C source.
 ### Setup
 
 ```shell
-git clone https://github.com/uutils/shadow-rs
-cd shadow-rs
+git clone https://github.com/uutils/shadow
+cd shadow
 docker compose build
 ./hooks/install.sh  # install pre-commit and pre-push hooks
 ```
@@ -60,8 +60,10 @@ docker compose run --rm alpine cargo test --workspace  # test on Alpine (musl)
 docker compose run --rm fedora cargo test --workspace  # test on Fedora (SELinux)
 ```
 
-All three must pass. Note that musl is tested but not a release target — a
-static musl build loses PAM, NSS and yescrypt; see
+All three must pass. The `alpine` image tests musl with dynamic linking; the
+release also ships a *static* musl archive, built without PAM, which
+`make dist-musl` reproduces and CI builds on every pull request. What that
+build gives up is documented in
 [docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md).
 
 ### Linting
@@ -95,9 +97,10 @@ Utilities must be embeddable. Return `UResult<()>` from `uumain`. The
 
 ### `unsafe`
 
-Denied at the workspace level (`unsafe_code = "deny"`). Only two FFI boundary
-modules are exempted: `shadow_core::pam` (PAM C library) and `shadow_core::crypt`
-(POSIX crypt(3)). Every `unsafe` block must have a `// SAFETY:` comment.
+Denied at the workspace level (`unsafe_code = "deny"`). Only three FFI boundary
+modules are exempted: `shadow_core::pam` (PAM C library), `shadow_core::crypt`
+(POSIX crypt(3)) and `shadow_core::process` (setuid, signal masks,
+`getpwuid_r`). Every `unsafe` block must have a `// SAFETY:` comment.
 
 ### `str`, `OsStr` & `Path`
 

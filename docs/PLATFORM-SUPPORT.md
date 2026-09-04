@@ -1,54 +1,81 @@
 # Platform support
 
-What shadow-rs builds and runs on, and where a build differs in behaviour.
+What shadow-rs builds and runs on, which archives a release publishes, and
+exactly where one build behaves differently from another.
 
-The distinction that matters most is the C library. shadow-rs is tested on both
-glibc and musl, but *tested on* and *released for* are not the same thing:
-released archives are glibc, and a musl build is functionally reduced in three
-specific ways described below.
+The distinction that matters most is the C library. Every release publishes
+two archives, glibc and static musl, and they are **not interchangeable**: the
+glibc archive is the full build; the static musl archive is a self-contained
+binary for containers and embedded images that gives up three capabilities,
+each stated below. The archive name carries a `-static` suffix so the two are
+never confused.
 
-## Release artifacts
+## Release archives
 
-| Target | Published | Linking |
-|---|---|---|
-| `x86_64-unknown-linux-gnu` | yes | dynamic (libpam, libcrypt, libc) |
-| `x86_64-unknown-linux-musl` | no — see below | static |
-| `aarch64-unknown-linux-gnu` | no — tracked in #222 | dynamic |
+| Archive | libc | Linking | `pam` feature | Use it for |
+|---|---|---|---|---|
+| `uu_shadow-x86_64-unknown-linux-gnu.tar.gz` | glibc | dynamic (libpam, libcrypt, libc) | on | Any regular distribution install. The full build. |
+| `uu_shadow-x86_64-unknown-linux-musl-static.tar.gz` | musl | static, no runtime dependencies | off | Minimal containers and embedded images with a local `/etc/passwd`, no directory service and no PAM stack. |
+
+Both archives ship a `.sha256` file in `sha256sum -c` format and contain the
+`shadow-rs` multicall binary with `LICENSE`, `README.md` and `CHANGELOG.md`;
+the musl archive also carries this document, so the trade-off travels with the
+binary.
+
+The two are produced differently. The glibc archive is dist's regular target
+build with `features = ["pam"]`. dist cannot vary features per target, and
+`pam` must be off for musl (see below), so the musl archive is built by
+`make dist-musl` and attached by dist as an extra artifact of the same release.
+Anyone can reproduce it with that one command.
+
+Only `x86_64` is published. aarch64 needs the target's crypt(3) and PAM
+libraries, hence a cross-compilation setup or a native runner; tracked in
+[#222](https://github.com/uutils/shadow/issues/222).
 
 ## Test matrix
 
-CI builds and runs the full suite on three images, so musl regressions are
-caught even though musl is not released:
+CI runs the full suite on three images:
 
 | Image | Base | libc | PAM | SELinux |
 |---|---|---|---|---|
 | `debian` | `rust:latest` (Trixie) | glibc | Linux-PAM | headers |
-| `alpine` | `rust:alpine` | musl | Linux-PAM | none |
+| `alpine` | `rust:alpine` | musl (dynamic) | Linux-PAM | none |
 | `fedora` | `fedora:latest` | glibc | Linux-PAM | enforcing |
 
-## musl
+The `alpine` image links musl dynamically and therefore *does* have PAM; it
+tests musl's libc behaviour (no NSS, no yescrypt), not the static archive. The
+static archive has its own job, `Static musl archive`, which on every pull
+request runs `make dist-musl`, smoke-tests the result, runs `shadow-core`'s
+unit tests against static musl, and checks that requesting `pam` there is
+rejected at compile time. A tag is never the first time the archive is built.
 
-A static musl binary **builds and runs**. What stops it being published is that
-it is not equivalent to the glibc build — it loses three things, and for
-account-management tools none of them is cosmetic.
+## What the static musl build gives up
+
+A static musl binary **builds and runs**; the whole test suite passes on musl.
+What it cannot do is inherent to static linking and to musl, not to shadow-rs,
+and for account-management tools none of it is cosmetic.
 
 ### 1. No PAM
 
-Linux-PAM loads its modules with `dlopen`. A fully static binary cannot do
+Linux-PAM loads its modules with `dlopen(3)`. A fully static binary cannot do
 that: musl's static `dlopen` is a stub that returns *"Dynamic loading not
-supported"*, and Alpine ships no `libpam.a` to link against in the first place.
+supported"*, and no distribution ships a `libpam.a` to link against in the
+first place. `shadow-core` refuses the `pam` feature on static musl with a
+compile-time error, so the build cannot be misconfigured into a binary whose
+authentication path never works.
 
 Effect, and this is the heaviest of the three gaps:
 
-- `passwd`'s interactive password change is unavailable.
+- `passwd`'s interactive password change is unavailable and says so
+  (*"PAM support is not compiled in"*).
 - `chfn` and `chsh` become **root-only**. They authenticate the caller through
   PAM before applying a change, and a setuid-root tool must fail closed rather
-  than apply an unverified one — so without PAM they refuse every non-root
+  than apply an unverified one, so without PAM they refuse every non-root
   invocation outright.
 
 Unaffected: `passwd -S/-l/-u/-d/-e/-n/-x/-w/-i`, `newgrp` (which authenticates
-against the group password via crypt(3), not PAM), and the other 11 tools,
-which are root-only anyway and reach `/etc/shadow` directly.
+against the group password through crypt(3), not PAM), and the other eleven
+tools, which are root-only anyway and reach `/etc/shadow` directly.
 
 ### 2. No NSS
 
@@ -57,54 +84,56 @@ which are root-only anyway and reach `/etc/shadow` directly.
 
 glibc answers such lookups through its NSS module system, so it sees users from
 LDAP, SSSD, Active Directory or systemd-userdb. musl has no NSS module system
-and reads `/etc/passwd` directly. On a directory-joined host, those five tools
-would not see network users at all.
+and reads `/etc/passwd` directly. On a directory-joined host those five tools
+do not see network users at all.
 
 ### 3. No yescrypt (`$y$`)
 
-musl's crypt(3) implements DES, MD5, SHA-256, SHA-512 (including
-`rounds=`) and bcrypt, and produces byte-identical output to libxcrypt for all
-of them. It does not implement yescrypt.
+musl's crypt(3) implements DES, MD5, SHA-256, SHA-512 (including `rounds=`)
+and bcrypt, byte-identical to libxcrypt for all of them. It does not implement
+yescrypt.
 
 This is not a marginal format: **Debian 12+ and Ubuntu 24.04 use yescrypt as
 the default password hash.** A musl build can neither verify nor produce `$y$`
-hashes, so `newgrp` fails against a `$y$` group password and `chpasswd`
-produces SHA-512 where the system default is yescrypt. The prefix guard in
-`shadow_core::crypt` rejects the format explicitly rather than silently
-falling back.
+hashes, so `newgrp` fails against a `$y$` group password and `chpasswd -c
+YESCRYPT` is rejected. The prefix guard in `shadow_core::crypt` reports the
+unsupported method explicitly; it never falls back to a weaker hash silently.
+The default method is SHA-512, which is unaffected.
 
-### Where musl is nonetheless the right choice
+### Where the static build is the right choice
 
 Minimal containers and embedded images: a local `/etc/passwd`, no directory
-service, no PAM stack. There, none of the three gaps costs anything, and a
-single static binary with no runtime dependencies is worth having.
+service, no PAM stack. There none of the three gaps costs anything, and a
+single binary with no runtime dependencies is worth having. Anywhere one of
+them matters, use the glibc archive.
 
-If a musl archive is published it must be labelled as static, PAM-less,
-NSS-less and without `$y$` — never presented as an alternative to the glibc
-archive. Tracked in #224.
+## Building for musl
 
-### Building for musl
-
-The `#[link(name = "crypt")]` attribute in `shadow_core::crypt` emits
-`-lcrypt`. Rust's self-contained musl sysroot has no `libcrypt.a`, so the
-linker falls through to the host's glibc-built libxcrypt and fails on
-glibc-only symbols. musl implements `crypt()` inside libc itself, so the
-attribute simply should not be emitted for that target:
-
-```rust
-#[cfg_attr(not(target_env = "musl"), link(name = "crypt"))]
+```shell
+make dist-musl
 ```
 
-Alpine builds work today without this because `musl-dev` ships an empty
-`libcrypt.a` that absorbs the flag.
+The target adds the `x86_64-unknown-linux-musl` toolchain component, builds the
+multicall binary in release mode with the lockfile enforced and without `pam`,
+verifies that the binary has no `DT_NEEDED` entry, and writes the archive and
+its checksum to `target/dist-musl/`.
 
-Note that libxcrypt is **LGPL-2.1+**, so it cannot be vendored to fill the gap:
-shadow-rs takes no GPL or LGPL dependencies. Pure-Rust alternatives exist
-(`sha-crypt`, `yescrypt`, both MIT/Apache-2.0), but the yescrypt crate is
-self-declared unaudited, which rules it out of a setuid-root path for now.
+Two details in the code make that work:
 
-## Architectures
+- **crypt(3) linkage.** On glibc systems crypt(3) lives in libcrypt (libxcrypt
+  on Debian, Fedora and derivatives), so `shadow_core::crypt` asks for
+  `-lcrypt`. musl implements `crypt()` inside libc and ships no libcrypt;
+  Rust's self-contained musl sysroot has no `libcrypt.a` either, so the request
+  would fall through to the host's glibc-built libxcrypt and fail on glibc-only
+  symbols. The attribute is therefore `#[cfg_attr(not(target_env = "musl"),
+  link(name = "crypt"))]`. (Alpine builds never hit this because `musl-dev`
+  ships an empty `libcrypt.a` that absorbs the flag.)
+- **`pam` guard.** `shadow_core::pam` emits `compile_error!` when built for
+  musl with `crt-static`, the default for the musl target. Dynamic musl, as in
+  the Alpine test image, is unaffected and links libpam normally.
 
-Only `x86_64` is published. aarch64 needs the target's system libraries for
-crypt(3) and PAM, so it requires a cross-compilation setup or a native runner —
-tracked in #222.
+libxcrypt itself is **LGPL-2.1+** and cannot be vendored to fill the yescrypt
+gap: shadow-rs takes no GPL or LGPL dependencies. Pure-Rust alternatives exist
+(`sha-crypt`, `yescrypt`, both MIT/Apache-2.0) and match libxcrypt output, but
+the yescrypt crate is self-declared unaudited, which rules it out of a
+setuid-root path for now.

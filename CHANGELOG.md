@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Static musl release archive,
+  `uu_shadow-x86_64-unknown-linux-musl-static.tar.gz`, published next to the
+  glibc one. It is a self-contained binary for minimal containers and embedded
+  images, built without `pam`, and it is not a substitute for the glibc
+  archive: no PAM (no interactive `passwd`; `chfn`/`chsh` root-only), no NSS,
+  no yescrypt. `make dist-musl` reproduces it and CI builds it on every pull
+  request. The trade-off is documented in
+  [docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md), shipped inside the
+  archive (#224)
+
+### Fixed
+
+- Cross-building for `x86_64-unknown-linux-musl` no longer fails at link time.
+  `shadow-core` asked for `-lcrypt` unconditionally; musl implements crypt(3)
+  inside libc and has no libcrypt, so the linker fell through to the host's
+  glibc libxcrypt (#224)
+
 ### Security
 
 - `chfn` and `chsh` now authenticate the caller before applying a change.
@@ -29,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from `passwd` into `shadow-core` so every setuid tool uses one implementation
 - CI lints and tests the `pam` code path, which the release binaries use but
   no job previously exercised
+- Requesting the `pam` feature in a statically linked musl build is now a
+  compile-time error instead of a binary whose authentication path can never
+  work: Linux-PAM loads its modules with `dlopen`, which static musl lacks
 
 ## [0.2.2] - 2026-09-03
 
