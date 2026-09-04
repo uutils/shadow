@@ -1,9 +1,20 @@
 #!/usr/bin/env bash
-# shadow-rs pre-push hook — runs full test suite on all three distros.
+# shadow-rs pre-push hook.
 # Install: ./hooks/install.sh
 #
-# Runs fmt, clippy, and tests on Debian, Alpine, and Fedora.
-# Takes ~30s on a warm Docker cache.
+# Runs the workspace test suite once, on Debian, before a push that carries new
+# commits.
+#
+# It deliberately does *not* reproduce CI. CI runs fmt, clippy and the tests
+# with and without `pam`, the MSRV build, cargo-deny, the static musl archive,
+# the Debian/Alpine/Fedora matrix as root and the end-to-end deployment image,
+# in parallel and with retries. A hook that tried to match that took minutes on
+# every push, so every push used --no-verify -- and a hook that is always
+# skipped protects nothing while still costing time whenever someone forgets to
+# skip it.
+#
+# What is left is the one check worth having before the code leaves the
+# machine: the tests actually run.
 
 set -euo pipefail
 
@@ -12,27 +23,57 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-run_check() {
-    local distro=$1
-    shift
-    echo -e "${YELLOW}[$distro]${NC} $*"
-    if ! docker compose run --rm -T "$distro" "$@" 2>&1; then
-        echo -e "${RED}FAILED${NC} on $distro: $*"
-        exit 1
-    fi
+ZERO='0000000000000000000000000000000000000000'
+
+# Does this push carry any commit that is not already on the remote?
+#
+# git feeds the hook one line per ref: <local ref> <local sha> <remote ref>
+# <remote sha>. Pushing a tag, deleting a branch, or re-pushing a branch the
+# remote already has moves no commits, and running a test suite for it is pure
+# waste -- pushing the 0.2.2 tag moved one object and blocked for two minutes.
+carries_commits() {
+    local local_ref local_sha remote_ref remote_sha
+    local found=1
+
+    while read -r local_ref local_sha remote_ref remote_sha; do
+        [ -z "${local_ref:-}" ] && continue
+        # A tag names commits that are already being pushed on their branch.
+        case "$local_ref" in
+        refs/tags/*) continue ;;
+        esac
+        # Deleting a ref pushes nothing.
+        [ "$local_sha" = "$ZERO" ] && continue
+
+        local range=()
+        if [ "$remote_sha" = "$ZERO" ]; then
+            # A new branch: everything on it that no other remote branch has.
+            range=("$local_sha" --not --remotes=origin)
+        else
+            range=("$remote_sha..$local_sha")
+        fi
+
+        if [ -n "$(git rev-list -n 1 "${range[@]}" 2>/dev/null)" ]; then
+            found=0
+        fi
+    done
+
+    return "$found"
 }
 
-echo "pre-push: full CI checks across all distros"
-echo "==========================================="
+# No stdin means the hook was invoked by hand; take the cautious path and run.
+if [ -t 0 ]; then
+    :
+elif ! carries_commits; then
+    echo "pre-push: no new commits in this push, skipping the test suite"
+    exit 0
+fi
 
-# Format + clippy (Debian only — same Rust version everywhere)
-run_check debian cargo fmt --all --check
-run_check debian cargo clippy --workspace --all-targets -- -D warnings
+echo -e "${YELLOW}pre-push${NC}: cargo test --workspace (debian)"
+if ! docker compose run --rm -T debian cargo test --workspace 2>&1; then
+    echo -e "${RED}FAILED${NC}: cargo test --workspace"
+    echo "The full matrix -- fmt, clippy, ±pam, MSRV, musl, three distros,"
+    echo "end-to-end -- runs in CI on the pull request."
+    exit 1
+fi
 
-# Tests on all three distros
-run_check debian cargo test --workspace
-run_check alpine cargo test --workspace
-run_check fedora cargo test --workspace
-
-echo ""
-echo -e "${GREEN}pre-push: all checks passed on debian/alpine/fedora${NC}"
+echo -e "${GREEN}pre-push: tests passed${NC}"

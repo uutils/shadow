@@ -24,5 +24,9 @@ for hook in pre-commit pre-push; do
 done
 
 echo ""
-echo "Git hooks installed. They run in Docker — make sure images are built:"
+echo "Git hooks installed. They run in Docker - make sure images are built:"
 echo "  docker compose build"
+echo ""
+echo "  pre-commit: cargo fmt --check and clippy"
+echo "  pre-push:   cargo test --workspace on debian, skipped when the push"
+echo "              carries no new commits. CI is the full gate."
