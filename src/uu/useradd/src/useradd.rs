@@ -197,7 +197,7 @@ fn today_days_since_epoch() -> Result<i64, UseraddError> {
 /// Entry point for the `useradd` utility.
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let _clean_env = shadow_core::hardening::harden_process();
+    shadow_core::hardening::harden_process();
 
     let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 2)? else {
         return Ok(());
@@ -579,8 +579,10 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
         .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
     apply_login_defs_overrides(&mut defs, &opts.login_defs_overrides);
 
-    // Step 5: Determine UID.
-    let uid = determine_uid(opts, &passwd_entries, &defs)?;
+    // Step 5: Determine UID. A prefixed run manages another system's files, so
+    // the local name service is not consulted for it.
+    let scope = uid_alloc::Scope::for_prefix(opts.root.is_prefixed());
+    let uid = determine_uid(opts, &passwd_entries, &defs, scope)?;
 
     // Step 6: Read group entries under lock (needed for GID resolution and
     // user group creation).
@@ -588,7 +590,7 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
         .map_err(|e| UseraddError::CannotUpdateGroup(format!("{e}")))?;
 
     // Step 7: Determine primary GID.
-    let (gid, new_group) = determine_gid(opts, uid, &group_entries, &defs)?;
+    let (gid, new_group) = determine_gid(opts, uid, &group_entries, &defs, scope)?;
 
     // Step 8: Read gshadow entries.
     let gshadow_path = opts.root.gshadow_path();
@@ -781,6 +783,7 @@ fn determine_uid(
     opts: &UseraddOptions,
     passwd_entries: &[PasswdEntry],
     defs: &LoginDefs,
+    scope: uid_alloc::Scope,
 ) -> Result<u32, UseraddError> {
     if let Some(requested_uid) = opts.uid {
         // Check if UID is already in use.
@@ -792,7 +795,7 @@ fn determine_uid(
         Ok(requested_uid)
     } else {
         let (min, max) = uid_alloc::uid_range(defs, opts.system);
-        uid_alloc::next_uid(passwd_entries, min, max)
+        uid_alloc::next_uid(passwd_entries, min, max, scope)
             .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))
     }
 }
@@ -810,6 +813,7 @@ fn determine_gid(
     uid: u32,
     group_entries: &[GroupEntry],
     defs: &LoginDefs,
+    scope: uid_alloc::Scope,
 ) -> Result<(u32, Option<GroupEntry>), UseraddError> {
     // If -g was specified, resolve it to a GID.
     if let Some(ref gid_arg) = opts.gid {
@@ -831,7 +835,7 @@ fn determine_gid(
         // Allocate a GID. Prefer same as UID if available.
         let gid = if group_entries.iter().any(|g| g.gid == uid) {
             let (min, max) = uid_alloc::gid_range(defs, opts.system);
-            uid_alloc::next_gid(group_entries, min, max)
+            uid_alloc::next_gid(group_entries, min, max, scope)
                 .map_err(|e| UseraddError::CannotUpdateGroup(format!("{e}")))?
         } else {
             uid
@@ -1735,7 +1739,8 @@ mod tests {
         // Regular user allocation should start at UID_MIN (1000 default),
         // skip 1000 (taken), and give 1001.
         let (min, max) = uid_alloc::uid_range(&defs, false);
-        let uid = uid_alloc::next_uid(&entries, min, max).expect("should find UID");
+        let uid = uid_alloc::next_uid(&entries, min, max, uid_alloc::Scope::FilesOnly)
+            .expect("should find UID");
         assert_eq!(uid, 1001);
     }
 
@@ -1754,7 +1759,8 @@ mod tests {
         let defs = LoginDefs::load(Path::new("/nonexistent")).expect("empty defs");
 
         let (min, max) = uid_alloc::uid_range(&defs, true);
-        let uid = uid_alloc::next_uid(&entries, min, max).expect("should find UID");
+        let uid = uid_alloc::next_uid(&entries, min, max, uid_alloc::Scope::FilesOnly)
+            .expect("should find UID");
         assert_eq!(uid, 101); // SYS_UID_MIN default
     }
 
@@ -1888,7 +1894,13 @@ mod tests {
 
         // Allocate UID.
         let (uid_min, uid_max) = uid_alloc::uid_range(&defs, false);
-        let uid = uid_alloc::next_uid(&passwd_entries, uid_min, uid_max).expect("uid");
+        let uid = uid_alloc::next_uid(
+            &passwd_entries,
+            uid_min,
+            uid_max,
+            uid_alloc::Scope::FilesOnly,
+        )
+        .expect("uid");
         assert_eq!(uid, 1000);
 
         // Create passwd entry.
@@ -2186,7 +2198,9 @@ mod tests {
             root: SysRoot::default(),
         };
 
-        let (gid, new_grp) = determine_gid(&opts, 1000, &groups, &defs).expect("should resolve");
+        let (gid, new_grp) =
+            determine_gid(&opts, 1000, &groups, &defs, uid_alloc::Scope::FilesOnly)
+                .expect("should resolve");
         assert_eq!(gid, 50);
         assert!(new_grp.is_none());
     }
@@ -2223,7 +2237,8 @@ mod tests {
         };
 
         let (gid, new_grp) =
-            determine_gid(&opts, 1000, &groups, &defs).expect("should create user group");
+            determine_gid(&opts, 1000, &groups, &defs, uid_alloc::Scope::FilesOnly)
+                .expect("should create user group");
         // UID 1000 is not taken as a GID, so GID should match UID.
         assert_eq!(gid, 1000);
         let grp = new_grp.expect("should have created a group");
@@ -2262,7 +2277,7 @@ mod tests {
             root: SysRoot::default(),
         };
 
-        let result = determine_gid(&opts, 1000, &groups, &defs);
+        let result = determine_gid(&opts, 1000, &groups, &defs, uid_alloc::Scope::FilesOnly);
         assert!(result.is_err());
     }
 
@@ -2293,7 +2308,8 @@ mod tests {
         };
 
         let (gid, new_grp) =
-            determine_gid(&opts, 1000, &groups, &defs).expect("should use default");
+            determine_gid(&opts, 1000, &groups, &defs, uid_alloc::Scope::FilesOnly)
+                .expect("should use default");
         assert_eq!(gid, 100); // Default USERS_GID.
         assert!(new_grp.is_none());
     }
@@ -2328,7 +2344,8 @@ mod tests {
             root: SysRoot::default(),
         };
 
-        let uid = determine_uid(&opts, &entries, &defs).expect("should succeed");
+        let uid = determine_uid(&opts, &entries, &defs, uid_alloc::Scope::FilesOnly)
+            .expect("should succeed");
         assert_eq!(uid, 5000);
     }
 
@@ -2366,7 +2383,7 @@ mod tests {
             root: SysRoot::default(),
         };
 
-        let result = determine_uid(&opts, &entries, &defs);
+        let result = determine_uid(&opts, &entries, &defs, uid_alloc::Scope::FilesOnly);
         assert!(result.is_err());
     }
 
@@ -2404,7 +2421,8 @@ mod tests {
             root: SysRoot::default(),
         };
 
-        let uid = determine_uid(&opts, &entries, &defs).expect("should allow duplicate");
+        let uid = determine_uid(&opts, &entries, &defs, uid_alloc::Scope::FilesOnly)
+            .expect("should allow duplicate");
         assert_eq!(uid, 5000);
     }
 
@@ -2539,7 +2557,8 @@ mod tests {
             ],
         );
         let opts = opts_for_uid_alloc(false);
-        let uid = determine_uid(&opts, &entries, &defs).expect("allocate");
+        let uid =
+            determine_uid(&opts, &entries, &defs, uid_alloc::Scope::FilesOnly).expect("allocate");
         assert_eq!(uid, 9100);
     }
 
@@ -2555,7 +2574,8 @@ mod tests {
             ],
         );
         let opts = opts_for_uid_alloc(true);
-        let uid = determine_uid(&opts, &entries, &defs).expect("allocate system");
+        let uid = determine_uid(&opts, &entries, &defs, uid_alloc::Scope::FilesOnly)
+            .expect("allocate system");
         assert_eq!(uid, 250);
     }
 
@@ -2572,7 +2592,8 @@ mod tests {
             ],
         );
         let opts = opts_for_uid_alloc(false);
-        let uid = determine_uid(&opts, &entries, &defs).expect("allocate regular");
+        let uid = determine_uid(&opts, &entries, &defs, uid_alloc::Scope::FilesOnly)
+            .expect("allocate regular");
         assert_eq!(uid, 1000);
     }
 
@@ -2613,7 +2634,8 @@ mod tests {
             base_dir: None,
             root: SysRoot::default(),
         };
-        let (gid, new_group) = determine_gid(&opts, 9200, &groups, &defs).expect("gid");
+        let (gid, new_group) =
+            determine_gid(&opts, 9200, &groups, &defs, uid_alloc::Scope::FilesOnly).expect("gid");
         assert_eq!(gid, 9201);
         assert!(new_group.is_some());
     }

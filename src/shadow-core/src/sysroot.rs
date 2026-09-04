@@ -7,8 +7,15 @@
 //! System root path resolver for `--prefix` support.
 //!
 //! `--prefix DIR` prepends DIR to every file path the tool touches, without a
-//! `chroot` syscall. Tools that also offer `--root DIR` perform a real
-//! `chroot()` first and then resolve against `/`.
+//! `chroot` syscall.
+//!
+//! `--root DIR` is **not** uniform across the tools, and this resolver is
+//! where the difference shows. `chage`, `chfn`, `chpasswd`, `chsh` and
+//! `passwd` call `chroot()` first and then resolve against `/`, so an absolute
+//! path stored in a record resolves inside the new root. Every other tool
+//! passes `--root` here as a second spelling of `--prefix`, which prepends the
+//! directory to the files it opens and leaves absolute paths alone. Tracked in
+//! #270.
 
 use std::path::{Path, PathBuf};
 
@@ -27,6 +34,17 @@ impl SysRoot {
         Self {
             prefix: prefix.unwrap_or_else(|| Path::new("/")).to_owned(),
         }
+    }
+
+    /// Whether the tool was pointed at a tree other than `/`.
+    ///
+    /// Anything that describes *this* running system -- the name service, the
+    /// running kernel's idea of who exists -- says nothing about a prefixed
+    /// tree, so a caller that consults such a source must not when this is
+    /// true. See `uid_alloc::Scope`.
+    #[must_use]
+    pub fn is_prefixed(&self) -> bool {
+        self.prefix != Path::new("/")
     }
 
     /// Resolve a path relative to the prefix.

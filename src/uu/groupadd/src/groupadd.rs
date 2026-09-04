@@ -93,7 +93,7 @@ impl UError for GroupaddError {
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let _clean_env = shadow_core::hardening::harden_process();
+    shadow_core::hardening::harden_process();
 
     let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| exit_codes::BAD_SYNTAX)?
     else {
@@ -193,7 +193,18 @@ fn do_groupadd(matches: &clap::ArgMatches) -> UResult<()> {
     }
 
     // Determine GID.
-    let gid = determine_gid(matches, &existing_groups, force, non_unique, system, &defs)?;
+    // A prefixed run manages another system's files, so the local name
+    // service is not consulted for it.
+    let scope = uid_alloc::Scope::for_prefix(root.is_prefixed());
+    let gid = determine_gid(
+        matches,
+        &existing_groups,
+        force,
+        non_unique,
+        system,
+        &defs,
+        scope,
+    )?;
 
     // Write to /etc/group.
     write_group_entry(
@@ -224,6 +235,7 @@ fn determine_gid(
     non_unique: bool,
     system: bool,
     defs: &LoginDefs,
+    scope: uid_alloc::Scope,
 ) -> Result<u32, GroupaddError> {
     let explicit_gid = matches.get_one::<String>(options::GID);
 
@@ -234,7 +246,7 @@ fn determine_gid(
 
         if !non_unique && existing_groups.iter().any(|g| g.gid == gid) {
             if force {
-                allocate_gid(defs, existing_groups, system)
+                allocate_gid(defs, existing_groups, system, scope)
             } else {
                 Err(GroupaddError::GidInUse(format!(
                     "GID '{gid}' already exists"
@@ -244,7 +256,7 @@ fn determine_gid(
             Ok(gid)
         }
     } else {
-        allocate_gid(defs, existing_groups, system)
+        allocate_gid(defs, existing_groups, system, scope)
     }
 }
 
@@ -318,10 +330,11 @@ fn allocate_gid(
     defs: &LoginDefs,
     existing: &[GroupEntry],
     system: bool,
+    scope: uid_alloc::Scope,
 ) -> Result<u32, GroupaddError> {
     // -K overrides were already merged into `defs` by the caller.
     let (min, max) = uid_alloc::gid_range(defs, system);
-    uid_alloc::next_gid(existing, min, max)
+    uid_alloc::next_gid(existing, min, max, scope)
         .map_err(|e| GroupaddError::BadArgument(format!("cannot allocate GID: {e}")))
 }
 
