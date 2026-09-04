@@ -9,6 +9,7 @@
 //! validation, and platform integration (PAM, `nscd`, `SELinux`, audit).
 
 pub mod cli;
+pub mod date;
 pub mod error;
 pub mod os_error;
 pub mod passwd;

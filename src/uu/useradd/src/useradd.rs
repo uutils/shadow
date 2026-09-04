@@ -176,80 +176,7 @@ struct UseraddOptions {
 ///
 /// Returns `None` for empty strings or `-1` (which means "no expiry").
 fn parse_expire_date(s: &str) -> Result<Option<i64>, UseraddError> {
-    if s.is_empty() || s == "-1" {
-        return Ok(None);
-    }
-
-    let parts: Vec<&str> = s.split('-').collect();
-    if parts.len() != 3 {
-        return Err(UseraddError::BadArgument(format!(
-            "invalid date '{s}' (expected YYYY-MM-DD)"
-        )));
-    }
-
-    let year: i64 = parts[0].parse().map_err(|_| {
-        UseraddError::BadArgument(format!("invalid date '{s}' (expected YYYY-MM-DD)"))
-    })?;
-    let month: i64 = parts[1].parse().map_err(|_| {
-        UseraddError::BadArgument(format!("invalid date '{s}' (expected YYYY-MM-DD)"))
-    })?;
-    let day: i64 = parts[2].parse().map_err(|_| {
-        UseraddError::BadArgument(format!("invalid date '{s}' (expected YYYY-MM-DD)"))
-    })?;
-
-    if !(1..=12).contains(&month) || year < 1970 {
-        return Err(UseraddError::BadArgument(format!(
-            "invalid date '{s}' (expected YYYY-MM-DD with valid ranges)"
-        )));
-    }
-
-    let max_day = days_in_month(year, month);
-    if !(1..=max_day).contains(&day) {
-        return Err(UseraddError::BadArgument(format!(
-            "invalid date '{s}' (day {day} out of range for month {month})"
-        )));
-    }
-
-    // Convert to days since epoch using a simple calendar calculation.
-    // This is sufficient for the date ranges used by shadow-utils.
-    let days = days_since_epoch(year, month, day);
-    Ok(Some(days))
-}
-
-/// Calculate days since Unix epoch (1970-01-01) for a given date.
-///
-/// Uses the algorithm from <https://howardhinnant.github.io/date_algorithms.html>.
-fn days_since_epoch(year: i64, month: i64, day: i64) -> i64 {
-    let y = if month <= 2 { year - 1 } else { year };
-    let m = if month <= 2 { month + 9 } else { month - 3 };
-
-    let era = y / 400;
-    let yoe = y - era * 400;
-    let doy = (153 * m + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
-/// Whether `year` is a leap year in the Gregorian calendar.
-fn is_leap_year(year: i64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
-}
-
-/// Number of days in a given month (1-indexed) for `year`.
-fn days_in_month(year: i64, month: i64) -> i64 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            if is_leap_year(year) {
-                29
-            } else {
-                28
-            }
-        }
-        // Month range is already validated before calling this function.
-        _ => 0,
-    }
+    shadow_core::date::parse_expire_date(s).map_err(|e| UseraddError::BadArgument(e.to_string()))
 }
 
 /// Current date as days since epoch — delegates to shadow-core.
@@ -1497,33 +1424,6 @@ mod tests {
     #[test]
     fn test_parse_expire_date_apr_30() {
         assert!(parse_expire_date("2025-04-30").is_ok());
-    }
-
-    #[test]
-    fn test_is_leap_year() {
-        assert!(is_leap_year(2000));
-        assert!(is_leap_year(2024));
-        assert!(!is_leap_year(1900));
-        assert!(!is_leap_year(2023));
-    }
-
-    #[test]
-    fn test_days_in_month_values() {
-        assert_eq!(days_in_month(2025, 1), 31);
-        assert_eq!(days_in_month(2025, 2), 28);
-        assert_eq!(days_in_month(2024, 2), 29);
-        assert_eq!(days_in_month(2025, 4), 30);
-        assert_eq!(days_in_month(2025, 12), 31);
-    }
-
-    #[test]
-    fn test_days_since_epoch_known_dates() {
-        // 1970-01-01 = day 0
-        assert_eq!(days_since_epoch(1970, 1, 1), 0);
-        // 2000-01-01 = day 10957
-        assert_eq!(days_since_epoch(2000, 1, 1), 10957);
-        // 1970-01-02 = day 1
-        assert_eq!(days_since_epoch(1970, 1, 2), 1);
     }
 
     // -----------------------------------------------------------------------
