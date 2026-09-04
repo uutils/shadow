@@ -6,16 +6,27 @@
 
 //! File locking for `/etc/passwd`, `/etc/shadow`, etc.
 //!
-//! Uses `.lock` files (e.g., `/etc/passwd.lock`) with timeout and stale
-//! lock detection, matching the convention used by GNU shadow-utils.
+//! Two locks are taken together for the account files, so shadow-rs excludes
+//! both other shadow-rs invocations and the rest of the system:
 //!
-//! Lock files are created atomically with `O_CREAT | O_EXCL` and contain
-//! the PID of the locking process for stale detection.
+//! * a `.lock` file (e.g. `/etc/passwd.lock`), created atomically with
+//!   `O_CREAT | O_EXCL` via the classic link trick and carrying the holder's
+//!   PID for stale detection. This is what shadow-utils uses.
+//! * `/etc/.pwd.lock`, held with an `fcntl` open-file-description write lock —
+//!   the lock `lckpwdf(3)` provides and that `vipw`, `pwconv`, `libuser`,
+//!   `systemd-sysusers` and `pam_unix` all take. Without it a concurrent
+//!   `passwd` run by `pam_unix` could silently overwrite our change.
+//!
+//! The `.pwd.lock` is process-wide and reference-counted per path, so the
+//! nested locks a single tool takes (passwd, then group, then gshadow, …)
+//! share one `fcntl` lock and release it when the last one goes away.
 
-use std::fs;
+use std::collections::HashMap;
+use std::fs::{self, File};
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -27,10 +38,20 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Retry interval when waiting for a lock.
 const RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
+/// Process-wide `/etc/.pwd.lock` holders, keyed by path so a `--prefix` run
+/// (and the parallel test suite) keeps each tree's lock independent. The
+/// `File` holds the `fcntl` lock; dropping it releases the lock, so the entry
+/// is removed once its reference count reaches zero.
+static PWD_LOCKS: LazyLock<Mutex<HashMap<PathBuf, (File, usize)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 /// A held file lock. The lock is released when this value is dropped.
 pub struct FileLock {
     lock_path: PathBuf,
     released: bool,
+    /// Set when this lock also holds a reference to the `/etc/.pwd.lock` for
+    /// `pwd_lock_path`; the reference is dropped in `Drop`.
+    pwd_lock_path: Option<PathBuf>,
 }
 
 impl FileLock {
@@ -74,7 +95,17 @@ impl FileLock {
         // Always clean up our temp file, regardless of success or failure.
         let _ = fs::remove_file(&tmp_path);
 
-        result
+        let mut lock = result?;
+
+        // For the account files, also take /etc/.pwd.lock so we exclude the
+        // system's own account tools. If it cannot be taken, drop the .lock we
+        // just got (via the early return running `lock`'s destructor).
+        if let Some(pwd_path) = account_pwd_lock_path(file_path) {
+            acquire_pwd_lock(&pwd_path, deadline)?;
+            lock.pwd_lock_path = Some(pwd_path);
+        }
+
+        Ok(lock)
     }
 
     /// Inner acquisition loop. Separated so the caller can guarantee temp file cleanup.
@@ -87,21 +118,36 @@ impl FileLock {
             // Attempt to hard-link our temp file to the lock path. hard_link is
             // atomic: it either creates the destination or fails, so two
             // processes can never both succeed for the same lock_path.
-            if fs::hard_link(tmp_path, lock_path).is_ok() {
-                return Ok(Self {
-                    lock_path: lock_path.to_owned(),
-                    released: false,
-                });
+            match fs::hard_link(tmp_path, lock_path) {
+                Ok(()) => {
+                    return Ok(Self {
+                        lock_path: lock_path.to_owned(),
+                        released: false,
+                        pwd_lock_path: None,
+                    });
+                }
+                // The lock is held — fall through to staleness / retry.
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                // Anything else (e.g. a filesystem without hard links returning
+                // EPERM) is not "held" — report it now instead of waiting out
+                // the whole timeout on a lock that will never appear.
+                Err(e) => {
+                    return Err(ShadowError::Lock(
+                        format!("cannot create lock {}: {e}", lock_path.display()).into(),
+                    ));
+                }
             }
 
-            // Link failed — lock file exists. Check if it's stale.
+            // Link failed because the lock file exists. If it is stale, try to
+            // remove it and retry immediately; if the removal itself fails
+            // (e.g. the file was made immutable), fall through to the bounded
+            // wait rather than spinning on it.
             if is_stale_lock(lock_path) {
-                // Remove the stale lock. If another process already removed it
-                // and re-acquired, our remove may fail or remove the wrong file,
-                // but the subsequent hard_link attempt is the real arbiter:
-                // it will fail atomically if someone else got there first.
-                let _ = fs::remove_file(lock_path);
-                continue;
+                match fs::remove_file(lock_path) {
+                    Ok(()) => continue,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(_) => {}
+                }
             }
 
             if Instant::now() >= deadline {
@@ -118,7 +164,8 @@ impl FileLock {
     ///
     /// # Errors
     ///
-    /// Returns `ShadowError::Lock` if the lock file cannot be removed.
+    /// Returns `ShadowError::Lock` if the lock file cannot be removed. The
+    /// `/etc/.pwd.lock` reference, if any, is still released via `Drop`.
     pub fn release(mut self) -> Result<(), ShadowError> {
         self.released = true;
         fs::remove_file(&self.lock_path).map_err(|e| {
@@ -126,6 +173,7 @@ impl FileLock {
                 format!("cannot release lock {}: {e}", self.lock_path.display()).into(),
             )
         })
+        // `self` is dropped here, releasing the /etc/.pwd.lock reference.
     }
 }
 
@@ -133,6 +181,80 @@ impl Drop for FileLock {
     fn drop(&mut self) {
         if !self.released {
             let _ = fs::remove_file(&self.lock_path);
+        }
+        if let Some(pwd_path) = self.pwd_lock_path.take() {
+            release_pwd_lock(&pwd_path);
+        }
+    }
+}
+
+/// The `/etc/.pwd.lock` path for an account file, or `None` for other files.
+///
+/// Only `passwd`, `shadow`, `group` and `gshadow` are guarded by the system
+/// password lock; `subuid`/`subgid` and anything else keep just their `.lock`.
+fn account_pwd_lock_path(file_path: &Path) -> Option<PathBuf> {
+    match file_path.file_name()?.to_str()? {
+        "passwd" | "shadow" | "group" | "gshadow" => Some(file_path.with_file_name(".pwd.lock")),
+        _ => None,
+    }
+}
+
+/// Take (or add a reference to) the `/etc/.pwd.lock` at `path`.
+fn acquire_pwd_lock(path: &Path, deadline: Instant) -> Result<(), ShadowError> {
+    use rustix::fs::FlockOperation;
+
+    let mut locks = PWD_LOCKS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    if let Some((_, count)) = locks.get_mut(path) {
+        *count += 1;
+        return Ok(());
+    }
+
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| ShadowError::Lock(format!("cannot open {}: {e}", path.display()).into()))?;
+
+    loop {
+        match rustix::fs::fcntl_lock(&file, FlockOperation::NonBlockingLockExclusive) {
+            Ok(()) => {
+                locks.insert(path.to_owned(), (file, 1));
+                return Ok(());
+            }
+            // Held by another process (glibc uses EAGAIN/EACCES for F_SETLK).
+            Err(rustix::io::Errno::AGAIN | rustix::io::Errno::ACCESS) => {
+                if Instant::now() >= deadline {
+                    return Err(ShadowError::Lock(
+                        format!("cannot acquire {}: timed out", path.display()).into(),
+                    ));
+                }
+                thread::sleep(RETRY_INTERVAL);
+            }
+            Err(e) => {
+                return Err(ShadowError::Lock(
+                    format!("cannot lock {}: {e}", path.display()).into(),
+                ));
+            }
+        }
+    }
+}
+
+/// Drop one reference to the `/etc/.pwd.lock` at `path`, releasing the
+/// underlying `fcntl` lock when the last reference goes away.
+fn release_pwd_lock(path: &Path) {
+    let mut locks = PWD_LOCKS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((_, count)) = locks.get_mut(path) {
+        *count -= 1;
+        if *count == 0 {
+            // Dropping the File closes the fd, which releases the fcntl lock.
+            locks.remove(path);
         }
     }
 }
@@ -315,6 +437,85 @@ mod tests {
         );
 
         lock.release().expect("failed to release lock");
+    }
+
+    #[test]
+    fn test_account_pwd_lock_path() {
+        assert_eq!(
+            account_pwd_lock_path(Path::new("/etc/shadow")),
+            Some(PathBuf::from("/etc/.pwd.lock"))
+        );
+        assert_eq!(
+            account_pwd_lock_path(Path::new("/mnt/root/etc/group")),
+            Some(PathBuf::from("/mnt/root/etc/.pwd.lock"))
+        );
+        // Files not covered by lckpwdf keep only their own .lock.
+        assert_eq!(account_pwd_lock_path(Path::new("/etc/subuid")), None);
+        assert_eq!(account_pwd_lock_path(Path::new("/etc/passwd.lock")), None);
+    }
+
+    // Locking an account file creates and holds /etc/.pwd.lock, the file
+    // glibc's lckpwdf and pam_unix contend on. (The fcntl lock is a
+    // traditional POSIX record lock, owned by the process, so its exclusion
+    // of *other* processes cannot be observed from this one — that is covered
+    // by the cross-process check in the PR; here we assert the mechanics.)
+    #[test]
+    fn test_account_lock_takes_pwd_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let shadow = dir.path().join("shadow");
+        fs::write(&shadow, "root:*:0:0:99999:7:::\n").unwrap();
+        let pwd_lock = dir.path().join(".pwd.lock");
+
+        let lock = FileLock::acquire(&shadow).unwrap();
+        assert!(pwd_lock.exists(), ".pwd.lock should be created");
+        assert!(
+            PWD_LOCKS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains_key(&pwd_lock),
+            "the fcntl lock should be held while the FileLock lives"
+        );
+
+        lock.release().unwrap();
+        assert!(
+            !PWD_LOCKS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains_key(&pwd_lock),
+            "the fcntl lock should be released"
+        );
+    }
+
+    // Nested locks a single tool takes share one fcntl lock, released only
+    // when the last one is dropped.
+    #[test]
+    fn test_pwd_lock_is_reference_counted() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["passwd", "group"] {
+            fs::write(dir.path().join(name), "x\n").unwrap();
+        }
+        let pwd_lock = dir.path().join(".pwd.lock");
+
+        let a = FileLock::acquire(&dir.path().join("passwd")).unwrap();
+        let b = FileLock::acquire(&dir.path().join("group")).unwrap();
+        assert_eq!(
+            PWD_LOCKS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(&pwd_lock)
+                .map(|(_, n)| *n),
+            Some(2)
+        );
+
+        drop(a);
+        drop(b);
+        assert!(
+            !PWD_LOCKS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains_key(&pwd_lock),
+            "the fcntl lock should be gone once the last reference drops"
+        );
     }
 
     #[test]

@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The lock loop no longer spins at 100% CPU when a stale `.lock` cannot be
+  removed (e.g. made immutable), and a filesystem without hard links now fails
+  immediately instead of waiting out the full 15-second timeout (#240)
 - `passwd` can change a password again. The 0.2.2 build applied its Landlock
   sandbox before `pam_start`, which stopped Linux-PAM from loading
   `pam_unix.so` (*"Module is unknown"*, exit 10) for every caller, and the
@@ -48,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The account tools now take `/etc/.pwd.lock` (the `lckpwdf(3)` lock) in
+  addition to the `.lock` files, so they exclude the rest of the system —
+  `vipw`, `systemd-sysusers`, `libuser` and `pam_unix`'s own `passwd`. Before
+  this, a password change racing a `useradd` could be silently lost. The lock
+  is reference-counted per tree, so the several files one tool locks share one
+  `fcntl` lock (#240)
 - In the multicall layout, applets other than `passwd`, `chfn`, `chsh` and
   `newgrp` drop to the caller's uid before running. The setuid binary let any
   local user run `pwck -s` or `grpck -s` with euid 0 and rewrite
