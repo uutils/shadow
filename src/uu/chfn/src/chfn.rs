@@ -402,7 +402,7 @@ where
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let _clean_env = shadow_core::hardening::harden_process();
+    shadow_core::hardening::harden_process();
 
     let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 1)? else {
         return Ok(());

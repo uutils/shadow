@@ -171,7 +171,7 @@ fn apply_landlock(root: &SysRoot) {
 #[uucore::main]
 #[allow(clippy::too_many_lines)]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let _clean_env = shadow_core::hardening::harden_process();
+    shadow_core::hardening::harden_process();
 
     // GNU passwd exits 2 for conflicting options, 6 for unknown/invalid.
     let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |e| match e.kind() {

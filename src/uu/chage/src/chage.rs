@@ -134,7 +134,7 @@ fn parse_date_arg(input: &str) -> Result<i64, String> {
 /// Entry point for the `chage` utility.
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let _clean_env = shadow_core::hardening::harden_process();
+    shadow_core::hardening::harden_process();
 
     let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 2)? else {
         return Ok(());

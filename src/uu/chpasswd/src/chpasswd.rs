@@ -188,7 +188,7 @@ fn days_since_epoch() -> Result<i64, ChpasswdError> {
 /// Entry point for the `chpasswd` utility.
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let _clean_env = shadow_core::hardening::harden_process();
+    shadow_core::hardening::harden_process();
 
     // chpasswd(8) exits 2 for invalid command syntax; every other failure is 1.
     let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 2)? else {

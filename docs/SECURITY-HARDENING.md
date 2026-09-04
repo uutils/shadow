@@ -109,6 +109,14 @@ Techniques adopted from OpenBSD and best practices for setuid-root tools.
       shadow file directly. Deliberately **not** applied around a PAM
       conversation: `restrict_self` sets `no_new_privs`, which strips the setgid
       bit from `unix_chkpwd` and blocks `dlopen` of the PAM modules
+- [x] UID and GID allocation asks the name service as well as the file, so an
+      ID belonging to an LDAP, SSSD or systemd-homed account is never handed
+      out locally — two accounts with one ID are indistinguishable to the
+      kernel. A `--prefix` run deliberately does not ask: those files describe
+      another system
+- [x] Audit records go straight to `/dev/log` instead of forking
+      `/usr/bin/logger` per event, so a setuid-root tool spawns one process
+      fewer and no longer depends on a binary at a fixed path
 - [x] `PAM_TTY` and `PAM_RUSER` are set on every PAM handle, so `pam_unix` and
       `pam_faillock` can record which terminal and which caller a failed
       authentication came from instead of logging `tty=?`
@@ -130,9 +138,10 @@ effective — sudo-rs uses this approach.
 
 ### Process environment
 
-`harden_process()` builds a sanitized environment for children but does not
-modify the process's own; in-process PAM and NSS modules still see the caller's
-environment. Tracked in #249.
+`harden_process()` does not modify the process's own environment: in-process
+PAM and NSS modules still see the caller's. It no longer *claims* to — it used
+to return a sanitized environment that all thirteen callers discarded. Children
+are given a clean environment where they are spawned. Tracked in #249.
 
 ## References
 

@@ -76,7 +76,7 @@ impl UError for UserdelError {
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let _ = shadow_core::hardening::harden_process();
+    shadow_core::hardening::harden_process();
 
     let Some(matches) =
         shadow_core::cli::parse_args(uu_app(), args, |_| exit_codes::INVALID_SYNTAX)?

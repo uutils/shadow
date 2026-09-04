@@ -88,7 +88,7 @@ impl UError for UsermodError {
 #[uucore::main]
 #[allow(clippy::too_many_lines)]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let _ = shadow_core::hardening::harden_process();
+    shadow_core::hardening::harden_process();
 
     let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 2)? else {
         return Ok(());
