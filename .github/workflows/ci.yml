@@ -193,5 +193,10 @@ jobs:
       # failure rather than a silent pass.
       - name: Test on ${{ matrix.target }}
         run: docker compose run --rm -e CARGO_NET_RETRY ${{ matrix.target }} cargo test --workspace
+      # Not on Alpine: its Rust image targets musl with crt-static, where
+      # shadow-core refuses `pam` at compile time on purpose -- Linux-PAM
+      # dlopen()s its modules and a static binary cannot. The static musl job
+      # asserts that refusal; Alpine is here for musl's libc behaviour.
       - name: Test on ${{ matrix.target }} with pam
+        if: matrix.target != 'alpine'
         run: docker compose run --rm -e CARGO_NET_RETRY ${{ matrix.target }} cargo test --workspace --features pam
