@@ -70,6 +70,58 @@ pub fn is_raw_line(line: &str) -> bool {
     trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(['+', '-'])
 }
 
+/// Read a record file, skipping the lines that are not entries.
+///
+/// Comments, blank lines and NIS compatibility lines are dropped. Use
+/// [`read_with_layout`] where they must survive a rewrite, which is any
+/// path that writes the file back.
+///
+/// # Errors
+///
+/// Returns `ShadowError` if the file cannot be opened or an entry line is
+/// malformed.
+pub fn read_entries<T>(path: &Path) -> Result<Vec<T>, ShadowError>
+where
+    T: FromStr<Err = ShadowError>,
+{
+    let file = std::fs::File::open(path).map_err(|e| ShadowError::IoPath(e, path.to_owned()))?;
+    let reader = std::io::BufReader::new(file);
+    let mut entries = Vec::new();
+
+    for line in reader.lines() {
+        let line = line?;
+        if is_raw_line(&line) {
+            continue;
+        }
+        // Parse the original untrimmed line to preserve field whitespace.
+        entries.push(line.parse()?);
+    }
+
+    Ok(entries)
+}
+
+/// Write entries to a record file, validating each one first.
+///
+/// Nothing but the entries: any comments the file carried are lost, which is
+/// why every path that rewrites an existing file goes through
+/// [`write_with_layout`] or the transaction instead.
+///
+/// # Errors
+///
+/// Returns `ShadowError::Validation` for a value that would corrupt a record,
+/// and `ShadowError::Io` on a write failure.
+pub fn write_entries<T, W>(entries: &[T], mut writer: W) -> Result<(), ShadowError>
+where
+    T: Display + crate::transaction::Record,
+    W: Write,
+{
+    for entry in entries {
+        crate::transaction::Record::validate_fields(entry)?;
+        writeln!(writer, "{entry}")?;
+    }
+    Ok(())
+}
+
 /// Read a record file, keeping the lines that are not entries.
 ///
 /// # Errors

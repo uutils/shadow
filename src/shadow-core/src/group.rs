@@ -13,7 +13,7 @@
 //! `user_list` is a comma-separated list of usernames.
 
 use std::fmt;
-use std::io::{self, BufRead, Write};
+use std::io::Write;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -112,21 +112,7 @@ impl FromStr for GroupEntry {
 ///
 /// Returns `ShadowError` if the file cannot be opened or contains malformed entries.
 pub fn read_group_file(path: &Path) -> Result<Vec<GroupEntry>, ShadowError> {
-    let file = std::fs::File::open(path).map_err(|e| ShadowError::IoPath(e, path.to_owned()))?;
-    let reader = io::BufReader::new(file);
-    let mut entries = Vec::new();
-
-    for line in reader.lines() {
-        let line = line?;
-        // Comments, blank lines and NIS compat lines are not entries. Use
-        // read_*_with_layout when they must survive a rewrite.
-        if crate::records::is_raw_line(&line) {
-            continue;
-        }
-        entries.push(line.parse()?);
-    }
-
-    Ok(entries)
+    crate::records::read_entries(path)
 }
 
 /// Write entries to an `/etc/group`-formatted file.
@@ -134,50 +120,14 @@ pub fn read_group_file(path: &Path) -> Result<Vec<GroupEntry>, ShadowError> {
 /// # Errors
 ///
 /// Returns `ShadowError` on I/O write failure.
-pub fn write_group<W: Write>(entries: &[GroupEntry], mut writer: W) -> Result<(), ShadowError> {
-    for entry in entries {
-        entry.validate_fields()?;
-        writeln!(writer, "{entry}")?;
-    }
-    Ok(())
+pub fn write_group<W: Write>(entries: &[GroupEntry], writer: W) -> Result<(), ShadowError> {
+    crate::records::write_entries(entries, writer)
 }
 
 impl crate::records::Named for GroupEntry {
     fn name(&self) -> &str {
         &self.name
     }
-}
-
-/// Read `/etc/group` keeping comments, blank lines and NIS compat lines.
-///
-/// Returns the entries plus the [`crate::records::Layout`] that
-/// [`write_group_with_layout`] needs to put those lines back.
-///
-/// # Errors
-///
-/// Returns `ShadowError` if the file cannot be opened or an entry is malformed.
-pub fn read_group_with_layout(
-    path: &Path,
-) -> Result<(Vec<GroupEntry>, crate::records::Layout), ShadowError> {
-    crate::records::read_with_layout(path)
-}
-
-/// Write entries back, restoring the lines [`read_group_with_layout`] preserved.
-///
-/// # Errors
-///
-/// Returns `ShadowError` on a write failure or an entry that would corrupt the
-/// record format.
-pub fn write_group_with_layout<W: Write>(
-    entries: &[GroupEntry],
-    layout: &crate::records::Layout,
-    mut writer: W,
-) -> Result<(), ShadowError> {
-    crate::records::write_with_layout(entries, layout, &mut writer, |entry, w| {
-        entry.validate_fields()?;
-        writeln!(w, "{entry}")?;
-        Ok(())
-    })
 }
 
 impl crate::transaction::Record for GroupEntry {

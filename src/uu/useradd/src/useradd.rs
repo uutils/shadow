@@ -1607,8 +1607,7 @@ mod tests {
         fs::write(root.shadow_path(), "existing:!:19000:0:99999:7:::\n").expect("write shadow");
         fs::write(root.group_path(), "existing:x:1000:\n").expect("write group");
 
-        let (passwd_entries, _) =
-            passwd::read_passwd_with_layout(&root.passwd_path()).expect("read passwd");
+        let passwd_entries = passwd::read_passwd_file(&root.passwd_path()).expect("read passwd");
         assert!(passwd_entries.iter().any(|e| e.name == "existing"));
     }
 
