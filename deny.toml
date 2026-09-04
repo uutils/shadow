@@ -8,18 +8,25 @@ yanked = "warn"
 
 [licenses]
 version = 2
+# The list is exactly what the dependency graph uses today, so adding a crate
+# under a new licence is a decision someone has to make and record here rather
+# than something that slips through a permissive allow list. Checked with
+# `cargo deny --all-features list`.
 allow = [
+    # Nearly every crate in the graph, this project included.
     "MIT",
     "Apache-2.0",
-    "ISC",
-    "BSD-2-Clause",
+    # subtle, for the constant-time hash comparison in shadow-core::crypt.
     "BSD-3-Clause",
-    "CC0-1.0",
+    # tinystr and unicode-ident, via uucore's fluent stack.
     "Unicode-3.0",
-    "Zlib",
-    # No MPL-2.0: it is file-level copyleft, and this project ships MIT only.
-    # A dependency that needs it is a decision, not a default.
 ]
+# Deliberately absent:
+#   MPL-2.0 -- file-level copyleft, and this project ships MIT only.
+#   GPL/LGPL of any version -- see the clean-room policy in CONTRIBUTING.md.
+# Two crates carry a copyleft option in a dual licence and are accepted under
+# the other half: self_cell is "GPL-2.0-only OR Apache-2.0" and memchr is
+# "Unlicense OR MIT". Neither obliges this project to anything.
 confidence-threshold = 0.8
 
 [bans]
