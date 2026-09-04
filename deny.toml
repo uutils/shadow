@@ -17,7 +17,8 @@ allow = [
     "CC0-1.0",
     "Unicode-3.0",
     "Zlib",
-    "MPL-2.0",
+    # No MPL-2.0: it is file-level copyleft, and this project ships MIT only.
+    # A dependency that needs it is a decision, not a default.
 ]
 confidence-threshold = 0.8
 
@@ -27,14 +28,17 @@ wildcards = "allow"
 highlight = "all"
 
 # Known duplicate dependencies from transitive deps.
-# Update this list when bumping clap/uucore.
 skip = [
-    # various crates
-    { name = "syn", version = "2.0.117", reason = "new major release v3 has been released" },
+    # Two independent transitive chains pull incompatible majors and neither is
+    # ours to move: syn 3 via uucore -> fluent -> unic-langid -> tinystr ->
+    # displaydoc, syn 2 via landlock -> enumflags2 -> enumflags2_derive.
+    { name = "syn", version = "2", reason = "landlock's enumflags2_derive still uses syn 2 while uucore's displaydoc uses syn 3" },
 ]
 
 [sources]
-unknown-registry = "warn"
-unknown-git = "warn"
+# A crate from anywhere but crates.io is a supply-chain decision, not a
+# warning to scroll past.
+unknown-registry = "deny"
+unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = []

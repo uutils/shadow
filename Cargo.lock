@@ -98,7 +98,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "473c7e07f409a8d772161724aa8db6a765a2532a70f9667eeb7b49d3d02fbdca"
 dependencies = [
  "clap_builder",
- "clap_derive",
 ]
 
 [[package]]
@@ -121,18 +120,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3be2ad0423bdbbb0e25bc89add796f3559706d4a95e1bc98e4d9662a957b6a19"
 dependencies = [
  "clap",
-]
-
-[[package]]
-name = "clap_derive"
-version = "4.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d012d2b9d65aca7f18f4d9878a045bc17899bba951561ba5ec3c2ba1eed9a061"
-dependencies = [
- "heck",
- "proc-macro2",
- "quote",
- "syn 3.0.3",
 ]
 
 [[package]]
@@ -273,12 +260,6 @@ name = "glob"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
-
-[[package]]
-name = "heck"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "intl-memoizer"

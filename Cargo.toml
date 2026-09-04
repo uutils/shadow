@@ -47,7 +47,7 @@ categories = ["command-line-utilities"]
 shadow-core = { path = "src/shadow-core", version = "0.2.2" }
 
 # CLI
-clap = { version = "4", features = ["derive", "wrap_help"] }
+clap = { version = "4", features = ["wrap_help"] }
 clap_complete = "4"
 
 # uutils integration
