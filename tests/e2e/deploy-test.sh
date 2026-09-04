@@ -185,6 +185,25 @@ test_setuid() {
     # Non-root user should NOT be able to change another user's password
     assert_fail "testrunner cannot passwd root" \
         su -s /bin/bash testrunner -c "echo 'root:hacked' | $BINDIR/chpasswd -e"
+
+    # The binary is setuid for the four self-service tools only; every other
+    # applet must run with the caller's own privileges. An unprivileged
+    # `pwck -s` or `grpck -s` must neither rewrite a file nor change its owner.
+    local passwd_before group_before
+    passwd_before=$(stat -c '%i %U:%G' /etc/passwd)
+    group_before=$(stat -c '%i %U:%G' /etc/group)
+    assert_fail "testrunner cannot run shadow-rs pwck -s" \
+        su -s /bin/bash testrunner -c "$BINDIR/shadow-rs pwck -s"
+    assert_fail "testrunner cannot run pwck -s through the symlink" \
+        su -s /bin/bash testrunner -c "$BINDIR/pwck -s"
+    assert_fail "testrunner cannot run grpck -s" \
+        su -s /bin/bash testrunner -c "$BINDIR/grpck -s"
+    assert_ok "/etc/passwd untouched by unprivileged pwck -s" \
+        test "$(stat -c '%i %U:%G' /etc/passwd)" = "$passwd_before"
+    assert_ok "/etc/group untouched by unprivileged grpck -s" \
+        test "$(stat -c '%i %U:%G' /etc/group)" = "$group_before"
+    assert_ok "/etc/shadow is root:shadow 0640" \
+        test "$(stat -c '%U:%G %a' /etc/shadow)" = "root:shadow 640"
 }
 
 # ── User lifecycle ──────────────────────────────────────────────────

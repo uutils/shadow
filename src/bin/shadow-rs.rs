@@ -7,19 +7,117 @@
 //!
 //! Dispatches to the appropriate utility based on `argv[0]`.
 //! When invoked as `shadow-rs <util>`, uses the first argument instead.
+//!
+//! # Privileges
+//!
+//! The per-tool install makes only `passwd`, `chfn`, `chsh` and `newgrp`
+//! setuid-root. A multicall install has to make the one binary setuid, which
+//! would hand euid 0 to every applet — an unprivileged `pwck -s` rewriting
+//! `/etc/passwd`. So before an applet outside that set runs, the binary drops
+//! back to the caller's uid, and the two layouts have the same privilege
+//! model.
 
+use std::ffi::OsString;
 use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
 
+type Applet = fn(&[OsString]) -> i32;
+
+/// Applets that keep euid 0 for an unprivileged caller: the same four that
+/// `make install` marks setuid.
+const SETUID_APPLETS: [&str; 4] = ["passwd", "chfn", "chsh", "newgrp"];
+
+/// Every applet compiled into this binary, by name, in `--list` order.
+// `#[cfg]` is not accepted on the elements of a `vec![]` literal, so the
+// table is assembled push by push.
+#[allow(clippy::vec_init_then_push)]
+fn applets() -> Vec<(&'static str, Applet)> {
+    let mut table: Vec<(&'static str, Applet)> = Vec::with_capacity(14);
+    #[cfg(feature = "chage")]
+    table.push(("chage", |a| chage::uumain(a.iter().cloned())));
+    #[cfg(feature = "chfn")]
+    table.push(("chfn", |a| chfn::uumain(a.iter().cloned())));
+    #[cfg(feature = "chpasswd")]
+    table.push(("chpasswd", |a| chpasswd::uumain(a.iter().cloned())));
+    #[cfg(feature = "chsh")]
+    table.push(("chsh", |a| chsh::uumain(a.iter().cloned())));
+    #[cfg(feature = "groupadd")]
+    table.push(("groupadd", |a| groupadd::uumain(a.iter().cloned())));
+    #[cfg(feature = "groupdel")]
+    table.push(("groupdel", |a| groupdel::uumain(a.iter().cloned())));
+    #[cfg(feature = "groupmod")]
+    table.push(("groupmod", |a| groupmod::uumain(a.iter().cloned())));
+    #[cfg(feature = "grpck")]
+    table.push(("grpck", |a| grpck::uumain(a.iter().cloned())));
+    #[cfg(feature = "newgrp")]
+    table.push(("newgrp", |a| newgrp::uumain(a.iter().cloned())));
+    #[cfg(feature = "passwd")]
+    table.push(("passwd", |a| passwd::uumain(a.iter().cloned())));
+    #[cfg(feature = "pwck")]
+    table.push(("pwck", |a| pwck::uumain(a.iter().cloned())));
+    #[cfg(feature = "useradd")]
+    table.push(("useradd", |a| useradd::uumain(a.iter().cloned())));
+    #[cfg(feature = "userdel")]
+    table.push(("userdel", |a| userdel::uumain(a.iter().cloned())));
+    #[cfg(feature = "usermod")]
+    table.push(("usermod", |a| usermod::uumain(a.iter().cloned())));
+    table
+}
+
+fn find_applet(name: &str) -> Option<Applet> {
+    applets()
+        .into_iter()
+        .find(|(applet, _)| *applet == name)
+        .map(|(_, run)| run)
+}
+
+/// Whether `applet` may run with the setuid privilege on behalf of an
+/// unprivileged caller.
+fn keeps_privilege(applet: &str) -> bool {
+    SETUID_APPLETS.contains(&applet)
+}
+
+/// Give the setuid privilege up unless `applet` is one of the tools it exists
+/// for. Fails closed: if the kernel will not take the privilege away, the
+/// applet does not run.
+fn drop_privileges_for(applet: &str) -> Result<(), ExitCode> {
+    let real = rustix::process::getuid();
+    if real == rustix::process::geteuid() || keeps_privilege(applet) {
+        return Ok(());
+    }
+    // setuid(2) called with euid 0 sets the real, effective and saved uid,
+    // so the privilege is gone for good rather than parked in the saved uid.
+    let result = shadow_core::process::setuid(real.as_raw());
+    if result.is_err() || rustix::process::geteuid() != real {
+        let _ = writeln!(
+            std::io::stderr(),
+            "shadow-rs: cannot drop privileges for {applet}: {}",
+            result
+                .err()
+                .map_or_else(|| "effective uid unchanged".to_string(), |e| e.to_string())
+        );
+        return Err(ExitCode::FAILURE);
+    }
+    Ok(())
+}
+
 /// Convert a tool's `i32` exit code to `ExitCode`.
-#[allow(clippy::cast_sign_loss)] // clamp(0, 255) guarantees non-negative
 fn to_exit_code(code: i32) -> ExitCode {
-    ExitCode::from(code.clamp(0, 255) as u8)
+    // Every documented exit code fits; anything else is a bug and must not
+    // masquerade as success.
+    ExitCode::from(u8::try_from(code).unwrap_or(1))
+}
+
+fn run_applet(applet: &str, run: Applet, args: &[OsString]) -> ExitCode {
+    match drop_privileges_for(applet) {
+        Ok(()) => to_exit_code(run(args)),
+        Err(code) => code,
+    }
 }
 
 fn main() -> ExitCode {
-    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let args: Vec<OsString> = std::env::args_os().collect();
 
     let binary_name = args
         .first()
@@ -43,8 +141,8 @@ fn main() -> ExitCode {
     }
 
     // Direct invocation via symlink (e.g., argv[0] = "passwd")
-    if let Some(code) = dispatch(&binary_name, &args) {
-        return to_exit_code(code);
+    if let Some(run) = find_applet(&binary_name) {
+        return run_applet(&binary_name, run, &args);
     }
 
     // Multicall: `shadow-rs <util> [args...]`
@@ -66,8 +164,8 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
 
-        if let Some(code) = dispatch(&util_name, &args[1..]) {
-            return to_exit_code(code);
+        if let Some(run) = find_applet(&util_name) {
+            return run_applet(&util_name, run, &args[1..]);
         }
 
         let _ = writeln!(
@@ -110,70 +208,62 @@ fn print_multicall_help() {
     let _ = writeln!(out, "{}", shadow_core::cli::AFTER_HELP);
 }
 
-fn dispatch(name: &str, args: &[std::ffi::OsString]) -> Option<i32> {
-    match name {
-        #[cfg(feature = "chage")]
-        "chage" => Some(chage::uumain(args.iter().cloned())),
-        #[cfg(feature = "chfn")]
-        "chfn" => Some(chfn::uumain(args.iter().cloned())),
-        #[cfg(feature = "chpasswd")]
-        "chpasswd" => Some(chpasswd::uumain(args.iter().cloned())),
-        #[cfg(feature = "chsh")]
-        "chsh" => Some(chsh::uumain(args.iter().cloned())),
-        #[cfg(feature = "groupadd")]
-        "groupadd" => Some(groupadd::uumain(args.iter().cloned())),
-        #[cfg(feature = "groupdel")]
-        "groupdel" => Some(groupdel::uumain(args.iter().cloned())),
-        #[cfg(feature = "groupmod")]
-        "groupmod" => Some(groupmod::uumain(args.iter().cloned())),
-        #[cfg(feature = "grpck")]
-        "grpck" => Some(grpck::uumain(args.iter().cloned())),
-        #[cfg(feature = "newgrp")]
-        "newgrp" => Some(newgrp::uumain(args.iter().cloned())),
-        #[cfg(feature = "passwd")]
-        "passwd" => Some(passwd::uumain(args.iter().cloned())),
-        #[cfg(feature = "pwck")]
-        "pwck" => Some(pwck::uumain(args.iter().cloned())),
-        #[cfg(feature = "useradd")]
-        "useradd" => Some(useradd::uumain(args.iter().cloned())),
-        #[cfg(feature = "userdel")]
-        "userdel" => Some(userdel::uumain(args.iter().cloned())),
-        #[cfg(feature = "usermod")]
-        "usermod" => Some(usermod::uumain(args.iter().cloned())),
-        _ => None,
-    }
-}
-
 fn print_available_utils() {
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "Available utilities:");
+    for (name, _) in applets() {
+        let _ = writeln!(out, "  {name}");
+    }
+}
 
-    #[cfg(feature = "chage")]
-    let _ = writeln!(out, "  chage");
-    #[cfg(feature = "chfn")]
-    let _ = writeln!(out, "  chfn");
-    #[cfg(feature = "chpasswd")]
-    let _ = writeln!(out, "  chpasswd");
-    #[cfg(feature = "chsh")]
-    let _ = writeln!(out, "  chsh");
-    #[cfg(feature = "groupadd")]
-    let _ = writeln!(out, "  groupadd");
-    #[cfg(feature = "groupdel")]
-    let _ = writeln!(out, "  groupdel");
-    #[cfg(feature = "groupmod")]
-    let _ = writeln!(out, "  groupmod");
-    #[cfg(feature = "grpck")]
-    let _ = writeln!(out, "  grpck");
-    #[cfg(feature = "newgrp")]
-    let _ = writeln!(out, "  newgrp");
-    #[cfg(feature = "passwd")]
-    let _ = writeln!(out, "  passwd");
-    #[cfg(feature = "pwck")]
-    let _ = writeln!(out, "  pwck");
-    #[cfg(feature = "useradd")]
-    let _ = writeln!(out, "  useradd");
-    #[cfg(feature = "userdel")]
-    let _ = writeln!(out, "  userdel");
-    #[cfg(feature = "usermod")]
-    let _ = writeln!(out, "  usermod");
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ALL_TOOLS: [&str; 14] = [
+        "chage", "chfn", "chpasswd", "chsh", "groupadd", "groupdel", "groupmod", "grpck", "newgrp",
+        "passwd", "pwck", "useradd", "userdel", "usermod",
+    ];
+
+    // The table drives both dispatch and `--list`, so it must contain only
+    // real tools, each once, in a stable order.
+    #[test]
+    fn applet_table_is_sorted_unique_and_known() {
+        let names: Vec<&str> = applets().into_iter().map(|(n, _)| n).collect();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(names, sorted);
+        assert!(names.iter().all(|n| ALL_TOOLS.contains(n)));
+    }
+
+    // Exactly the four tools that the per-tool install marks setuid keep the
+    // privilege; every other applet gives it up before running.
+    #[test]
+    fn only_self_service_tools_keep_privilege() {
+        for tool in ALL_TOOLS {
+            assert_eq!(
+                keeps_privilege(tool),
+                matches!(tool, "passwd" | "chfn" | "chsh" | "newgrp"),
+                "{tool}"
+            );
+        }
+        assert!(!keeps_privilege("shadow-rs"));
+        assert!(!keeps_privilege(""));
+    }
+
+    // Without privilege to drop there is nothing to do; this must never fail
+    // for an ordinary process.
+    #[test]
+    fn dropping_is_a_no_op_when_not_setuid() {
+        assert!(drop_privileges_for("pwck").is_ok());
+    }
+
+    #[test]
+    fn exit_codes_out_of_range_are_not_success() {
+        assert_eq!(to_exit_code(0), ExitCode::from(0));
+        assert_eq!(to_exit_code(12), ExitCode::from(12));
+        assert_eq!(to_exit_code(-1), ExitCode::from(1));
+        assert_eq!(to_exit_code(300), ExitCode::from(1));
+    }
 }
