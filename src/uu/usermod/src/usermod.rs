@@ -16,6 +16,7 @@ use uucore::error::{UError, UResult};
 
 use shadow_core::audit;
 use shadow_core::group::{self};
+use shadow_core::gshadow::{self};
 use shadow_core::lock::FileLock;
 use shadow_core::passwd::{self};
 use shadow_core::shadow::{self};
@@ -48,6 +49,8 @@ enum UsermodError {
     UserNotFound(String),
     UidInUse(String),
     NameInUse(String),
+    GroupNotFound(String),
+    CantUpdateGroup(String),
 }
 
 impl fmt::Display for UsermodError {
@@ -57,7 +60,9 @@ impl fmt::Display for UsermodError {
             | Self::BadArgument(msg)
             | Self::UserNotFound(msg)
             | Self::UidInUse(msg)
-            | Self::NameInUse(msg) => f.write_str(msg),
+            | Self::NameInUse(msg)
+            | Self::GroupNotFound(msg)
+            | Self::CantUpdateGroup(msg) => f.write_str(msg),
         }
     }
 }
@@ -69,9 +74,13 @@ impl UError for UsermodError {
         match self {
             Self::CantUpdate(_) => 1,
             Self::BadArgument(_) => 3,
-            Self::UserNotFound(_) => 6,
+            // usermod(8): 6 covers both "user doesn't exist" and
+            // "specified group doesn't exist".
+            Self::UserNotFound(_) | Self::GroupNotFound(_) => 6,
             Self::UidInUse(_) => 4,
             Self::NameInUse(_) => 9,
+            // usermod(8): 10 = can't update the group file.
+            Self::CantUpdateGroup(_) => 10,
         }
     }
 }
@@ -129,6 +138,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     };
 
     // Modify /etc/passwd.
+    let group_path_for_lookup = root.group_path();
     let passwd_path = root.passwd_path();
     let lock = FileLock::acquire(&passwd_path)
         .map_err(|e| UsermodError::CantUpdate(format!("cannot lock: {e}")))?;
@@ -164,7 +174,26 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     if let Some(s) = matches.get_one::<String>(options::SHELL) {
         entries[idx].shell.clone_from(s);
     }
-    if let Some(&gid) = matches.get_one::<u32>(options::GID) {
+    if let Some(group_arg) = matches.get_one::<String>(options::GID) {
+        // usermod(8): -g takes a group name or a GID, and the group "must
+        // exist". A numeric GID naming no group used to be written through,
+        // leaving a primary group that does not exist.
+        let groups = if group_path_for_lookup.exists() {
+            group::read_group_file(&group_path_for_lookup).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let resolved = if let Ok(gid) = group_arg.parse::<u32>() {
+            groups.iter().find(|g| g.gid == gid).map(|g| g.gid)
+        } else {
+            groups.iter().find(|g| g.name == *group_arg).map(|g| g.gid)
+        };
+        let Some(gid) = resolved else {
+            drop(lock);
+            return Err(
+                UsermodError::GroupNotFound(format!("group '{group_arg}' does not exist")).into(),
+            );
+        };
         entries[idx].gid = gid;
     }
     let new_login = matches.get_one::<String>(options::LOGIN);
@@ -237,11 +266,17 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             .into());
         };
 
-        if do_lock {
+        if do_lock && !s.passwd.starts_with('!') {
+            // Locking twice would prepend a second '!', which a single -U
+            // then fails to undo.
             s.lock();
         }
-        if do_unlock {
-            s.unlock();
+        if do_unlock && !s.unlock() {
+            drop(slock);
+            return Err(UsermodError::BadArgument(format!(
+                "unlocking '{login}' would leave the account without a password"
+            ))
+            .into());
         }
         if let Some(parsed) = expire_date {
             s.expire_date = parsed;
@@ -284,6 +319,28 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 }
             }
 
+            // Mirror the rename in gshadow's member and admin lists.
+            let gshadow_path = root.gshadow_path();
+            if gshadow_path.exists()
+                && let Ok((mut gs, gs_layout)) = gshadow::read_gshadow_with_layout(&gshadow_path)
+            {
+                let mut gs_changed = false;
+                for g in &mut gs {
+                    for m in g.members.iter_mut().chain(g.admins.iter_mut()) {
+                        if *m == *login {
+                            m.clone_from(new_name);
+                            gs_changed = true;
+                        }
+                    }
+                }
+                if gs_changed {
+                    atomic::atomic_write(&gshadow_path, |f| {
+                        gshadow::write_gshadow_with_layout(&gs, &gs_layout, f)
+                    })
+                    .map_err(|e| UsermodError::CantUpdateGroup(format!("{e}")))?;
+                }
+            }
+
             if changed {
                 atomic::atomic_write(&group_path, |f| {
                     group::write_group_with_layout(&ge, &group_layout, f)
@@ -299,43 +356,96 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         let group_path = root.group_path();
         if group_path.exists() {
             let append = matches.get_flag(options::APPEND);
-            let new_groups: Vec<&str> = groups_str.split(',').map(str::trim).collect();
+            // usermod(8): an empty -G list removes every supplementary
+            // membership. Splitting "" yielded one empty name, which was then
+            // reported as a group that does not exist.
+            let new_groups: Vec<&str> = groups_str
+                .split(',')
+                .map(str::trim)
+                .filter(|g| !g.is_empty())
+                .collect();
+
+            // The member name to write is the one the account will carry: with
+            // -l the rename above already happened, and using the old login
+            // added a member that no longer exists.
+            let member = new_login.unwrap_or(login);
 
             let glock = FileLock::acquire(&group_path)
-                .map_err(|e| UsermodError::CantUpdate(format!("cannot lock group: {e}")))?;
+                .map_err(|e| UsermodError::CantUpdateGroup(format!("cannot lock group: {e}")))?;
 
             let (mut ge, group_layout) = group::read_group_with_layout(&group_path)
-                .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
+                .map_err(|e| UsermodError::CantUpdateGroup(format!("{e}")))?;
 
-            // Validate all requested groups exist before mutating anything.
+            // Validate every requested group first: -G takes names or GIDs,
+            // and each must exist (usermod(8) exit 6).
+            let mut wanted: Vec<String> = Vec::with_capacity(new_groups.len());
             for gname in &new_groups {
-                if !ge.iter().any(|g| g.name == *gname) {
+                let found = ge
+                    .iter()
+                    .find(|g| g.name == *gname || gname.parse::<u32>().is_ok_and(|id| g.gid == id))
+                    .map(|g| g.name.clone());
+                let Some(name) = found else {
                     drop(glock);
-                    return Err(UsermodError::CantUpdate(format!(
+                    return Err(UsermodError::GroupNotFound(format!(
                         "group '{gname}' does not exist"
                     ))
                     .into());
-                }
+                };
+                wanted.push(name);
             }
 
             if !append {
                 for g in &mut ge {
-                    g.members.retain(|m| m != login);
+                    g.members.retain(|m| m != login && m != member);
                 }
             }
-            for gname in &new_groups {
+            for gname in &wanted {
                 if let Some(g) = ge.iter_mut().find(|g| g.name == *gname)
-                    && !g.members.iter().any(|m| m == login)
+                    && !g.members.iter().any(|m| m == member)
                 {
-                    g.members.push(login.clone());
+                    g.members.push(member.clone());
                 }
             }
 
             atomic::atomic_write(&group_path, |f| {
                 group::write_group_with_layout(&ge, &group_layout, f)
             })
-            .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
+            .map_err(|e| UsermodError::CantUpdateGroup(format!("{e}")))?;
             drop(glock);
+
+            // /etc/gshadow carries the same membership lists; leaving it
+            // behind is exactly what grpck reports as "members differ".
+            let gshadow_path = root.gshadow_path();
+            if gshadow_path.exists() {
+                let gshadow_guard = FileLock::acquire(&gshadow_path).map_err(|e| {
+                    UsermodError::CantUpdateGroup(format!("cannot lock gshadow: {e}"))
+                })?;
+                let (mut gs, gs_layout) = gshadow::read_gshadow_with_layout(&gshadow_path)
+                    .map_err(|e| UsermodError::CantUpdateGroup(format!("{e}")))?;
+                let mut gs_changed = false;
+                if !append {
+                    for g in &mut gs {
+                        let before = g.members.len();
+                        g.members.retain(|m| m != login && m != member);
+                        gs_changed |= g.members.len() != before;
+                    }
+                }
+                for gname in &wanted {
+                    if let Some(g) = gs.iter_mut().find(|g| g.name == *gname)
+                        && !g.members.iter().any(|m| m == member)
+                    {
+                        g.members.push(member.clone());
+                        gs_changed = true;
+                    }
+                }
+                if gs_changed {
+                    atomic::atomic_write(&gshadow_path, |f| {
+                        gshadow::write_gshadow_with_layout(&gs, &gs_layout, f)
+                    })
+                    .map_err(|e| UsermodError::CantUpdateGroup(format!("{e}")))?;
+                }
+                drop(gshadow_guard);
+            }
         }
     }
 
@@ -430,8 +540,7 @@ pub fn uu_app() -> Command {
                 .short('g')
                 .long("gid")
                 .value_name("GROUP")
-                .value_parser(clap::value_parser!(u32))
-                .help("Replace the primary group (numeric GID)"),
+                .help("Replace the primary group (name or GID; the group must exist)"),
         )
         .arg(
             Arg::new(options::GROUPS)
@@ -444,6 +553,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::APPEND)
                 .short('a')
                 .long("append")
+                .requires(options::GROUPS)
                 .help("Add to the supplementary groups instead of replacing them (only effective with -G)")
                 .action(ArgAction::SetTrue),
         )

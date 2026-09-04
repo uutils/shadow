@@ -551,3 +551,81 @@ fn test_bad_expiredate_changes_nothing() {
         "no field may be committed when a later argument is invalid"
     );
 }
+
+#[test]
+fn test_primary_group_by_name_and_existence() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "alice:x:1000:1000:Alice:/home/alice:/bin/sh\n",
+        "alice:$6$h:19500:0:99999:7:::\n",
+        "alice:x:1000:\nstaff:x:2000:\n",
+    );
+
+    // usermod(8): -g takes a name or a GID, and the group must exist.
+    assert_eq!(run_with_prefix(&dir, &["-g", "staff", "alice"]), 0);
+    assert!(read_passwd(&dir).contains("alice:x:1000:2000:"));
+
+    assert_eq!(
+        run_with_prefix(&dir, &["-g", "12345", "alice"]),
+        6,
+        "a GID naming no group is exit 6"
+    );
+    assert_eq!(run_with_prefix(&dir, &["-g", "nosuch", "alice"]), 6);
+    assert!(
+        read_passwd(&dir).contains("alice:x:1000:2000:"),
+        "a failed -g changes nothing"
+    );
+}
+
+#[test]
+fn test_empty_group_list_clears_memberships() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "alice:x:1000:1000:Alice:/home/alice:/bin/sh\n",
+        "alice:$6$h:19500:0:99999:7:::\n",
+        "alice:x:1000:\nwheel:x:2000:alice\ndocker:x:2001:alice\n",
+    );
+
+    // usermod(8): an empty -G list removes every supplementary membership.
+    assert_eq!(run_with_prefix(&dir, &["-G", "", "alice"]), 0);
+    let group = read_group(&dir);
+    assert!(
+        group.contains("wheel:x:2000:\n") && group.contains("docker:x:2001:\n"),
+        "memberships should be cleared, got: {group}"
+    );
+}
+
+#[test]
+fn test_rename_with_groups_uses_the_new_login() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "alice:x:1000:1000:Alice:/home/alice:/bin/sh\n",
+        "alice:$6$h:19500:0:99999:7:::\n",
+        "alice:x:1000:\nwheel:x:2000:\n",
+    );
+    std::fs::write(dir.path().join("etc/gshadow"), "wheel:!::\n").unwrap();
+
+    assert_eq!(
+        run_with_prefix(&dir, &["-l", "bob", "-G", "wheel", "alice"]),
+        0
+    );
+    let group = read_group(&dir);
+    assert!(
+        group.contains("wheel:x:2000:bob"),
+        "the new login must be the member, got: {group}"
+    );
+    let gshadow = std::fs::read_to_string(dir.path().join("etc/gshadow")).unwrap();
+    assert!(
+        gshadow.contains("wheel:!::bob"),
+        "gshadow must follow the group file, got: {gshadow}"
+    );
+}

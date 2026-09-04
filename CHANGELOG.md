@@ -123,6 +123,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `usermod -g` takes a group name as well as a GID, and requires the group to
+  exist (exit 6). A numeric GID naming no group was written through, leaving a
+  primary group that does not exist (#242)
+- `usermod -G ""` clears every supplementary membership, as `usermod(8)`
+  documents, instead of reporting a group named `''` that does not exist;
+  `-G` accepts GIDs as well as names, `-a` requires `-G`, and `/etc/gshadow`
+  is kept in step with `/etc/group` on both `-G` and `-l` — leaving it behind
+  is what `grpck` reports as "members differ" (#242)
+- `usermod -l` combined with `-G` adds the **new** login to the groups; it
+  used to add the old one, which no longer names an account (#242)
+- `usermod -L` no longer prepends a second `!` to an already-locked password
+  (a single `-U` could not undo that), and `-U` refuses to leave an account
+  with no password at all instead of silently doing nothing (#242)
+- Group errors from `usermod` report the codes `usermod(8)` documents: 6 for a
+  group that does not exist, 10 for a failure to update the group file (#242)
 - `useradd` reads `/etc/default/useradd`, and `useradd -D` with a value now
   saves it there instead of printing the defaults and changing nothing.
   `HOME`, `SHELL` and `SKEL` from that file take precedence over login.defs,
