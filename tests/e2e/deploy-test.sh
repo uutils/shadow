@@ -699,6 +699,40 @@ test_aging_and_input() {
     userdel -r aging_user 2>/dev/null || true
 }
 
+# ── Audit logging ───────────────────────────────────────────────────
+
+test_audit_logging() {
+    section "Audit logging"
+
+    # The tools write their records straight to /dev/log rather than forking
+    # `logger` for each event, so the test needs a daemon listening there.
+    rsyslogd -n >/dev/null 2>&1 &
+    local rsyslog_pid=$!
+    sleep 2
+
+    if [ ! -S /dev/log ]; then
+        echo -e "  ${YELLOW}⊘${NC} no /dev/log socket, skipping"
+        kill "$rsyslog_pid" 2>/dev/null || true
+        return
+    fi
+
+    userdel -r audit_user 2>/dev/null || true
+    assert_ok "useradd -m audit_user" useradd -m audit_user
+    assert_ok "userdel -r audit_user" userdel -r audit_user
+    sleep 1
+
+    local log=/var/log/auth.log
+    [ -f "$log" ] || log=/var/log/syslog
+    assert_ok "syslog received the account creation" \
+        bash -c "grep -q 'op=ADD_USER.*acct=\"audit_user\".*res=success' $log"
+    assert_ok "syslog received the account deletion" \
+        bash -c "grep -q 'op=DEL_USER.*acct=\"audit_user\"' $log"
+    assert_ok "the record is tagged shadow-rs" \
+        bash -c "grep -q 'shadow-rs\[[0-9]*\]:.*op=ADD_USER' $log"
+
+    kill "$rsyslog_pid" 2>/dev/null || true
+}
+
 # ── nscd cache invalidation ────────────────────────────────────────
 
 test_nscd() {
@@ -809,6 +843,7 @@ main() {
     test_pam_auth
     test_self_service
     test_aging_and_input
+    test_audit_logging
     test_nscd
     test_landlock
     test_ansible

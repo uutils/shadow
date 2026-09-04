@@ -231,12 +231,15 @@ fn copy_selinux_label(from: &File, to: &File) {
     }
 }
 
-/// Atomic counter for unique temp file names across threads.
+/// Counter distinguishing successive temp files in one process.
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Generate a unique temporary file path in the same directory as the target.
 ///
-/// Uses PID + atomic counter to avoid collisions between threads.
+/// The PID separates concurrent invocations, and the counter separates
+/// successive writes within one of them: `usermod` rewrites four files in a
+/// row, and a name derived from the target alone would collide with a leftover
+/// from an earlier write in the same process.
 fn tmp_path_for(target: &Path) -> PathBuf {
     let file_name = target
         .file_name()

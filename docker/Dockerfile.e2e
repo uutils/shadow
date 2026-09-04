@@ -47,6 +47,7 @@ RUN chmod 4755 /usr/sbin/shadow-rs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     expect \
     nscd \
+    rsyslog \
     ansible-core \
     python3-passlib \
     procps \
