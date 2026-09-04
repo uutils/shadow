@@ -97,6 +97,31 @@ pub fn execv(path: &CStr, argv: &[&CStr]) -> io::Error {
     io::Error::last_os_error()
 }
 
+/// `execve(path, argv, envp)` — replace the process image with a chosen
+/// environment.
+///
+/// `execv` passes the caller's environment through, which is right for
+/// `newgrp` without `-`, where the man page says the current environment is
+/// kept. `newgrp -` must instead hand the shell a login environment, and
+/// `std::env::set_var` is `unsafe` (and process-global) in edition 2024, so
+/// the environment is built as data and passed here.
+///
+/// On success this never returns. On failure it returns the error.
+pub fn execve(path: &CStr, argv: &[&CStr], envp: &[&CStr]) -> io::Error {
+    let mut argv_ptrs: Vec<*const libc::c_char> = argv.iter().map(|s| s.as_ptr()).collect();
+    argv_ptrs.push(std::ptr::null());
+    let mut env_ptrs: Vec<*const libc::c_char> = envp.iter().map(|s| s.as_ptr()).collect();
+    env_ptrs.push(std::ptr::null());
+
+    // SAFETY: execve is a standard POSIX function. Both arrays are
+    // null-terminated and every pointer comes from a live CStr borrowed for
+    // the duration of the call.
+    unsafe {
+        libc::execve(path.as_ptr(), argv_ptrs.as_ptr(), env_ptrs.as_ptr());
+    }
+    io::Error::last_os_error()
+}
+
 // ---------------------------------------------------------------------------
 // Signal blocking (per-thread via libc sigprocmask)
 // ---------------------------------------------------------------------------

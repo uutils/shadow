@@ -23,7 +23,45 @@ use shadow_core::sysroot::SysRoot;
 use uucore::error::{UError, UResult};
 
 mod options {
-    pub const GROUP: &str = "group";
+    /// The `[-] [group]` operands, taken together so a leading `-` can be told
+    /// from a group name.
+    pub const OPERANDS: &str = "operands";
+}
+
+/// What the command line asked for.
+struct Operands<'a> {
+    /// `newgrp -`: reinitialize the environment as at login.
+    login: bool,
+    /// The target group, or `None` for the user's primary group.
+    group: Option<&'a str>,
+}
+
+/// Split `newgrp [-] [group]` into its two parts.
+///
+/// newgrp(1) spells the login form as a bare `-`, not as an option letter, and
+/// it may only come first. A second `-`, or anything after the group name, is
+/// a usage error rather than a group called `-`.
+fn parse_operands(operands: &[String]) -> Result<Operands<'_>, NewgrpError> {
+    let usage = || NewgrpError::Error("usage: newgrp [-] [group]".into());
+    match operands {
+        [] => Ok(Operands {
+            login: false,
+            group: None,
+        }),
+        [first] if first == "-" => Ok(Operands {
+            login: true,
+            group: None,
+        }),
+        [first] => Ok(Operands {
+            login: false,
+            group: Some(first.as_str()),
+        }),
+        [first, second] if first == "-" && second != "-" => Ok(Operands {
+            login: true,
+            group: Some(second.as_str()),
+        }),
+        _ => Err(usage()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -116,86 +154,14 @@ fn group_has_password(gshadow_path: &Path, group_name: &str) -> Option<String> {
     Some(entry.passwd.clone())
 }
 
-/// RAII guard that restores terminal echo on drop.
-struct EchoGuard {
-    tty: std::fs::File,
-    old_termios: rustix::termios::Termios,
-}
-
-impl EchoGuard {
-    /// Disable echo on the given tty file.
-    fn disable(tty: std::fs::File) -> Result<Self, NewgrpError> {
-        use std::os::unix::io::AsFd;
-
-        let old_termios = rustix::termios::tcgetattr(tty.as_fd())
-            .map_err(|e| NewgrpError::Error(format!("cannot get terminal attributes: {e}")))?;
-
-        let mut new_termios = old_termios.clone();
-        new_termios.local_modes &= !rustix::termios::LocalModes::ECHO;
-        rustix::termios::tcsetattr(
-            tty.as_fd(),
-            rustix::termios::OptionalActions::Now,
-            &new_termios,
-        )
-        .map_err(|e| NewgrpError::Error(format!("cannot disable echo: {e}")))?;
-
-        Ok(Self { tty, old_termios })
-    }
-}
-
-impl Drop for EchoGuard {
-    fn drop(&mut self) {
-        use std::os::unix::io::AsFd;
-        let _ = rustix::termios::tcsetattr(
-            self.tty.as_fd(),
-            rustix::termios::OptionalActions::Now,
-            &self.old_termios,
-        );
-    }
-}
-
-/// Read a password from `/dev/tty` with echo disabled.
+/// Read the group password, with echo off and interrupts blocked.
 ///
-/// The returned password is wrapped in `Zeroizing` to ensure it is
-/// scrubbed from memory when dropped.
+/// The shared helper is what keeps Ctrl-C at this prompt from leaving the
+/// terminal with echo disabled, and it falls back to stderr/stdin where there
+/// is no controlling terminal.
 fn read_password(prompt: &str) -> Result<zeroize::Zeroizing<String>, NewgrpError> {
-    use std::io::{BufRead, Write};
-
-    let tty = std::fs::File::options()
-        .read(true)
-        .write(true)
-        .open("/dev/tty")
-        .map_err(|e| NewgrpError::Error(format!("cannot open /dev/tty: {e}")))?;
-
-    // Write the prompt.
-    (&tty)
-        .write_all(prompt.as_bytes())
-        .map_err(|e| NewgrpError::Error(format!("cannot write prompt: {e}")))?;
-    (&tty)
-        .flush()
-        .map_err(|e| NewgrpError::Error(format!("cannot flush prompt: {e}")))?;
-
-    // Clone the tty handle: one for the guard (to restore echo), one for reading.
-    let tty_for_guard = tty
-        .try_clone()
-        .map_err(|e| NewgrpError::Error(format!("cannot clone tty handle: {e}")))?;
-
-    // Disable echo; restored automatically on drop.
-    let guard = EchoGuard::disable(tty_for_guard)?;
-
-    let mut buf = zeroize::Zeroizing::new(String::new());
-    let mut reader = std::io::BufReader::new(&tty);
-    reader
-        .read_line(&mut buf)
-        .map_err(|e| NewgrpError::Error(format!("cannot read password: {e}")))?;
-
-    // Echo was off, so print newline after the user presses Enter.
-    drop(guard);
-    let _ = (&tty).write_all(b"\n");
-
-    Ok(zeroize::Zeroizing::new(
-        buf.trim_end_matches('\n').to_string(),
-    ))
+    shadow_core::tty::read_password(prompt)
+        .map_err(|e| NewgrpError::Error(format!("cannot read the password: {e}")))
 }
 
 /// Verify a password against a crypt(3) hash.
@@ -213,10 +179,12 @@ fn verify_password(password: &str, hash: &str) -> Result<bool, NewgrpError> {
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    // newgrp execs a shell, so only suppress core dumps — do NOT raise
+    // newgrp execs a shell, so only suppress core dumps -- do NOT raise
     // RLIMIT_FSIZE as that would leak into the user's interactive session.
+    // The environment is deliberately not sanitized here either: without `-`,
+    // newgrp(1) keeps the caller's environment, and it hands that environment
+    // back to the caller's own uid, so there is nothing to protect it from.
     shadow_core::hardening::suppress_core_dumps();
-    let _clean_env = shadow_core::hardening::sanitized_env();
 
     let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 1)? else {
         return Ok(());
@@ -227,10 +195,18 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         .map_err(|e| NewgrpError::Error(e.to_string()))?;
     let user_gid = get_current_gid()?;
 
-    let group_name = matches.get_one::<String>(options::GROUP);
+    let operands: Vec<String> = matches
+        .get_many::<String>(options::OPERANDS)
+        .map(|v| v.cloned().collect())
+        .unwrap_or_default();
+    let Operands {
+        login,
+        group: group_name,
+    } = parse_operands(&operands)?;
 
     // Resolve the target GID.
     let target_gid = if let Some(gname) = group_name {
+        let gname = &gname.to_string();
         // Look up the group in /etc/group.
         let group_path = root.group_path();
         let groups = group::read_group_file(&group_path).map_err(|e| {
@@ -295,18 +271,66 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let shell_cstr = CString::new(shell.as_str())
         .map_err(|_| NewgrpError::Error("invalid shell path".into()))?;
 
-    // Build argv: the shell name prefixed with '-' to indicate a login shell,
-    // matching traditional newgrp behavior.
-    let shell_basename = Path::new(&shell)
+    let basename = Path::new(&shell)
         .file_name()
         .map_or_else(|| "sh".to_string(), |n| n.to_string_lossy().to_string());
-    let login_name = format!("-{shell_basename}");
-    let login_cstr = CString::new(login_name.as_str())
+
+    if !login {
+        // newgrp(1): without `-`, "the current environment, including current
+        // working directory, remains unchanged". A login shell would re-read
+        // the profile files in that unchanged environment on every `newgrp`,
+        // so argv[0] carries no leading dash and the environment is inherited.
+        let argv0 = CString::new(basename.as_str())
+            .map_err(|_| NewgrpError::Error("invalid shell name".into()))?;
+        let err = shadow_core::process::execv(&shell_cstr, &[&argv0]);
+        return Err(NewgrpError::Error(format!("cannot exec {shell}: {err}")).into());
+    }
+
+    // newgrp(1) with `-`: "the user's environment will be reinitialized as
+    // though the user had logged in". That means a login shell, the home
+    // directory as the working directory, and a login environment rather than
+    // whatever the previous shell was carrying.
+    let argv0 = CString::new(format!("-{basename}"))
         .map_err(|_| NewgrpError::Error("invalid shell name".into()))?;
 
-    // execv replaces the current process. If it fails, we return an error.
-    let err = shadow_core::process::execv(&shell_cstr, &[&login_cstr]);
+    let home = shadow_core::hardening::lookup_passwd_entry_by_uid(real_uid)
+        .map(|e| e.home)
+        .unwrap_or_default();
+    if !home.is_empty() {
+        // A missing or unreadable home is not fatal; login(1) falls back to /.
+        let _ = rustix::process::chdir(Path::new(&home));
+    }
+
+    let env = login_environment(&username, &home, &shell);
+    let env_cstrings: Vec<CString> = env
+        .into_iter()
+        .map(|kv| CString::new(kv).map_err(|_| NewgrpError::Error("invalid environment".into())))
+        .collect::<Result<_, _>>()?;
+    let env_refs: Vec<&std::ffi::CStr> = env_cstrings.iter().map(CString::as_c_str).collect();
+
+    let err = shadow_core::process::execve(&shell_cstr, &[&argv0], &env_refs);
     Err(NewgrpError::Error(format!("cannot exec {shell}: {err}")).into())
+}
+
+/// The environment a login shell is entitled to expect.
+///
+/// Everything else the caller was carrying is dropped, which is the whole
+/// point of `newgrp -`. `TERM` and the locale variables are kept because a
+/// login session inherits them from the terminal, not from the profile.
+fn login_environment(user: &str, home: &str, shell: &str) -> Vec<String> {
+    let mut env = vec![
+        format!("HOME={home}"),
+        format!("SHELL={shell}"),
+        format!("USER={user}"),
+        format!("LOGNAME={user}"),
+        "PATH=/usr/local/bin:/usr/bin:/bin".to_string(),
+    ];
+    for (k, v) in std::env::vars() {
+        if k == "TERM" || k == "LANG" || k.starts_with("LC_") {
+            env.push(format!("{k}={v}"));
+        }
+    }
+    env
 }
 
 /// Build the clap `Command` for `newgrp`.
@@ -317,7 +341,15 @@ pub fn uu_app() -> Command {
         .override_usage("newgrp [group]")
         .version(shadow_core::cli::VERSION)
         .after_help(shadow_core::cli::AFTER_HELP)
-        .arg(Arg::new(options::GROUP).help("Target group").index(1))
+        .arg(
+            Arg::new(options::OPERANDS)
+                .help("optional '-' to reinitialize the environment, then the target group")
+                .value_name("[-] [group]")
+                .num_args(0..=2)
+                // A bare '-' is an operand here, not an unknown option.
+                .allow_hyphen_values(true)
+                .index(1),
+        )
 }
 
 #[cfg(test)]
@@ -415,25 +447,90 @@ mod tests {
         assert!(!err.use_stderr());
     }
 
-    #[test]
-    fn test_group_arg_parses() {
-        let matches = uu_app()
-            .try_get_matches_from(["newgrp", "docker"])
-            .expect("should parse");
-        assert_eq!(
-            matches
-                .get_one::<String>(options::GROUP)
-                .map(String::as_str),
-            Some("docker")
-        );
+    // -----------------------------------------------------------------------
+    // Operand parsing: newgrp [-] [group]
+    // -----------------------------------------------------------------------
+
+    fn operands(cli: &[&str]) -> Vec<String> {
+        let mut full = vec!["newgrp".to_string()];
+        full.extend(cli.iter().map(|s| (*s).to_string()));
+        uu_app()
+            .try_get_matches_from(full)
+            .expect("should parse")
+            .get_many::<String>(options::OPERANDS)
+            .map(|v| v.cloned().collect())
+            .unwrap_or_default()
     }
 
     #[test]
-    fn test_no_group_arg_parses() {
-        let matches = uu_app()
-            .try_get_matches_from(["newgrp"])
-            .expect("should parse");
-        assert!(matches.get_one::<String>(options::GROUP).is_none());
+    fn test_no_operands_is_the_primary_group() {
+        let ops = operands(&[]);
+        let parsed = parse_operands(&ops).expect("should parse");
+        assert!(!parsed.login);
+        assert_eq!(parsed.group, None);
+    }
+
+    #[test]
+    fn test_group_alone() {
+        let ops = operands(&["docker"]);
+        let parsed = parse_operands(&ops).expect("should parse");
+        assert!(!parsed.login);
+        assert_eq!(parsed.group, Some("docker"));
+    }
+
+    /// A bare `-` is newgrp(1)'s login form, not an unknown option and not a
+    /// group named "-".
+    #[test]
+    fn test_dash_requests_a_login_environment() {
+        let ops = operands(&["-"]);
+        let parsed = parse_operands(&ops).expect("should parse");
+        assert!(parsed.login);
+        assert_eq!(parsed.group, None);
+
+        let ops = operands(&["-", "docker"]);
+        let parsed = parse_operands(&ops).expect("should parse");
+        assert!(parsed.login);
+        assert_eq!(parsed.group, Some("docker"));
+    }
+
+    /// `-` may only come first, and only once.
+    #[test]
+    fn test_misplaced_dash_is_a_usage_error() {
+        for cli in [vec!["docker", "-"], vec!["-", "-"]] {
+            let ops = operands(&cli);
+            assert!(
+                parse_operands(&ops).is_err(),
+                "{cli:?} should be a usage error"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Login environment
+    // -----------------------------------------------------------------------
+
+    /// `newgrp -` reinitializes the environment, so the shell must be given
+    /// the variables a login session defines and nothing the caller was
+    /// carrying.
+    #[test]
+    fn test_login_environment_is_a_login_session() {
+        let env = login_environment("alice", "/home/alice", "/bin/bash");
+        for expected in [
+            "HOME=/home/alice",
+            "SHELL=/bin/bash",
+            "USER=alice",
+            "LOGNAME=alice",
+        ] {
+            assert!(env.iter().any(|e| e == expected), "missing {expected}");
+        }
+        assert!(
+            env.iter().any(|e| e.starts_with("PATH=")),
+            "a login shell needs a PATH"
+        );
+        assert!(
+            !env.iter().any(|e| e.starts_with("LD_PRELOAD=")),
+            "the caller's environment must not be carried over"
+        );
     }
 
     // -----------------------------------------------------------------------
