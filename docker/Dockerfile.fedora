@@ -7,7 +7,8 @@
 # Note: Fedora has different PAM stack config and login.defs defaults than Debian.
 #       SELinux is enforcing, which affects file context on /etc/passwd, /etc/shadow.
 
-FROM fedora:latest
+# Pinned: see the note in Dockerfile.debian.
+FROM fedora:44
 
 RUN dnf install -y \
     gcc \
@@ -24,7 +25,6 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     --component clippy,rustfmt
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-RUN curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C /root/.cargo/bin
 
 # cargo-deny: pinned, checksum-verified prebuilt binary. The static musl build
 # runs on glibc too, so every image shares one asset. Installing the binary

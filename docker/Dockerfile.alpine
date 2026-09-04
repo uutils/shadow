@@ -7,7 +7,8 @@
 # Note: musl libc — different from glibc. Tests NSS/getpwent differences.
 #       No SELinux. Busybox shadow-utils may differ from GNU shadow-utils.
 
-FROM rust:alpine
+# Pinned: see the note in Dockerfile.debian.
+FROM rust:1.98-alpine3.23
 
 RUN apk add --no-cache \
     musl-dev \
@@ -18,8 +19,7 @@ RUN apk add --no-cache \
     bash \
     curl
 
-RUN rustup component add clippy rustfmt \
-    && curl -LsSf https://get.nexte.st/latest/linux-musl | tar zxf - -C /usr/local/cargo/bin
+RUN rustup component add clippy rustfmt
 
 # cargo-deny: pinned, checksum-verified prebuilt binary. The static musl build
 # runs on glibc too, so every image shares one asset. Installing the binary

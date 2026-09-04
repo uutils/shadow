@@ -6,7 +6,9 @@
 # Shadow-utils package: login + passwd
 # Note: Trixie is now the default Debian for the Rust Docker image.
 
-FROM rust:latest
+# Pinned: an unpinned tag lands a new toolchain on main with no PR signal,
+# and clippy gains lints between releases. Renovate proposes the bump.
+FROM rust:1.98-trixie
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpam0g-dev \
@@ -15,8 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-RUN rustup component add clippy rustfmt \
-    && curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C /usr/local/cargo/bin
+RUN rustup component add clippy rustfmt
 
 # cargo-deny: pinned, checksum-verified prebuilt binary. The static musl build
 # runs on glibc too, so every image shares one asset. Installing the binary
