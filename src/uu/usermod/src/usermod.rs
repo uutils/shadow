@@ -15,13 +15,13 @@ use clap::{Arg, ArgAction, Command};
 use uucore::error::{UError, UResult};
 
 use shadow_core::audit;
-use shadow_core::group::{self};
-use shadow_core::gshadow::{self};
-use shadow_core::lock::FileLock;
-use shadow_core::passwd::{self};
-use shadow_core::shadow::{self};
+use shadow_core::group::{self, GroupEntry};
+use shadow_core::gshadow::GshadowEntry;
+use shadow_core::passwd::PasswdEntry;
+use shadow_core::shadow::{self, ShadowEntry};
 use shadow_core::sysroot::SysRoot;
-use shadow_core::{atomic, nscd, validate};
+use shadow_core::transaction::{self, Commit, LockedFile};
+use shadow_core::{nscd, validate};
 
 mod options {
     pub const COMMENT: &str = "comment";
@@ -145,14 +145,13 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // Modify /etc/passwd.
     let group_path_for_lookup = root.group_path();
     let passwd_path = root.passwd_path();
-    let lock = FileLock::acquire(&passwd_path)
-        .map_err(|e| UsermodError::CantUpdate(format!("cannot lock: {e}")))?;
-
-    let (mut entries, passwd_layout) = passwd::read_passwd_with_layout(&passwd_path)
-        .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
+    // The transaction locks, then reads, and releases on every path out --
+    // including each early return below, where the file is left untouched.
+    let mut passwd_file = LockedFile::<PasswdEntry>::open(&passwd_path)
+        .map_err(|e| UsermodError::CantUpdate(format!("cannot open passwd: {e}")))?;
+    let entries = passwd_file.entries_mut();
 
     let Some(idx) = entries.iter().position(|e| e.name == *login) else {
-        drop(lock);
         return Err(UsermodError::UserNotFound(format!("user '{login}' does not exist")).into());
     };
 
@@ -164,7 +163,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // Check UID collision before mutating.
     if let Some(&uid) = matches.get_one::<u32>(options::UID) {
         if entries.iter().any(|e| e.uid == uid && e.name != *login) {
-            drop(lock);
             return Err(UsermodError::UidInUse(format!("UID {uid} already in use")).into());
         }
         entries[idx].uid = uid;
@@ -194,7 +192,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             groups.iter().find(|g| g.name == *group_arg).map(|g| g.gid)
         };
         let Some(gid) = resolved else {
-            drop(lock);
             return Err(
                 UsermodError::GroupNotFound(format!("group '{group_arg}' does not exist")).into(),
             );
@@ -211,7 +208,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             .iter()
             .any(|e| e.name == *new_name && e.name != *login)
         {
-            drop(lock);
             return Err(
                 UsermodError::NameInUse(format!("user '{new_name}' already exists")).into(),
             );
@@ -221,11 +217,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     let new_uid = entries[idx].uid;
 
-    atomic::atomic_write(&passwd_path, |f| {
-        passwd::write_passwd_with_layout(&entries, &passwd_layout, f)
-    })
-    .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
-    drop(lock);
+    passwd_file
+        .commit()
+        .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
 
     // Restore signals before potentially long-running recursive chown.
     drop(signals);
@@ -257,14 +251,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             || new_password.is_some()
             || login_changing)
     {
-        let slock = FileLock::acquire(&shadow_path)
-            .map_err(|e| UsermodError::CantUpdate(format!("cannot lock shadow: {e}")))?;
+        let mut shadow_file = LockedFile::<ShadowEntry>::open(&shadow_path)
+            .map_err(|e| UsermodError::CantUpdate(format!("cannot open shadow: {e}")))?;
 
-        let (mut se, shadow_layout) = shadow::read_shadow_with_layout(&shadow_path)
-            .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
-
-        let Some(s) = se.iter_mut().find(|e| e.name == *login) else {
-            drop(slock);
+        let Some(s) = shadow_file.find_mut(login) else {
             return Err(UsermodError::CantUpdate(format!(
                 "user '{login}' not found in shadow file"
             ))
@@ -277,7 +267,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             s.lock();
         }
         if do_unlock && !s.unlock() {
-            drop(slock);
             return Err(UsermodError::BadArgument(format!(
                 "unlocking '{login}' would leave the account without a password"
             ))
@@ -299,60 +288,46 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             s.name.clone_from(new_name);
         }
 
-        atomic::atomic_write(&shadow_path, |f| {
-            shadow::write_shadow_with_layout(&se, &shadow_layout, f)
-        })
-        .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
-        drop(slock);
+        shadow_file
+            .commit()
+            .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
     }
 
     // Rename user in group membership lists when --login changes the name.
     if let Some(new_name) = new_login {
         let group_path = root.group_path();
         if group_path.exists() {
-            let glock = FileLock::acquire(&group_path)
-                .map_err(|e| UsermodError::CantUpdate(format!("cannot lock group: {e}")))?;
+            let mut group_file = LockedFile::<GroupEntry>::open(&group_path)
+                .map_err(|e| UsermodError::CantUpdate(format!("cannot open group: {e}")))?;
 
-            let (mut ge, group_layout) = group::read_group_with_layout(&group_path)
-                .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
-
-            let mut changed = false;
-            for g in &mut ge {
+            for g in group_file.entries_mut() {
                 if let Some(m) = g.members.iter_mut().find(|m| **m == *login) {
                     m.clone_from(new_name);
-                    changed = true;
                 }
             }
 
-            // Mirror the rename in gshadow's member and admin lists.
+            // Mirror the rename in gshadow's member and admin lists. Leaving
+            // it behind is exactly what grpck reports as "members differ", so
+            // the two files are committed together.
+            let mut files: Vec<Box<dyn Commit>> = vec![Box::new(group_file)];
             let gshadow_path = root.gshadow_path();
-            if gshadow_path.exists()
-                && let Ok((mut gs, gs_layout)) = gshadow::read_gshadow_with_layout(&gshadow_path)
-            {
-                let mut gs_changed = false;
-                for g in &mut gs {
+            if gshadow_path.exists() {
+                let mut gshadow_file =
+                    LockedFile::<GshadowEntry>::open(&gshadow_path).map_err(|e| {
+                        UsermodError::CantUpdateGroup(format!("cannot open gshadow: {e}"))
+                    })?;
+                for g in gshadow_file.entries_mut() {
                     for m in g.members.iter_mut().chain(g.admins.iter_mut()) {
                         if *m == *login {
                             m.clone_from(new_name);
-                            gs_changed = true;
                         }
                     }
                 }
-                if gs_changed {
-                    atomic::atomic_write(&gshadow_path, |f| {
-                        gshadow::write_gshadow_with_layout(&gs, &gs_layout, f)
-                    })
-                    .map_err(|e| UsermodError::CantUpdateGroup(format!("{e}")))?;
-                }
+                files.push(Box::new(gshadow_file));
             }
 
-            if changed {
-                atomic::atomic_write(&group_path, |f| {
-                    group::write_group_with_layout(&ge, &group_layout, f)
-                })
-                .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
-            }
-            drop(glock);
+            transaction::commit_all(files)
+                .map_err(|e| UsermodError::CantUpdateGroup(format!("{e}")))?;
         }
     }
 
@@ -375,22 +350,19 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             // added a member that no longer exists.
             let member = new_login.unwrap_or(login);
 
-            let glock = FileLock::acquire(&group_path)
-                .map_err(|e| UsermodError::CantUpdateGroup(format!("cannot lock group: {e}")))?;
-
-            let (mut ge, group_layout) = group::read_group_with_layout(&group_path)
-                .map_err(|e| UsermodError::CantUpdateGroup(format!("{e}")))?;
+            let mut group_file = LockedFile::<GroupEntry>::open(&group_path)
+                .map_err(|e| UsermodError::CantUpdateGroup(format!("cannot open group: {e}")))?;
 
             // Validate every requested group first: -G takes names or GIDs,
             // and each must exist (usermod(8) exit 6).
             let mut wanted: Vec<String> = Vec::with_capacity(new_groups.len());
             for gname in &new_groups {
-                let found = ge
+                let found = group_file
+                    .entries()
                     .iter()
                     .find(|g| g.name == *gname || gname.parse::<u32>().is_ok_and(|id| g.gid == id))
                     .map(|g| g.name.clone());
                 let Some(name) = found else {
-                    drop(glock);
                     return Err(UsermodError::GroupNotFound(format!(
                         "group '{gname}' does not exist"
                     ))
@@ -400,57 +372,44 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             }
 
             if !append {
-                for g in &mut ge {
+                for g in group_file.entries_mut() {
                     g.members.retain(|m| m != login && m != member);
                 }
             }
             for gname in &wanted {
-                if let Some(g) = ge.iter_mut().find(|g| g.name == *gname)
+                if let Some(g) = group_file.find_mut(gname)
                     && !g.members.iter().any(|m| m == member)
                 {
                     g.members.push(member.clone());
                 }
             }
 
-            atomic::atomic_write(&group_path, |f| {
-                group::write_group_with_layout(&ge, &group_layout, f)
-            })
-            .map_err(|e| UsermodError::CantUpdateGroup(format!("{e}")))?;
-            drop(glock);
-
             // /etc/gshadow carries the same membership lists; leaving it
             // behind is exactly what grpck reports as "members differ".
+            let mut files: Vec<Box<dyn Commit>> = vec![Box::new(group_file)];
             let gshadow_path = root.gshadow_path();
             if gshadow_path.exists() {
-                let gshadow_guard = FileLock::acquire(&gshadow_path).map_err(|e| {
-                    UsermodError::CantUpdateGroup(format!("cannot lock gshadow: {e}"))
-                })?;
-                let (mut gs, gs_layout) = gshadow::read_gshadow_with_layout(&gshadow_path)
-                    .map_err(|e| UsermodError::CantUpdateGroup(format!("{e}")))?;
-                let mut gs_changed = false;
+                let mut gshadow_file =
+                    LockedFile::<GshadowEntry>::open(&gshadow_path).map_err(|e| {
+                        UsermodError::CantUpdateGroup(format!("cannot open gshadow: {e}"))
+                    })?;
                 if !append {
-                    for g in &mut gs {
-                        let before = g.members.len();
+                    for g in gshadow_file.entries_mut() {
                         g.members.retain(|m| m != login && m != member);
-                        gs_changed |= g.members.len() != before;
                     }
                 }
                 for gname in &wanted {
-                    if let Some(g) = gs.iter_mut().find(|g| g.name == *gname)
+                    if let Some(g) = gshadow_file.find_mut(gname)
                         && !g.members.iter().any(|m| m == member)
                     {
                         g.members.push(member.clone());
-                        gs_changed = true;
                     }
                 }
-                if gs_changed {
-                    atomic::atomic_write(&gshadow_path, |f| {
-                        gshadow::write_gshadow_with_layout(&gs, &gs_layout, f)
-                    })
-                    .map_err(|e| UsermodError::CantUpdateGroup(format!("{e}")))?;
-                }
-                drop(gshadow_guard);
+                files.push(Box::new(gshadow_file));
             }
+
+            transaction::commit_all(files)
+                .map_err(|e| UsermodError::CantUpdateGroup(format!("{e}")))?;
         }
     }
 

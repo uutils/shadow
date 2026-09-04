@@ -18,11 +18,11 @@ use std::path::{Path, PathBuf};
 use clap::{Arg, ArgAction, Command};
 
 use shadow_core::group::{self, GroupEntry};
-use shadow_core::lock::FileLock;
-use shadow_core::passwd::{self, PasswdEntry};
+use shadow_core::nscd;
+use shadow_core::passwd::PasswdEntry;
 use shadow_core::shadow::{self, ShadowEntry};
 use shadow_core::sysroot::SysRoot;
-use shadow_core::{atomic, nscd};
+use shadow_core::transaction::{self, Commit, LockedFile};
 
 use uucore::error::{UError, UResult};
 
@@ -260,55 +260,44 @@ fn sort_and_write(passwd_path: &Path, shadow_path: &Path, read_only: bool) -> UR
         return Ok(());
     }
 
-    let passwd_lock = FileLock::acquire(passwd_path)
-        .map_err(|e| PwckError::CantLock(format!("cannot lock {}: {e}", passwd_path.display())))?;
+    // The transaction re-reads under the lock: the entries checked above were
+    // read before it, so sorting those would overwrite anything that changed
+    // in between. The layout keeps comments, blank lines and NIS compat lines,
+    // each anchored to the entry it preceded, so a comment follows its
+    // account. A commit that would write the same bytes writes nothing.
+    let mut passwd_file = LockedFile::<PasswdEntry>::open(passwd_path)
+        .map_err(|e| PwckError::CantLock(format!("cannot open {}: {e}", passwd_path.display())))?;
+    passwd_file.entries_mut().sort_by_key(|e| e.uid);
+    let sorted_passwd = passwd_file.entries().to_vec();
 
-    // Re-read under the lock: the entries checked above were read before it,
-    // so sorting those would overwrite anything that changed in between. The
-    // layout keeps comments, blank lines and NIS compat lines, each anchored
-    // to the entry it preceded, so a comment follows its account.
-    let (mut sorted_passwd, passwd_layout) =
-        passwd::read_passwd_with_layout(passwd_path).map_err(|e| {
-            PwckError::CantUpdate(format!("cannot read {}: {e}", passwd_path.display()))
-        })?;
-    let original = sorted_passwd.clone();
-    sorted_passwd.sort_by_key(|e| e.uid);
-
-    if sorted_passwd == original {
-        drop(passwd_lock);
-        return Ok(());
-    }
-
-    atomic::atomic_write(passwd_path, |f| {
-        passwd::write_passwd_with_layout(&sorted_passwd, &passwd_layout, f)
-    })
-    // pwck(8) exit 6 is "can not sort"; this is the write that performs it.
-    .map_err(|e| PwckError::CantSort(format!("cannot sort {}: {e}", passwd_path.display())))?;
+    let mut files: Vec<Box<dyn Commit>> = vec![Box::new(passwd_file)];
 
     if shadow_path.exists() {
-        let shadow_lock = FileLock::acquire(shadow_path).map_err(|e| {
-            PwckError::CantLock(format!("cannot lock {}: {e}", shadow_path.display()))
+        let mut shadow_file = LockedFile::<ShadowEntry>::open(shadow_path).map_err(|e| {
+            PwckError::CantLock(format!("cannot open {}: {e}", shadow_path.display()))
         })?;
-
-        let (shadow_entries, shadow_layout) = shadow::read_shadow_with_layout(shadow_path)
-            .map_err(|e| {
-                PwckError::CantUpdate(format!("cannot read {}: {e}", shadow_path.display()))
-            })?;
-
-        if !shadow_entries.is_empty() {
-            let sorted_shadow = sort_shadow_by_passwd(&sorted_passwd, &shadow_entries);
-            atomic::atomic_write(shadow_path, |f| {
-                shadow::write_shadow_with_layout(&sorted_shadow, &shadow_layout, f)
-            })
-            .map_err(|e| {
-                PwckError::CantUpdate(format!("cannot update {}: {e}", shadow_path.display()))
-            })?;
+        if !shadow_file.entries().is_empty() {
+            let sorted = sort_shadow_by_passwd(&sorted_passwd, shadow_file.entries());
+            *shadow_file.entries_mut() = sorted;
         }
-
-        drop(shadow_lock);
+        files.push(Box::new(shadow_file));
     }
 
-    drop(passwd_lock);
+    // pwck(8) keeps two codes here: 6 is "can not sort" and 5 is "can not
+    // update the files". The error names the file it failed on, so the two
+    // stay distinct even though both files are written by one call.
+    transaction::commit_all(files).map_err(|e| {
+        let on_shadow = matches!(
+            &e,
+            shadow_core::error::ShadowError::IoPath(_, p) if p == shadow_path
+        );
+        if on_shadow {
+            PwckError::CantUpdate(format!("cannot update {}: {e}", shadow_path.display()))
+        } else {
+            PwckError::CantSort(format!("cannot sort {}: {e}", passwd_path.display()))
+        }
+    })?;
+
     nscd::invalidate_cache("passwd");
 
     Ok(())

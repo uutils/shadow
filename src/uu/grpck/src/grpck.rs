@@ -22,12 +22,11 @@ use std::path::{Path, PathBuf};
 use clap::{Arg, ArgAction, Command};
 use uucore::error::{UError, UResult};
 
-use shadow_core::atomic;
-use shadow_core::group::{self, GroupEntry};
+use shadow_core::group::GroupEntry;
 use shadow_core::gshadow::{self, GshadowEntry};
-use shadow_core::lock::FileLock;
 use shadow_core::nscd;
 use shadow_core::sysroot::SysRoot;
+use shadow_core::transaction::{self, Commit, LockedFile};
 
 mod options {
     pub const READ_ONLY: &str = "read-only";
@@ -297,54 +296,32 @@ fn check_group_gshadow_consistency(
 /// sort would require a significantly different parser that tracks raw
 /// lines alongside parsed entries. This matches GNU `grpck -s` behavior.
 fn sort_and_write(group_path: &Path, gshadow_path: &Path) -> UResult<()> {
-    let group_lock = FileLock::acquire(group_path)
-        .map_err(|e| GrpckError::CantLock(format!("cannot lock {}: {e}", group_path.display())))?;
+    // The transaction re-reads under the lock: the entries checked above were
+    // read before it. The layout keeps comments, blank lines and NIS compat
+    // lines, each anchored to the entry it preceded, so a comment follows its
+    // group. A commit that would write the same bytes writes nothing.
+    let mut group_file = LockedFile::<GroupEntry>::open(group_path)
+        .map_err(|e| GrpckError::CantLock(format!("cannot open {}: {e}", group_path.display())))?;
+    group_file.entries_mut().sort_by_key(|g| g.gid);
+    let sorted_groups = group_file.entries().to_vec();
 
-    // Re-read under the lock: the entries checked above were read before it.
-    // The layout keeps comments, blank lines and NIS compat lines, each
-    // anchored to the entry it preceded, so a comment follows its group.
-    let (mut sorted_groups, group_layout) =
-        group::read_group_with_layout(group_path).map_err(|e| {
-            GrpckError::CantUpdate(format!("cannot read {}: {e}", group_path.display()))
-        })?;
-    let original = sorted_groups.clone();
-    sorted_groups.sort_by_key(|g| g.gid);
-
-    if sorted_groups == original {
-        drop(group_lock);
-        return Ok(());
-    }
-
-    atomic::atomic_write(group_path, |f| {
-        group::write_group_with_layout(&sorted_groups, &group_layout, f)
-    })
-    .map_err(|e| GrpckError::CantUpdate(format!("cannot update {}: {e}", group_path.display())))?;
-
-    // Sort gshadow to match the new group order.
+    // group and gshadow are written together: a sort that reordered one and
+    // not the other is exactly the "members differ" state grpck reports.
+    let mut files: Vec<Box<dyn Commit>> = vec![Box::new(group_file)];
     if gshadow_path.exists() {
-        let gs_lock = FileLock::acquire(gshadow_path).map_err(|e| {
-            GrpckError::CantLock(format!("cannot lock {}: {e}", gshadow_path.display()))
+        let mut gshadow_file = LockedFile::<GshadowEntry>::open(gshadow_path).map_err(|e| {
+            GrpckError::CantLock(format!("cannot open {}: {e}", gshadow_path.display()))
         })?;
-
-        let (gshadow_entries, gshadow_layout) = gshadow::read_gshadow_with_layout(gshadow_path)
-            .map_err(|e| {
-                GrpckError::CantUpdate(format!("cannot read {}: {e}", gshadow_path.display()))
-            })?;
-
-        if !gshadow_entries.is_empty() {
-            let sorted_gshadow = sort_gshadow_by_group(&sorted_groups, &gshadow_entries);
-            atomic::atomic_write(gshadow_path, |f| {
-                gshadow::write_gshadow_with_layout(&sorted_gshadow, &gshadow_layout, f)
-            })
-            .map_err(|e| {
-                GrpckError::CantUpdate(format!("cannot update {}: {e}", gshadow_path.display()))
-            })?;
+        if !gshadow_file.entries().is_empty() {
+            let sorted = sort_gshadow_by_group(&sorted_groups, gshadow_file.entries());
+            *gshadow_file.entries_mut() = sorted;
         }
-
-        drop(gs_lock);
+        files.push(Box::new(gshadow_file));
     }
 
-    drop(group_lock);
+    transaction::commit_all(files)
+        .map_err(|e| GrpckError::CantUpdate(format!("cannot update: {e}")))?;
+
     nscd::invalidate_cache("group");
 
     Ok(())

@@ -22,6 +22,7 @@
 //! lock file behind, which every later run has to wait out.
 
 use std::fmt::Display;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -54,6 +55,9 @@ pub struct LockedFile<T> {
     lock: Option<FileLock>,
     entries: Vec<T>,
     layout: Layout,
+    /// The file's contents as read, so a commit that would write the same
+    /// bytes can write nothing at all.
+    original: Vec<u8>,
     /// Restores the signal mask when the transaction ends, whichever way.
     _signals: SignalBlocker,
 }
@@ -75,11 +79,13 @@ impl<T: Record> LockedFile<T> {
         let lock = FileLock::acquire(path)?;
         // On any failure from here on, `lock` drops and the file is untouched.
         let (entries, layout) = records::read_with_layout::<T>(path)?;
+        let original = std::fs::read(path).unwrap_or_default();
         Ok(Self {
             path: path.to_owned(),
             lock: Some(lock),
             entries,
             layout,
+            original,
             _signals: signals,
         })
     }
@@ -107,11 +113,13 @@ impl<T: Record> LockedFile<T> {
         } else {
             (Vec::new(), Layout::default())
         };
+        let original = std::fs::read(path).unwrap_or_default();
         Ok(Self {
             path: path.to_owned(),
             lock: Some(lock),
             entries,
             layout,
+            original,
             _signals: signals,
         })
     }
@@ -155,25 +163,8 @@ impl<T: Record> LockedFile<T> {
     /// Returns `ShadowError::Validation` if an entry holds a value that would
     /// corrupt the record -- in which case nothing is written -- and
     /// `ShadowError::IoPath` if the write fails.
-    pub fn commit(mut self) -> Result<(), ShadowError> {
-        let entries = &self.entries;
-        let layout = &self.layout;
-        let result = atomic::atomic_write(&self.path, |mut file| {
-            // `write_with_layout` takes `&mut W`, and `atomic_write` hands over
-            // a `&mut dyn Write`; borrowing it again makes `W` the fat pointer,
-            // which is sized, rather than the unsized `dyn Write`.
-            records::write_with_layout(entries, layout, &mut file, |entry, w| {
-                entry.validate_fields()?;
-                writeln!(w, "{entry}")?;
-                Ok(())
-            })
-        });
-
-        // Release before returning either way: an error path that held the
-        // lock until the process exited would block every concurrent tool for
-        // as long as the caller took to report it.
-        drop(self.lock.take());
-        result
+    pub fn commit(self) -> Result<(), ShadowError> {
+        self.commit_or_remove_if(false)
     }
 
     /// Like [`LockedFile::commit`], but remove the file when nothing is left
@@ -189,26 +180,68 @@ impl<T: Record> LockedFile<T> {
     /// state anyone wants to reach by accident; those use `commit`.
     ///
     /// The file is only removed when it carried no comments or other preserved
-    /// lines either. A file that is all comments still says something.
+    /// lines either. A file that is all comments still says something. A file
+    /// that was already empty is left alone, since nothing changed.
     ///
     /// # Errors
     ///
     /// As [`LockedFile::commit`], plus `ShadowError::IoPath` if the file
     /// cannot be removed.
-    pub fn commit_or_remove(mut self) -> Result<(), ShadowError> {
-        if !self.entries.is_empty() || !self.layout.is_empty() {
-            return self.commit();
-        }
-        let result = std::fs::remove_file(&self.path).or_else(|e| {
-            // Already gone is the state we wanted.
-            if e.kind() == std::io::ErrorKind::NotFound {
-                Ok(())
-            } else {
-                Err(ShadowError::IoPath(e, self.path.clone()))
-            }
-        });
+    pub fn commit_or_remove(self) -> Result<(), ShadowError> {
+        self.commit_or_remove_if(true)
+    }
+
+    /// Render the entries, validating each one.
+    ///
+    /// Into a buffer rather than straight to the file, so a value that would
+    /// corrupt a record is caught while the file is still untouched.
+    fn render(&self) -> Result<Vec<u8>, ShadowError> {
+        let mut out = Vec::with_capacity(self.original.len());
+        records::write_with_layout(&self.entries, &self.layout, &mut out, |entry, w| {
+            entry.validate_fields()?;
+            writeln!(w, "{entry}")?;
+            Ok(())
+        })?;
+        Ok(out)
+    }
+
+    /// Write the file, optionally unlinking it when nothing is left.
+    fn commit_or_remove_if(mut self, remove_when_empty: bool) -> Result<(), ShadowError> {
+        let result = self.write(remove_when_empty);
+        // Release either way: an error path that held the lock until the
+        // process exited would block every concurrent tool for as long as the
+        // caller took to report it.
         drop(self.lock.take());
         result
+    }
+
+    fn write(&mut self, remove_when_empty: bool) -> Result<(), ShadowError> {
+        let rendered = self.render()?;
+
+        // Nothing changed: do not rewrite the file. A rewrite is not free --
+        // it replaces the inode, moves the mtime, and for an unchanged empty
+        // file it would fail outright, since the atomic writer refuses to
+        // produce a zero-length file. Tools that only *might* change a file
+        // used to guard every write with their own "did anything change" flag.
+        if rendered == self.original {
+            return Ok(());
+        }
+
+        if remove_when_empty && self.entries.is_empty() && self.layout.is_empty() {
+            return std::fs::remove_file(&self.path).or_else(|e| {
+                // Already gone is the state we wanted.
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    Ok(())
+                } else {
+                    Err(ShadowError::IoPath(e, self.path.clone()))
+                }
+            });
+        }
+
+        atomic::atomic_write(&self.path, |file| {
+            file.write_all(&rendered)?;
+            Ok(())
+        })
     }
 
     /// Release the lock and discard the changes.
@@ -225,6 +258,81 @@ impl<T> Drop for LockedFile<T> {
         // `commit` has already taken it; this covers every other exit.
         drop(self.lock.take());
     }
+}
+
+// ---------------------------------------------------------------------------
+// Committing several files together
+// ---------------------------------------------------------------------------
+
+/// A locked file that can be validated and committed without the caller
+/// knowing which record type it holds.
+///
+/// [`commit_all`] needs a heterogeneous list -- `/etc/group` and
+/// `/etc/gshadow` hold different types and have to be written together -- so
+/// the operations it needs are behind a trait object.
+pub trait Commit {
+    /// Everything that can be checked before any file is touched.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ShadowError::Validation` naming the offending field.
+    fn validate(&self) -> Result<(), ShadowError>;
+
+    /// Write this file and release its lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ShadowError::IoPath` if the write fails.
+    fn commit_boxed(self: Box<Self>) -> Result<(), ShadowError>;
+
+    /// The file this will write.
+    fn path(&self) -> &Path;
+}
+
+impl<T: Record> Commit for LockedFile<T> {
+    fn validate(&self) -> Result<(), ShadowError> {
+        self.render().map(|_| ())
+    }
+
+    fn commit_boxed(self: Box<Self>) -> Result<(), ShadowError> {
+        (*self).commit_or_remove_if(false)
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// Commit several locked files, or none of them.
+///
+/// `/etc/group` and `/etc/gshadow` have to agree: a group present in one and
+/// absent from the other is a broken system, and every tool that touches a
+/// group touches both. Committing them one at a time leaves a window in which
+/// they disagree, and a failure in the second makes that permanent.
+///
+/// **Every file is validated before any is written.** That closes the failure
+/// this actually hits: a value that would corrupt a record is rejected while
+/// nothing has been touched, instead of after the first file is already on
+/// disk. A genuine I/O error partway through the writes can still leave the
+/// set half applied; there is no journal, and a rollback that can itself fail
+/// would not be an improvement. The window is reduced to the writes
+/// themselves, each of which is a rename onto an already-fsynced file.
+///
+/// The locks are all held until the last write finishes, so no other process
+/// sees the intermediate state.
+///
+/// # Errors
+///
+/// Returns the first `ShadowError` from validation -- with nothing written --
+/// or from a write, naming the file it failed on.
+pub fn commit_all(files: Vec<Box<dyn Commit>>) -> Result<(), ShadowError> {
+    for file in &files {
+        file.validate()?;
+    }
+    for file in files {
+        file.commit_boxed()?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -343,5 +451,127 @@ mod tests {
     fn test_a_malformed_file_fails_to_open() {
         let (_d, path) = temp_passwd("alice:x:1000:1000::/home/alice:/bin/sh\nnot-a-record\n");
         assert!(LockedFile::<PasswdEntry>::open(&path).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // Committing several files together
+    // -----------------------------------------------------------------------
+
+    use crate::group::GroupEntry;
+
+    fn temp_group(dir: &Path, content: &str) -> PathBuf {
+        let path = dir.join("group");
+        std::fs::write(&path, content).expect("write");
+        path
+    }
+
+    const GROUP: &str = "staff:x:1000:alice\nadmin:x:1001:\n";
+
+    #[test]
+    fn test_commit_all_writes_every_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let passwd_path = dir.path().join("passwd");
+        std::fs::write(&passwd_path, TWO).expect("write");
+        let group_path = temp_group(dir.path(), GROUP);
+
+        let mut passwd = LockedFile::<PasswdEntry>::open(&passwd_path).expect("open passwd");
+        let mut group = LockedFile::<GroupEntry>::open(&group_path).expect("open group");
+        passwd.find_mut("alice").expect("alice").shell = "/bin/bash".into();
+        group.find_mut("staff").expect("staff").members = vec!["alice".into(), "bob".into()];
+
+        commit_all(vec![Box::new(passwd), Box::new(group)]).expect("commit_all");
+
+        assert!(
+            std::fs::read_to_string(&passwd_path)
+                .expect("read")
+                .contains("/bin/bash")
+        );
+        assert!(
+            std::fs::read_to_string(&group_path)
+                .expect("read")
+                .contains("staff:x:1000:alice,bob")
+        );
+    }
+
+    /// The failure this exists to prevent: a value that would corrupt one file
+    /// must stop the set before any of it is written, not after the first file
+    /// is already on disk.
+    #[test]
+    fn test_a_bad_value_in_the_second_file_writes_neither() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let passwd_path = dir.path().join("passwd");
+        std::fs::write(&passwd_path, TWO).expect("write");
+        let group_path = temp_group(dir.path(), GROUP);
+
+        let mut passwd = LockedFile::<PasswdEntry>::open(&passwd_path).expect("open passwd");
+        let mut group = LockedFile::<GroupEntry>::open(&group_path).expect("open group");
+        passwd.find_mut("alice").expect("alice").shell = "/bin/bash".into();
+        // A separator in a group name would shift every following field.
+        group.find_mut("admin").expect("admin").name = "ad:min".into();
+
+        assert!(commit_all(vec![Box::new(passwd), Box::new(group)]).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&passwd_path).expect("read"),
+            TWO,
+            "the first file was written even though the second was invalid"
+        );
+        assert_eq!(std::fs::read_to_string(&group_path).expect("read"), GROUP);
+    }
+
+    /// And the locks are released, so the next transaction can start.
+    #[test]
+    fn test_commit_all_releases_every_lock() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let passwd_path = dir.path().join("passwd");
+        std::fs::write(&passwd_path, TWO).expect("write");
+        let group_path = temp_group(dir.path(), GROUP);
+
+        let passwd = LockedFile::<PasswdEntry>::open(&passwd_path).expect("open passwd");
+        let group = LockedFile::<GroupEntry>::open(&group_path).expect("open group");
+        commit_all(vec![Box::new(passwd), Box::new(group)]).expect("commit_all");
+
+        LockedFile::<PasswdEntry>::open(&passwd_path).expect("passwd lock is free");
+        LockedFile::<GroupEntry>::open(&group_path).expect("group lock is free");
+    }
+
+    /// A commit that would write the same bytes writes nothing: the inode is
+    /// not replaced and the mtime does not move. Tools that only *might*
+    /// change a file used to carry their own "did anything change" flag, and
+    /// an unchanged empty file would fail outright, since the atomic writer
+    /// refuses zero length.
+    #[test]
+    fn test_an_unchanged_commit_does_not_rewrite_the_file() {
+        use std::os::unix::fs::MetadataExt;
+
+        let (_d, path) = temp_passwd(TWO);
+        let before = std::fs::metadata(&path).expect("stat").ino();
+
+        LockedFile::<PasswdEntry>::open(&path)
+            .expect("open")
+            .commit()
+            .expect("commit");
+
+        assert_eq!(
+            std::fs::metadata(&path).expect("stat").ino(),
+            before,
+            "the file was rewritten even though nothing changed"
+        );
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), TWO);
+    }
+
+    /// The same holds for an empty file, which is where it matters: writing it
+    /// would fail, and the callers that touch `/etc/gshadow` only sometimes
+    /// change it.
+    #[test]
+    fn test_committing_an_unchanged_empty_file_succeeds() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("gshadow");
+        std::fs::write(&path, "").expect("write");
+
+        LockedFile::<crate::gshadow::GshadowEntry>::open(&path)
+            .expect("open")
+            .commit()
+            .expect("an unchanged empty file must not be an error");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "");
     }
 }

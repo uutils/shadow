@@ -15,13 +15,13 @@ use clap::{Arg, ArgAction, Command};
 use uucore::error::{UError, UResult};
 
 use shadow_core::audit;
-use shadow_core::group::{self};
-use shadow_core::gshadow::{self};
-use shadow_core::lock::FileLock;
+use shadow_core::group::GroupEntry;
+use shadow_core::gshadow::GshadowEntry;
+use shadow_core::nscd;
 use shadow_core::passwd::{self, PasswdEntry};
 use shadow_core::shadow::ShadowEntry;
 use shadow_core::sysroot::SysRoot;
-use shadow_core::{atomic, nscd};
+use shadow_core::transaction::{self, Commit, LockedFile, Record};
 
 mod options {
     pub const FORCE: &str = "force";
@@ -351,123 +351,66 @@ fn safe_remove_home(
 // Helpers
 // ---------------------------------------------------------------------------
 
-trait HasName {
-    fn name(&self) -> &str;
-}
-
-impl HasName for PasswdEntry {
-    fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-impl HasName for ShadowEntry {
-    fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-/// Remove an entry by name from a file (passwd or shadow format).
+/// Remove an entry by name from a record file.
+///
+/// This used to be a hand-rolled line filter with its own idea of which lines
+/// were comments, next to the parser that already knows. The transaction locks
+/// first, parses properly, and puts the preserved lines back where they were.
 fn remove_entry_from_file<T>(path: &Path, login: &str, file_label: &str) -> Result<(), String>
 where
-    T: std::str::FromStr + std::fmt::Display + HasName,
-    T::Err: std::fmt::Display,
+    T: Record,
 {
-    let lock = FileLock::acquire(path).map_err(|e| format!("cannot lock {file_label}: {e}"))?;
+    let mut file =
+        LockedFile::<T>::open(path).map_err(|e| format!("cannot open {file_label}: {e}"))?;
 
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-
-    let mut found = false;
-    let mut kept_lines = Vec::new();
-
-    for line in content.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            kept_lines.push(line.to_string());
-            continue;
-        }
-
-        if let Ok(entry) = line.parse::<T>()
-            && entry.name() == login
-        {
-            found = true;
-            continue; // skip this entry
-        }
-        kept_lines.push(line.to_string());
-    }
-
-    if !found {
-        drop(lock);
+    let before = file.entries().len();
+    file.entries_mut().retain(|e| e.name() != login);
+    if file.entries().len() == before {
+        // Dropping releases the lock with the file untouched.
         return Err(format!("user '{login}' does not exist in {file_label}"));
     }
 
-    atomic::atomic_write(path, |f| {
-        for line in &kept_lines {
-            writeln!(f, "{line}")?;
-        }
-        Ok(())
-    })
-    .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-
-    drop(lock);
-    Ok(())
+    file.commit()
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 /// Remove a username from all group membership lists in /etc/group.
 fn remove_from_group_members(path: &Path, login: &str) -> Result<(), String> {
-    let lock = FileLock::acquire(path).map_err(|e| format!("cannot lock group file: {e}"))?;
-
-    let (mut entries, layout) = group::read_group_with_layout(path)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let mut file =
+        LockedFile::<GroupEntry>::open(path).map_err(|e| format!("cannot open group file: {e}"))?;
 
     let mut changed = false;
-    for entry in &mut entries {
+    for entry in file.entries_mut() {
         let before = entry.members.len();
         entry.members.retain(|m| m != login);
-        if entry.members.len() != before {
-            changed = true;
-        }
+        changed |= entry.members.len() != before;
     }
 
-    if changed {
-        atomic::atomic_write(path, |f| {
-            group::write_group_with_layout(&entries, &layout, f)
-        })
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    if !changed {
+        return Ok(());
     }
-
-    drop(lock);
-    Ok(())
+    file.commit()
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 /// Remove a username from all gshadow membership and admin lists.
 fn remove_from_gshadow_members(path: &Path, login: &str) -> Result<(), String> {
-    let lock = FileLock::acquire(path).map_err(|e| format!("cannot lock gshadow file: {e}"))?;
-
-    let (mut entries, layout) = gshadow::read_gshadow_with_layout(path)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let mut file = LockedFile::<GshadowEntry>::open(path)
+        .map_err(|e| format!("cannot open gshadow file: {e}"))?;
 
     let mut changed = false;
-    for entry in &mut entries {
-        let before_m = entry.members.len();
-        let before_a = entry.admins.len();
+    for entry in file.entries_mut() {
+        let before = (entry.members.len(), entry.admins.len());
         entry.members.retain(|m| m != login);
         entry.admins.retain(|a| a != login);
-        if entry.members.len() != before_m || entry.admins.len() != before_a {
-            changed = true;
-        }
+        changed |= (entry.members.len(), entry.admins.len()) != before;
     }
 
-    if changed {
-        atomic::atomic_write(path, |f| {
-            gshadow::write_gshadow_with_layout(&entries, &layout, f)
-        })
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    if !changed {
+        return Ok(());
     }
-
-    drop(lock);
-    Ok(())
+    file.commit()
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 /// Remove the user's private group — the group named after the login that
@@ -489,19 +432,19 @@ fn remove_user_private_group(
         return Ok(());
     }
 
-    let group_lock =
-        FileLock::acquire(&group_path).map_err(|e| format!("cannot lock group file: {e}"))?;
-    let (mut entries, group_layout) = group::read_group_with_layout(&group_path)
-        .map_err(|e| format!("cannot read group: {e}"))?;
+    // Every early return below drops the transaction, releasing the lock with
+    // the file untouched.
+    let mut groups = LockedFile::<GroupEntry>::open(&group_path)
+        .map_err(|e| format!("cannot open group file: {e}"))?;
 
-    let Some(idx) = entries.iter().position(|g| g.name == login) else {
+    let Some(idx) = groups.entries().iter().position(|g| g.name == login) else {
         return Ok(());
     };
     // Keep it if other users still belong to it.
-    if !entries[idx].members.is_empty() {
+    if !groups.entries()[idx].members.is_empty() {
         return Ok(());
     }
-    let gid = entries[idx].gid;
+    let gid = groups.entries()[idx].gid;
     // Keep it if it is a private group whose GID is not the user's primary
     // one (then it is not really this user's), or another user's primary
     // group, unless forced.
@@ -512,28 +455,24 @@ fn remove_user_private_group(
         return Ok(());
     }
 
-    entries.remove(idx);
-    write_group_or_empty(&group_path, &entries, &group_layout)
-        .map_err(|e| format!("cannot write group: {e}"))?;
-    drop(group_lock);
+    groups.entries_mut().remove(idx);
 
-    // Mirror the removal in gshadow.
+    // The group and its gshadow row are removed together: a group in one file
+    // and not the other is a broken system, and validating both before writing
+    // either keeps a bad value from leaving them out of step.
     let gshadow_path = root.gshadow_path();
+    let mut files: Vec<Box<dyn Commit>> = vec![Box::new(groups)];
     if gshadow_path.exists() {
-        let gs_lock =
-            FileLock::acquire(&gshadow_path).map_err(|e| format!("cannot lock gshadow: {e}"))?;
-        if let Ok((mut gs, gshadow_layout)) = gshadow::read_gshadow_with_layout(&gshadow_path) {
-            let before = gs.len();
-            gs.retain(|g| g.name != login);
-            if gs.len() != before {
-                write_gshadow_or_empty(&gshadow_path, &gs, &gshadow_layout)
-                    .map_err(|e| format!("cannot write gshadow: {e}"))?;
-            }
+        let mut gshadow = LockedFile::<GshadowEntry>::open(&gshadow_path)
+            .map_err(|e| format!("cannot open gshadow: {e}"))?;
+        let before = gshadow.entries().len();
+        gshadow.entries_mut().retain(|g| g.name != login);
+        if gshadow.entries().len() != before {
+            files.push(Box::new(gshadow));
         }
-        drop(gs_lock);
     }
 
-    Ok(())
+    transaction::commit_all(files).map_err(|e| format!("cannot write: {e}"))
 }
 
 /// Remove every subordinate-ID row owned by `login` from a subuid/subgid file.
@@ -547,53 +486,15 @@ fn remove_subid_rows(path: &Path, login: &str) {
     if !path.exists() {
         return;
     }
-    let Ok(lock) = FileLock::acquire(path) else {
+    let Ok(mut file) = LockedFile::<subid::SubIdEntry>::open(path) else {
         return;
     };
-    if let Ok((mut entries, layout)) = subid::read_subid_with_layout(path) {
-        let before = entries.len();
-        entries.retain(|e| e.name != login);
-        if entries.len() != before {
-            if entries.is_empty() && layout.is_empty() {
-                let _ = std::fs::remove_file(path);
-            } else {
-                let _ = atomic::atomic_write(path, |f| {
-                    subid::write_subid_with_layout(&entries, &layout, f)
-                });
-            }
-        }
-    }
-    drop(lock);
-}
-
-/// Write group entries, unlinking the file instead if the result is empty
-/// (the atomic writer refuses a zero-length file, but an empty group file is
-/// valid — and only reached in a fully torn-down `--prefix` tree).
-fn write_group_or_empty(
-    path: &Path,
-    entries: &[group::GroupEntry],
-    layout: &group::Layout,
-) -> Result<(), shadow_core::error::ShadowError> {
-    if entries.is_empty() && layout.is_empty() {
-        let _ = std::fs::remove_file(path);
-        Ok(())
-    } else {
-        atomic::atomic_write(path, |f| group::write_group_with_layout(entries, layout, f))
-    }
-}
-
-fn write_gshadow_or_empty(
-    path: &Path,
-    entries: &[gshadow::GshadowEntry],
-    layout: &gshadow::Layout,
-) -> Result<(), shadow_core::error::ShadowError> {
-    if entries.is_empty() && layout.is_empty() {
-        let _ = std::fs::remove_file(path);
-        Ok(())
-    } else {
-        atomic::atomic_write(path, |f| {
-            gshadow::write_gshadow_with_layout(entries, layout, f)
-        })
+    let before = file.entries().len();
+    file.entries_mut().retain(|e| e.name != login);
+    if file.entries().len() != before {
+        // An absent subid file means "no ranges", so the last row going leaves
+        // nothing to write.
+        let _ = file.commit_or_remove();
     }
 }
 

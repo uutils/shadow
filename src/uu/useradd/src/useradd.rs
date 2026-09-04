@@ -19,17 +19,16 @@ use std::path::Path;
 
 use clap::{Arg, ArgAction, Command};
 
-use shadow_core::atomic;
 use shadow_core::audit;
-use shadow_core::group::{self, GroupEntry};
-use shadow_core::gshadow::{self, GshadowEntry};
-use shadow_core::lock::FileLock;
+use shadow_core::group::GroupEntry;
+use shadow_core::gshadow::GshadowEntry;
 use shadow_core::login_defs::{self, LoginDefs};
 use shadow_core::nscd;
-use shadow_core::passwd::{self, PasswdEntry};
-use shadow_core::shadow::{self, ShadowEntry};
+use shadow_core::passwd::PasswdEntry;
+use shadow_core::shadow::ShadowEntry;
 use shadow_core::skel;
 use shadow_core::sysroot::SysRoot;
+use shadow_core::transaction::{self, Commit, LockedFile};
 use shadow_core::uid_alloc;
 use shadow_core::validate;
 
@@ -556,23 +555,32 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     let signals = shadow_core::hardening::SignalBlocker::block_critical()
         .map_err(|e| UseraddError::CannotUpdatePasswd(format!("cannot block signals: {e}")))?;
 
-    // Acquire locks BEFORE reading so concurrent useradd cannot
-    // silently overwrite entries added between our read and write.
+    // Each transaction locks before reading, so a concurrent useradd cannot
+    // silently overwrite an entry added between our read and our write. They
+    // are opened in the project's lock order: passwd, then group, then
+    // gshadow. Every early return below drops them, releasing the locks with
+    // the files untouched.
     let passwd_path = opts.root.passwd_path();
-    let passwd_lock = FileLock::acquire(&passwd_path)
-        .map_err(|e| UseraddError::CannotUpdatePasswd(format!("cannot lock passwd: {e}")))?;
-
     let group_path = opts.root.group_path();
-    let group_lock = FileLock::acquire(&group_path)
-        .map_err(|e| UseraddError::CannotUpdateGroup(format!("cannot lock group: {e}")))?;
+    let gshadow_path = opts.root.gshadow_path();
 
-    // Step 3: Read passwd under lock and check username not already in use.
-    let (passwd_entries, passwd_layout) = passwd::read_passwd_with_layout(&passwd_path)
-        .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
+    let mut passwd_file = LockedFile::<PasswdEntry>::open(&passwd_path)
+        .map_err(|e| UseraddError::CannotUpdatePasswd(format!("cannot open passwd: {e}")))?;
+    let mut group_file = LockedFile::<GroupEntry>::open(&group_path)
+        .map_err(|e| UseraddError::CannotUpdateGroup(format!("cannot open group: {e}")))?;
+    // A fresh --prefix tree may carry no gshadow; useradd does not create one.
+    let mut gshadow_file = if gshadow_path.exists() {
+        Some(
+            LockedFile::<GshadowEntry>::open(&gshadow_path).map_err(|e| {
+                UseraddError::CannotUpdateGroup(format!("cannot open gshadow: {e}"))
+            })?,
+        )
+    } else {
+        None
+    };
 
-    if passwd_entries.iter().any(|e| e.name == opts.login) {
-        drop(group_lock);
-        drop(passwd_lock);
+    // Step 3: Check the username is not already in use.
+    if passwd_file.find(&opts.login).is_some() {
         return Err(
             UseraddError::UsernameInUse(format!("user '{}' already exists", opts.login)).into(),
         );
@@ -587,34 +595,19 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     // Step 5: Determine UID. A prefixed run manages another system's files, so
     // the local name service is not consulted for it.
     let scope = uid_alloc::Scope::for_prefix(opts.root.is_prefixed());
-    let uid = determine_uid(opts, &passwd_entries, &defs, scope)?;
-
-    // Step 6: Read group entries under lock (needed for GID resolution and
-    // user group creation).
-    let (mut group_entries, group_layout) = group::read_group_with_layout(&group_path)
-        .map_err(|e| UseraddError::CannotUpdateGroup(format!("{e}")))?;
+    let uid = determine_uid(opts, passwd_file.entries(), &defs, scope)?;
 
     // Step 7: Determine primary GID.
-    let (gid, new_group) = determine_gid(opts, uid, &group_entries, &defs, scope)?;
-
-    // Step 8: Read gshadow entries.
-    let gshadow_path = opts.root.gshadow_path();
-    let (mut gshadow_entries, gshadow_layout) = if gshadow_path.exists() {
-        gshadow::read_gshadow_with_layout(&gshadow_path)
-            .map_err(|e| UseraddError::CannotUpdateGroup(format!("{e}")))?
-    } else {
-        (Vec::new(), gshadow::Layout::default())
-    };
+    let (gid, new_group) = determine_gid(opts, uid, group_file.entries(), &defs, scope)?;
 
     // Step 9: Validate supplementary groups exist.
     for grp_name in &opts.groups {
         // -G takes the same forms as -g: a group name or a GID.
-        let known = group_entries
+        let known = group_file
+            .entries()
             .iter()
             .any(|g| g.name == *grp_name || grp_name.parse::<u32>().is_ok_and(|id| g.gid == id));
         if !known {
-            drop(group_lock);
-            drop(passwd_lock);
             return Err(
                 UseraddError::GroupNotExist(format!("group '{grp_name}' does not exist")).into(),
             );
@@ -635,29 +628,26 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     });
 
     // -------------------------------------------------------------------
-    // Begin mutations. From here, partial state is left on failure
-    // (matching GNU behavior). Locks are held throughout.
+    // Begin mutations. Nothing is written until every file has been changed
+    // in memory and validated, so a value that would corrupt one of them
+    // cannot leave the account half created.
     // -------------------------------------------------------------------
 
-    // Step 11: Create user group if needed (group lock already held).
+    // Step 11: Create the user group if needed.
     if let Some(ref new_grp) = new_group {
-        write_new_group(&group_path, &mut group_entries, &group_layout, new_grp)?;
-        if gshadow_path.exists() {
-            // Acquire gshadow lock — group.lock does NOT protect gshadow.
-            let _gs_lock = FileLock::acquire(&gshadow_path).map_err(|e| {
-                UseraddError::CannotUpdateGroup(format!("cannot lock gshadow: {e}"))
-            })?;
-            write_new_gshadow(
-                &gshadow_path,
-                &mut gshadow_entries,
-                &gshadow_layout,
-                new_grp,
-            )?;
+        group_file.entries_mut().push(new_grp.clone());
+        if let Some(gshadow_file) = gshadow_file.as_mut() {
+            gshadow_file.entries_mut().push(GshadowEntry {
+                name: new_grp.name.clone(),
+                passwd: "!".to_string(),
+                admins: Vec::new(),
+                members: Vec::new(),
+            });
         }
     }
 
-    // Step 12: Write /etc/passwd entry (lock already held).
-    let passwd_entry = PasswdEntry {
+    // Step 12: Add the /etc/passwd entry.
+    passwd_file.entries_mut().push(PasswdEntry {
         name: opts.login.clone(),
         passwd: "x".to_string(),
         uid,
@@ -665,8 +655,13 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
         gecos: opts.comment.clone(),
         home: home_dir.clone(),
         shell: opts.shell.clone(),
-    };
-    write_passwd_entry(&passwd_path, &passwd_entries, &passwd_layout, &passwd_entry)?;
+    });
+
+    let mut files: Vec<Box<dyn Commit>> = vec![Box::new(passwd_file), Box::new(group_file)];
+    if let Some(gshadow_file) = gshadow_file {
+        files.push(Box::new(gshadow_file));
+    }
+    transaction::commit_all(files).map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
 
     // Step 13: Write /etc/shadow entry (passwd+group locks still held).
     let shadow_path = opts.root.shadow_path();
@@ -700,11 +695,10 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     };
     write_shadow_entry(&shadow_path, &shadow_entry)?;
 
-    // Release locks and signal blocker now that passwd, group, and shadow writes are complete.
-    // Subsequent steps (subid, supplementary groups, home creation) are individually
-    // crash-safe and may be long-running, so signals should be interruptible.
-    drop(group_lock);
-    drop(passwd_lock);
+    // The transactions above released their locks when they committed.
+    // Subsequent steps (subid, supplementary groups, home creation) are
+    // individually crash-safe and may be long-running, so signals become
+    // interruptible again here.
     drop(signals);
 
     // Step 14: Allocate subordinate UID/GID ranges for rootless containers.
@@ -885,90 +879,17 @@ fn resolve_group(gid_arg: &str, group_entries: &[GroupEntry]) -> Result<u32, Use
 // File writers
 // ---------------------------------------------------------------------------
 
-/// Append a new group entry to `/etc/group`.
+/// Append a new shadow entry to `/etc/shadow`.
 ///
-/// Caller must hold the group file lock.
-fn write_new_group(
-    group_path: &Path,
-    group_entries: &mut Vec<GroupEntry>,
-    layout: &group::Layout,
-    new_group: &GroupEntry,
-) -> UResult<()> {
-    group_entries.push(new_group.clone());
-
-    atomic::atomic_write(group_path, |f| {
-        group::write_group_with_layout(group_entries, layout, f)
-    })
-    .map_err(|e| UseraddError::CannotUpdateGroup(format!("{e}")))?;
-
-    Ok(())
-}
-
-/// Append a new gshadow entry to `/etc/gshadow`.
-///
-/// Caller must hold the gshadow file lock (or the group file lock
-/// if gshadow is protected by the same lock scheme).
-fn write_new_gshadow(
-    gshadow_path: &Path,
-    gshadow_entries: &mut Vec<GshadowEntry>,
-    layout: &gshadow::Layout,
-    new_group: &GroupEntry,
-) -> UResult<()> {
-    gshadow_entries.push(GshadowEntry {
-        name: new_group.name.clone(),
-        passwd: "!".to_string(),
-        admins: Vec::new(),
-        members: Vec::new(),
-    });
-
-    atomic::atomic_write(gshadow_path, |f| {
-        gshadow::write_gshadow_with_layout(gshadow_entries, layout, f)
-    })
-    .map_err(|e| UseraddError::CannotUpdateGroup(format!("{e}")))?;
-
-    Ok(())
-}
-
-/// Append a new passwd entry to `/etc/passwd`.
-///
-/// Caller must hold the passwd file lock.
-fn write_passwd_entry(
-    passwd_path: &Path,
-    existing: &[PasswdEntry],
-    layout: &passwd::Layout,
-    new_entry: &PasswdEntry,
-) -> UResult<()> {
-    let mut entries: Vec<PasswdEntry> = existing.to_vec();
-    entries.push(new_entry.clone());
-
-    atomic::atomic_write(passwd_path, |f| {
-        passwd::write_passwd_with_layout(&entries, layout, f)
-    })
-    .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
-
-    Ok(())
-}
-
-/// Append a new shadow entry to `/etc/shadow` with proper locking.
+/// A shadow file that does not exist yet is created: a fresh `--prefix` tree
+/// carries none.
 fn write_shadow_entry(shadow_path: &Path, new_entry: &ShadowEntry) -> UResult<()> {
-    let _lock = FileLock::acquire(shadow_path)
+    let mut shadow = LockedFile::<ShadowEntry>::open_or_empty(shadow_path)
         .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
-
-    // Read existing entries; if the file does not exist, start fresh.
-    let (mut entries, layout) = if shadow_path.exists() {
-        shadow::read_shadow_with_layout(shadow_path)
-            .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?
-    } else {
-        (Vec::new(), shadow::Layout::default())
-    };
-
-    entries.push(new_entry.clone());
-
-    atomic::atomic_write(shadow_path, |f| {
-        shadow::write_shadow_with_layout(&entries, &layout, f)
-    })
-    .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
-
+    shadow.entries_mut().push(new_entry.clone());
+    shadow
+        .commit()
+        .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
     Ok(())
 }
 
@@ -990,13 +911,10 @@ fn add_to_supplementary_groups(
     group_path: &Path,
     gshadow_path: &Path,
 ) -> UResult<()> {
-    let _lock = FileLock::acquire(group_path)
+    let mut groups = LockedFile::<GroupEntry>::open(group_path)
         .map_err(|e| UseraddError::CannotUpdateGroup(format!("{e}")))?;
 
-    let (mut entries, layout) = group::read_group_with_layout(group_path)
-        .map_err(|e| UseraddError::CannotUpdateGroup(format!("{e}")))?;
-
-    for entry in &mut entries {
+    for entry in groups.entries_mut() {
         if group_requested(&opts.groups, &entry.name, entry.gid)
             && !entry.members.contains(&opts.login)
         {
@@ -1004,32 +922,23 @@ fn add_to_supplementary_groups(
         }
     }
 
-    atomic::atomic_write(group_path, |f| {
-        group::write_group_with_layout(&entries, &layout, f)
-    })
-    .map_err(|e| UseraddError::CannotUpdateGroup(format!("{e}")))?;
-
-    // Also update gshadow if it exists.
+    // group and gshadow carry the same membership lists, so they are written
+    // together: a member in one and not the other is what grpck reports as
+    // "members differ".
+    let mut files: Vec<Box<dyn Commit>> = vec![Box::new(groups)];
     if gshadow_path.exists() {
-        let _gs_lock = FileLock::acquire(gshadow_path)
+        let mut gshadow = LockedFile::<GshadowEntry>::open(gshadow_path)
             .map_err(|e| UseraddError::CannotUpdateGroup(format!("{e}")))?;
-
-        let (mut gs_entries, gs_layout) = gshadow::read_gshadow_with_layout(gshadow_path)
-            .map_err(|e| UseraddError::CannotUpdateGroup(format!("{e}")))?;
-
-        for entry in &mut gs_entries {
+        for entry in gshadow.entries_mut() {
             if gs_group_requested(&opts.groups, &entry.name) && !entry.members.contains(&opts.login)
             {
                 entry.members.push(opts.login.clone());
             }
         }
-
-        atomic::atomic_write(gshadow_path, |f| {
-            gshadow::write_gshadow_with_layout(&gs_entries, &gs_layout, f)
-        })
-        .map_err(|e| UseraddError::CannotUpdateGroup(format!("{e}")))?;
+        files.push(Box::new(gshadow));
     }
 
+    transaction::commit_all(files).map_err(|e| UseraddError::CannotUpdateGroup(format!("{e}")))?;
     Ok(())
 }
 
@@ -1042,51 +951,36 @@ fn add_to_supplementary_groups(
 /// Skips the write if the user already has an entry in the file.
 /// Uses file locking and atomic writes for crash safety.
 fn append_subid_entry(path: &Path, name: &str, count: u64) -> UResult<()> {
-    use shadow_core::subid::{self, SubIdEntry};
+    use shadow_core::subid::SubIdEntry;
 
-    let lock = FileLock::acquire(path).map_err(|e| {
-        UseraddError::CannotUpdatePasswd(format!("cannot lock {}: {e}", path.display()))
+    let mut file = LockedFile::<SubIdEntry>::open(path).map_err(|e| {
+        uucore::show_error!("warning: cannot open {}: {e}", path.display());
+        UseraddError::CannotUpdatePasswd(format!("cannot open {}: {e}", path.display()))
     })?;
 
-    let (mut entries, layout) = match subid::read_subid_with_layout(path) {
-        Ok(e) => e,
-        Err(e) => {
-            uucore::show_error!("warning: cannot read {}: {e}", path.display());
-            return Err(UseraddError::CannotUpdatePasswd(format!(
-                "cannot read {}: {e}",
-                path.display()
-            ))
-            .into());
-        }
-    };
-
     // Don't add a duplicate entry.
-    if entries.iter().any(|e| e.name == name) {
-        drop(lock);
+    if file.entries().iter().any(|e| e.name == name) {
         return Ok(());
     }
 
     // Find next available range by starting after the highest existing end.
     // Clamp to at least 100_000 even if existing entries are below that threshold.
-    let start = entries
+    let start = file
+        .entries()
         .iter()
         .map(|e| e.start.saturating_add(e.count))
         .max()
         .unwrap_or(100_000)
         .max(100_000);
 
-    entries.push(SubIdEntry {
+    file.entries_mut().push(SubIdEntry {
         name: name.to_string(),
         start,
         count,
     });
 
-    atomic::atomic_write(path, |f| {
-        subid::write_subid_with_layout(&entries, &layout, f)
-    })
-    .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
-
-    drop(lock);
+    file.commit()
+        .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
     Ok(())
 }
 
@@ -1884,6 +1778,8 @@ mod tests {
         (dir, root)
     }
 
+    use shadow_core::{group, gshadow, passwd, shadow};
+
     /// Skip tests that require root privileges.
     fn skip_unless_root() -> bool {
         !rustix::process::geteuid().is_root()
@@ -1899,14 +1795,12 @@ mod tests {
 
         let defs = LoginDefs::load(&root.login_defs_path()).expect("defs");
 
-        let (passwd_entries, passwd_layout) =
-            passwd::read_passwd_with_layout(&root.passwd_path()).expect("passwd");
-        let _group_entries = group::read_group_file(&root.group_path()).expect("group");
+        let mut passwd_file = LockedFile::<PasswdEntry>::open(&root.passwd_path()).expect("passwd");
 
         // Allocate UID.
         let (uid_min, uid_max) = uid_alloc::uid_range(&defs, false);
         let uid = uid_alloc::next_uid(
-            &passwd_entries,
+            passwd_file.entries(),
             uid_min,
             uid_max,
             uid_alloc::Scope::FilesOnly,
@@ -1915,7 +1809,7 @@ mod tests {
         assert_eq!(uid, 1000);
 
         // Create passwd entry.
-        let new_entry = PasswdEntry {
+        passwd_file.entries_mut().push(PasswdEntry {
             name: "testuser".into(),
             passwd: "x".into(),
             uid,
@@ -1923,15 +1817,8 @@ mod tests {
             gecos: "Test User".into(),
             home: "/home/testuser".into(),
             shell: "/bin/bash".into(),
-        };
-
-        write_passwd_entry(
-            &root.passwd_path(),
-            &passwd_entries,
-            &passwd_layout,
-            &new_entry,
-        )
-        .expect("write passwd");
+        });
+        passwd_file.commit().expect("write passwd");
 
         // Verify.
         let updated = passwd::read_passwd_file(&root.passwd_path()).expect("re-read");
@@ -1949,33 +1836,25 @@ mod tests {
 
         let (_dir, root) = setup_test_root();
 
-        let (mut group_entries, group_layout) =
-            group::read_group_with_layout(&root.group_path()).expect("group");
-        let (mut gshadow_entries, gshadow_layout) =
-            gshadow::read_gshadow_with_layout(&root.gshadow_path()).expect("gshadow");
+        let mut group_file = LockedFile::<GroupEntry>::open(&root.group_path()).expect("group");
+        let mut gshadow_file =
+            LockedFile::<GshadowEntry>::open(&root.gshadow_path()).expect("gshadow");
 
-        // Create user group.
-        let new_group = GroupEntry {
+        // Create the user group in both files, committed together.
+        group_file.entries_mut().push(GroupEntry {
             name: "newuser".into(),
             passwd: "x".into(),
             gid: 1000,
             members: Vec::new(),
-        };
-
-        write_new_group(
-            &root.group_path(),
-            &mut group_entries,
-            &group_layout,
-            &new_group,
-        )
-        .expect("write group");
-        write_new_gshadow(
-            &root.gshadow_path(),
-            &mut gshadow_entries,
-            &gshadow_layout,
-            &new_group,
-        )
-        .expect("write gshadow");
+        });
+        gshadow_file.entries_mut().push(GshadowEntry {
+            name: "newuser".into(),
+            passwd: "!".into(),
+            admins: Vec::new(),
+            members: Vec::new(),
+        });
+        transaction::commit_all(vec![Box::new(group_file), Box::new(gshadow_file)])
+            .expect("write group and gshadow");
 
         // Verify group.
         let updated_groups = group::read_group_file(&root.group_path()).expect("re-read");
@@ -2026,21 +1905,14 @@ mod tests {
         let (_dir, root) = setup_test_root();
 
         // Add a "wheel" group.
-        let (mut group_entries, group_layout) =
-            group::read_group_with_layout(&root.group_path()).expect("group");
-        let wheel = GroupEntry {
+        let mut group_file = LockedFile::<GroupEntry>::open(&root.group_path()).expect("group");
+        group_file.entries_mut().push(GroupEntry {
             name: "wheel".into(),
             passwd: "x".into(),
             gid: 10,
             members: Vec::new(),
-        };
-        write_new_group(
-            &root.group_path(),
-            &mut group_entries,
-            &group_layout,
-            &wheel,
-        )
-        .expect("add wheel");
+        });
+        group_file.commit().expect("add wheel");
 
         // Now add "testuser" to "wheel" and "users".
         let opts = UseraddOptions {

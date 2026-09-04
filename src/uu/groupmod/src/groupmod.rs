@@ -14,14 +14,13 @@ use std::path::Path;
 use clap::{Arg, ArgAction, Command};
 use uucore::error::{UError, UResult};
 
-use shadow_core::atomic;
 use shadow_core::audit;
-use shadow_core::group::{self};
-use shadow_core::gshadow::{self};
-use shadow_core::lock::FileLock;
+use shadow_core::group::GroupEntry;
+use shadow_core::gshadow::GshadowEntry;
 use shadow_core::nscd;
-use shadow_core::passwd;
+use shadow_core::passwd::PasswdEntry;
 use shadow_core::sysroot::SysRoot;
+use shadow_core::transaction::{self, Commit, LockedFile};
 
 mod options {
     pub const GROUP: &str = "GROUP";
@@ -149,36 +148,42 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         })
         .transpose()?;
 
-    // Block signals for the duration of the critical section so a SIGINT
-    // between lock acquisition and atomic_write cannot leave stale lock files.
-    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
-        .map_err(|e| GroupmodError::CantUpdate(format!("cannot block signals: {e}")))?;
-
-    // Lock order across the tools is passwd < group < gshadow < shadow, so
-    // take the passwd lock first when -g will need it (see below), never after
-    // group. This keeps the ordering acyclic with useradd/usermod.
+    // Lock order across the tools is passwd < group < gshadow < shadow, so the
+    // files are opened in that order and never in another. This keeps the
+    // ordering acyclic with useradd and usermod. Each transaction blocks
+    // signals for its lifetime and releases its lock on every path out.
     let group_path = root.group_path();
     let passwd_path = root.passwd_path();
-    // Only the -g path touches passwd, and only if it exists (a --prefix tree
-    // may not carry one). Guarded like the gshadow write below.
-    let update_passwd = parsed_gid.is_some() && passwd_path.exists();
-    let passwd_lock = if update_passwd {
-        Some(FileLock::acquire(&passwd_path).map_err(|e| {
-            GroupmodError::CantUpdate(format!("cannot lock {}: {e}", passwd_path.display()))
-        })?)
+    let gshadow_path = root.gshadow_path();
+
+    let cant_update = |path: &std::path::Path| {
+        let display = path.display().to_string();
+        move |e: shadow_core::error::ShadowError| {
+            GroupmodError::CantUpdate(format!("cannot open {display}: {e}"))
+        }
+    };
+
+    // Only the -g path touches passwd, and only if it exists: a --prefix tree
+    // may not carry one.
+    let mut passwd = if parsed_gid.is_some() && passwd_path.exists() {
+        Some(LockedFile::<PasswdEntry>::open(&passwd_path).map_err(cant_update(&passwd_path))?)
     } else {
         None
     };
 
-    let group_lock = FileLock::acquire(&group_path).map_err(|e| {
-        GroupmodError::CantUpdate(format!("cannot lock {}: {e}", group_path.display()))
-    })?;
+    let mut groups =
+        LockedFile::<GroupEntry>::open(&group_path).map_err(cant_update(&group_path))?;
 
-    let (mut entries, group_layout) = group::read_group_with_layout(&group_path).map_err(|e| {
-        GroupmodError::CantUpdate(format!("cannot read {}: {e}", group_path.display()))
-    })?;
+    // gshadow is only touched by a rename or a password change.
+    let touches_gshadow = new_name.is_some() || new_password.is_some();
+    let mut gshadow = if gshadow_path.exists() && touches_gshadow {
+        Some(LockedFile::<GshadowEntry>::open(&gshadow_path).map_err(cant_update(&gshadow_path))?)
+    } else {
+        None
+    };
 
     // Find the target group.
+    let entries = groups.entries_mut();
     let idx = entries
         .iter()
         .position(|g| g.name == *group_name)
@@ -195,7 +200,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 .iter()
                 .any(|g| g.gid == gid && g.name != *group_name)
         {
-            drop(group_lock);
             return Err(GroupmodError::GidInUse(format!("GID '{gid}' already exists")).into());
         }
         entries[idx].gid = gid;
@@ -207,7 +211,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             .iter()
             .any(|g| g.name == *name && g.name != *group_name)
         {
-            drop(group_lock);
             return Err(GroupmodError::NameInUse(format!("group '{name}' already exists")).into());
         }
         entries[idx].name.clone_from(name);
@@ -235,98 +238,50 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         }
     }
 
-    let modified_gid = entries[idx].gid;
-
-    // Write /etc/group.
-    atomic::atomic_write(&group_path, |f| {
-        group::write_group_with_layout(&entries, &group_layout, f)
-    })
-    .map_err(|e| {
-        GroupmodError::CantUpdate(format!("cannot write {}: {e}", group_path.display()))
-    })?;
-
-    // groupmod(8): "Users who use the group as their primary group are updated
-    // to keep the group as their primary group." Do it while we still hold the
-    // passwd lock we took above, then release group then passwd.
-    if let Some(new_gid_val) = parsed_gid
-        && new_gid_val != old_gid
-        && update_passwd
-    {
-        let (mut pw_entries, passwd_layout) = passwd::read_passwd_with_layout(&passwd_path)
-            .map_err(|e| {
-                GroupmodError::CantUpdate(format!("cannot read {}: {e}", passwd_path.display()))
-            })?;
-        let mut changed = false;
-        for e in &mut pw_entries {
-            if e.gid == old_gid {
-                e.gid = new_gid_val;
-                changed = true;
-            }
-        }
-        if changed {
-            atomic::atomic_write(&passwd_path, |f| {
-                passwd::write_passwd_with_layout(&pw_entries, &passwd_layout, f)
-            })
-            .map_err(|e| {
-                GroupmodError::CantUpdate(format!("cannot write {}: {e}", passwd_path.display()))
-            })?;
-        }
-    }
-
-    drop(group_lock);
-    drop(passwd_lock);
-
-    // Update /etc/gshadow.
-    let gshadow_path = root.gshadow_path();
     // Without a gshadow file the password belongs in the group file, which is
     // where a system with no gshadow keeps it; otherwise -p was a silent no-op.
-    if !gshadow_path.exists()
+    if gshadow.is_none()
         && let Some(pw) = new_password
     {
-        let (mut regroup, layout) = group::read_group_with_layout(&group_path).map_err(|e| {
-            GroupmodError::CantUpdate(format!("cannot read {}: {e}", group_path.display()))
-        })?;
-        if let Some(g) = regroup
-            .iter_mut()
-            .find(|g| g.name == *new_name.unwrap_or(group_name))
-        {
-            g.passwd.clone_from(pw);
-        }
-        atomic::atomic_write(&group_path, |f| {
-            group::write_group_with_layout(&regroup, &layout, f)
-        })
-        .map_err(|e| {
-            GroupmodError::CantUpdate(format!("cannot write {}: {e}", group_path.display()))
-        })?;
+        entries[idx].passwd.clone_from(pw);
     }
-    if gshadow_path.exists() && (new_name.is_some() || new_password.is_some()) {
-        let gs_lock = FileLock::acquire(&gshadow_path).map_err(|e| {
-            GroupmodError::CantUpdate(format!("cannot lock {}: {e}", gshadow_path.display()))
-        })?;
 
-        let (mut gs_entries, gshadow_layout) = gshadow::read_gshadow_with_layout(&gshadow_path)
-            .map_err(|e| {
-                GroupmodError::CantUpdate(format!("cannot read {}: {e}", gshadow_path.display()))
-            })?;
+    let modified_gid = entries[idx].gid;
 
-        if let Some(gs) = gs_entries.iter_mut().find(|g| g.name == *group_name) {
-            if let Some(name) = new_name {
-                gs.name.clone_from(name);
-            }
-            if let Some(pw) = new_password {
-                gs.passwd.clone_from(pw);
+    // groupmod(8): "Users who use the group as their primary group are updated
+    // to keep the group as their primary group."
+    if let Some(new_gid_val) = parsed_gid
+        && new_gid_val != old_gid
+        && let Some(passwd) = passwd.as_mut()
+    {
+        for e in passwd.entries_mut() {
+            if e.gid == old_gid {
+                e.gid = new_gid_val;
             }
         }
-
-        atomic::atomic_write(&gshadow_path, |f| {
-            gshadow::write_gshadow_with_layout(&gs_entries, &gshadow_layout, f)
-        })
-        .map_err(|e| {
-            GroupmodError::CantUpdate(format!("cannot write {}: {e}", gshadow_path.display()))
-        })?;
-
-        drop(gs_lock);
     }
+
+    if let Some(gs) = gshadow.as_mut().and_then(|f| f.find_mut(group_name)) {
+        if let Some(name) = new_name {
+            gs.name.clone_from(name);
+        }
+        if let Some(pw) = new_password {
+            gs.passwd.clone_from(pw);
+        }
+    }
+
+    // Every file is validated before any is written, so a value that would
+    // corrupt one of them cannot leave the set half applied.
+    let mut files: Vec<Box<dyn Commit>> = Vec::new();
+    if let Some(passwd) = passwd {
+        files.push(Box::new(passwd));
+    }
+    files.push(Box::new(groups));
+    if let Some(gshadow) = gshadow {
+        files.push(Box::new(gshadow));
+    }
+    transaction::commit_all(files)
+        .map_err(|e| GroupmodError::CantUpdate(format!("cannot write: {e}")))?;
 
     nscd::invalidate_cache("group");
 
