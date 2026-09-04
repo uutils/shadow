@@ -16,14 +16,19 @@ BASE="${1:-origin/main}"
 status=0
 
 # Tool names that must not appear in commit messages, PR text, or added lines.
-# Word-boundaried to avoid matching unrelated substrings.
-TOOLS='claude|copilot|anthropic|chatgpt|openai|gemini|codex|llm|ai[ -]generated|ai[ -]assisted'
+# Genuinely word-boundaried: without \b, "llm" matched "smallmap" and
+# "anthropic" matched "philanthropic", failing unrelated changes. The trailing
+# alternatives carry their own boundaries.
+TOOLS='\b(claude|copilot|anthropic|chatgpt|openai|gemini|codex|llms?)\b'
+TOOLS="$TOOLS"'|\bgpt-?[0-9o]|\bai[ -](generated|assisted)\b|co-authored-by:.*\[bot\]'
 
-# Paths deliberately exempt from the content scan:
+# Paths deliberately exempt from the added-lines scan:
 #   - this script (it necessarily contains the patterns)
 #   - the clean-room audit records, which must disclose their own methodology
 #     to be usable as compliance evidence
-EXEMPT='^(\.github/scripts/no-ai-traces\.sh|\.github/workflows/ci\.yml|docs/CLEAN-ROOM-AUDIT-.*\.md)$'
+#   - CONTRIBUTING.md, which states the project's policy on these tools and so
+#     must be able to name them
+EXEMPT='^(\.github/scripts/no-ai-traces\.sh|CONTRIBUTING\.md|docs/CLEAN-ROOM-AUDIT-.*\.md)$'
 
 fail() { printf '::error::%s\n' "$1"; status=1; }
 
