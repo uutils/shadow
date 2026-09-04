@@ -19,7 +19,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Need the base branch to diff against.
           fetch-depth: 0
@@ -36,15 +36,15 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: cargo fmt --all --check
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # pre-installed tools: https://github.com/actions/runner-images/blob/main/images/ubuntu/
       - run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libselinux1-dev libaudit-dev libcrypt-dev
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -56,8 +56,8 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libselinux1-dev libaudit-dev libcrypt-dev
       - run: cargo test --workspace
       # Release binaries enable `pam`, and the feature changes behaviour rather
@@ -69,8 +69,8 @@ jobs:
     name: Static musl archive
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # The exact command the release pipeline runs (extra-artifacts in
       # dist-workspace.toml), so a tag is never the first place a musl
       # regression shows up. No apt packages: the musl sysroot is self-contained.
@@ -120,9 +120,9 @@ jobs:
     name: MSRV (1.94.0)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.94.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@fef00d40025f7fd8f1ec759cbbb0f577ddfc3133 # 1.94.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libselinux1-dev libaudit-dev libcrypt-dev
       - run: cargo check --workspace --all-targets
 
@@ -130,14 +130,14 @@ jobs:
     name: Cargo Deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
 
   e2e:
     name: End-to-end (install, setuid, PAM, Landlock)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # A real deployment: release build with pam, `make install-multicall`
       # over GNU's binaries, then the deployment test suite as root and as an
       # unprivileged user. This is the only place PAM password changes, the
@@ -167,7 +167,7 @@ jobs:
       matrix:
         target: [debian, alpine, fedora]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Base images are pulled from Docker Hub at build time; retry to ride
       # out transient registry timeouts that would otherwise fail the job.
       - name: Build ${{ matrix.target }} image
