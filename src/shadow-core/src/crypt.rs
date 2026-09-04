@@ -5,8 +5,21 @@
 
 //! Safe wrapper around POSIX `crypt(3)` for password hashing and verification.
 //!
-//! This is one of only two modules (along with `pam`) where `unsafe_code`
-//! is permitted, because `crypt(3)` is a C library function.
+//! This is one of the three FFI boundary modules (with `pam` and `process`)
+//! where `unsafe_code` is permitted, because `crypt(3)` is a C library
+//! function.
+//!
+//! # Where crypt(3) comes from
+//!
+//! On glibc systems it lives in libcrypt (libxcrypt on Debian, Fedora and
+//! their derivatives), hence the `-lcrypt` link request. musl implements
+//! `crypt()` inside libc itself and ships no `libcrypt`, so the request must
+//! not be emitted there: Rust's self-contained musl sysroot has no
+//! `libcrypt.a`, and the linker would fall through to the host's glibc-built
+//! one and fail on glibc-only symbols. The two implementations produce
+//! byte-identical hashes for DES, MD5, `$5$`, `$6$` (with `rounds=`) and
+//! `$2b$`; musl has no yescrypt (`$y$`), which [`hash_password`] reports as
+//! an error rather than a wrong hash.
 
 use std::ffi::CString;
 
@@ -14,7 +27,7 @@ use subtle::ConstantTimeEq;
 
 use crate::error::ShadowError;
 
-#[link(name = "crypt")]
+#[cfg_attr(not(target_env = "musl"), link(name = "crypt"))]
 unsafe extern "C" {
     fn crypt(key: *const libc::c_char, salt: *const libc::c_char) -> *mut libc::c_char;
 }
@@ -97,9 +110,9 @@ pub fn hash_password(
     let c_salt = CString::new(salt.as_str())
         .map_err(|_| ShadowError::Auth("salt contains null byte".into()))?;
 
-    // SAFETY: crypt() is provided by libcrypt/glibc. Both arguments are valid
-    // null-terminated C strings. The returned pointer is to a static/thread-local
-    // buffer managed by crypt().
+    // SAFETY: crypt() is provided by libcrypt (glibc) or libc (musl). Both
+    // arguments are valid null-terminated C strings. The returned pointer is to
+    // a static/thread-local buffer managed by crypt().
     let result = unsafe { crypt(c_password.as_ptr(), c_salt.as_ptr()) };
 
     if result.is_null() {
@@ -143,9 +156,9 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, ShadowError> 
     let c_hash =
         CString::new(hash).map_err(|_| ShadowError::Auth("hash contains null byte".into()))?;
 
-    // SAFETY: crypt() is provided by libcrypt/glibc. Both arguments are valid
-    // null-terminated C strings. The returned pointer is to a static/thread-local
-    // buffer managed by crypt().
+    // SAFETY: crypt() is provided by libcrypt (glibc) or libc (musl). Both
+    // arguments are valid null-terminated C strings. The returned pointer is to
+    // a static/thread-local buffer managed by crypt().
     let result = unsafe { crypt(c_password.as_ptr(), c_hash.as_ptr()) };
 
     if result.is_null() {
@@ -201,12 +214,11 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_env = "musl"))]
     fn test_hash_verify_yescrypt() {
         let _guard = CRYPT_LOCK.lock().expect("lock");
-        // musl libc doesn't support yescrypt — skip gracefully.
-        let Ok(hash) = hash_password("secret", CryptMethod::Yescrypt, None) else {
-            return;
-        };
+        let hash = hash_password("secret", CryptMethod::Yescrypt, None)
+            .expect("libxcrypt implements yescrypt");
         assert!(
             hash.starts_with("$y$"),
             "yescrypt hash should start with $y$"
@@ -214,13 +226,27 @@ mod tests {
         assert!(verify_password("secret", &hash).expect("verify should succeed"));
     }
 
+    // musl's crypt(3) has no yescrypt and falls back to DES for an unknown
+    // prefix; the prefix guard must turn that into an error, never a hash the
+    // caller would store as `$y$`.
+    #[test]
+    #[cfg(target_env = "musl")]
+    fn test_yescrypt_rejected_on_musl() {
+        let _guard = CRYPT_LOCK.lock().expect("lock");
+        let err = hash_password("secret", CryptMethod::Yescrypt, None)
+            .expect_err("musl has no yescrypt; the prefix guard must reject it");
+        assert!(
+            err.to_string().contains("Yescrypt"),
+            "error should name the unsupported method: {err}"
+        );
+    }
+
+    // libxcrypt and musl both honour `rounds=` for the SHA methods.
     #[test]
     fn test_sha_rounds_applied() {
         let _guard = CRYPT_LOCK.lock().expect("lock");
-        // musl libc doesn't support SHA rounds — skip gracefully.
-        let Ok(hash) = hash_password("secret", CryptMethod::Sha512, Some(10000)) else {
-            return;
-        };
+        let hash = hash_password("secret", CryptMethod::Sha512, Some(10000))
+            .expect("rounds= is supported by every crypt(3) we build against");
         assert!(
             hash.starts_with("$6$rounds=10000$"),
             "rounds should appear in hash"

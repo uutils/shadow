@@ -20,7 +20,19 @@
 //!
 //! # Feature gate
 //!
-//! This module is only available when the `pam` feature is enabled.
+//! This module is only available when the `pam` feature is enabled, and it
+//! cannot be built into a statically linked musl binary: Linux-PAM loads its
+//! modules with `dlopen(3)`, which static musl does not support, and no
+//! distribution ships a `libpam.a`. Requesting the feature there is a
+//! configuration error and is rejected at compile time rather than producing
+//! a binary whose authentication path can never work.
+
+#[cfg(all(target_env = "musl", target_feature = "crt-static"))]
+compile_error!(
+    "the `pam` feature cannot be used in a statically linked musl build: Linux-PAM loads its \
+     modules with dlopen(3), which static musl does not support. Build without `pam` — see \
+     docs/PLATFORM-SUPPORT.md for what that changes."
+);
 
 use std::ffi::{CStr, CString};
 use std::fs::File;
