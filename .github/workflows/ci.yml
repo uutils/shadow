@@ -103,8 +103,8 @@ jobs:
     name: Fuzz targets
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: sudo apt-get update && sudo apt-get install -y libcrypt-dev
       # The fuzz crate is a separate workspace that nothing else builds, so it
       # rots silently: its manifest asked for shadow-core features that no
