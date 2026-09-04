@@ -67,6 +67,7 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
 | `chfn` | **Implemented.** GECOS sub-field modification. |
 | `chsh` | **Implemented.** Shell change with /etc/shells validation. |
 | `newgrp` | **Implemented.** Effective group change with crypt verification. |
+| `gpasswd` | **Implemented.** Group membership, administrators, and group password. |
 
 ## Building
 
@@ -87,9 +88,9 @@ docker compose run --rm debian cargo build --release
 
 ### Install
 
-Default install: 14 standalone per-tool binaries with least-privilege setuid
-layout matching GNU shadow-utils. Only `passwd`, `chfn`, `chsh`, `newgrp` are
-installed setuid-root; the other 10 are plain `0755`.
+Default install: 15 standalone per-tool binaries with least-privilege setuid
+layout matching GNU shadow-utils. Only `passwd`, `chfn`, `chsh`, `newgrp`,
+`gpasswd` are installed setuid-root; the other 10 are plain `0755`.
 
 ```shell
 sudo make install PREFIX=/usr/local
@@ -140,7 +141,7 @@ would:
 tar xzf uu_shadow-x86_64-unknown-linux-gnu.tar.gz   # or the -musl-static one
 sudo install -o root -g root -m 4755 \
     uu_shadow-*/shadow-rs /usr/local/bin/shadow-rs
-for tool in passwd chfn chsh newgrp chage chpasswd groupadd groupdel \
+for tool in passwd chfn chsh newgrp gpasswd chage chpasswd groupadd groupdel \
             groupmod grpck pwck useradd userdel usermod; do
     sudo ln -sf shadow-rs "/usr/local/bin/$tool"
 done

@@ -30,6 +30,7 @@ members = [
     "src/uu/newgrp",
     "src/uu/chpasswd",
     "src/uu/chage",
+    "src/uu/gpasswd",
 ]
 
 [workspace.package]
@@ -90,10 +91,11 @@ grpck = { optional = true, version = "0.2.2", package = "uu_grpck", path = "src/
 chfn = { optional = true, version = "0.2.2", package = "uu_chfn", path = "src/uu/chfn" }
 chsh = { optional = true, version = "0.2.2", package = "uu_chsh", path = "src/uu/chsh" }
 newgrp = { optional = true, version = "0.2.2", package = "uu_newgrp", path = "src/uu/newgrp" }
+gpasswd = { optional = true, version = "0.2.2", package = "uu_gpasswd", path = "src/uu/gpasswd" }
 
 [features]
 default = ["passwd", "pwck", "useradd", "userdel", "usermod", "chpasswd", "chage",
-           "groupadd", "groupdel", "groupmod", "grpck", "chfn", "chsh", "newgrp"]
+           "groupadd", "groupdel", "groupmod", "grpck", "chfn", "chsh", "newgrp", "gpasswd"]
 
 # PAM authentication (requires libpam-dev). The `?` matters: without it,
 # asking for PAM would drag in the three applets that can use it even when the

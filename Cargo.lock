@@ -739,6 +739,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_gpasswd"
+version = "0.2.2"
+dependencies = [
+ "clap",
+ "rustix",
+ "shadow-core",
+ "tempfile",
+ "uucore",
+ "zeroize",
+]
+
+[[package]]
 name = "uu_groupadd"
 version = "0.2.2"
 dependencies = [
@@ -827,6 +839,7 @@ dependencies = [
  "uu_chfn",
  "uu_chpasswd",
  "uu_chsh",
+ "uu_gpasswd",
  "uu_groupadd",
  "uu_groupdel",
  "uu_groupmod",

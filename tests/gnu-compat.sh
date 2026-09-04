@@ -216,6 +216,9 @@ done
 
 # ── Results ─────────────────────────────────────────────────────────
 
+echo "=== gpasswd ==="
+compare_exit "gpasswd --help" "$RS/gpasswd --help" "/usr/bin/gpasswd --help"
+
 echo ""
 echo "=== Results ==="
 printf "  ${GREEN}PASS: %d${NC}\n" "$PASS"

@@ -100,13 +100,13 @@ hash_password() {
 
 # ── TOOLS list ──────────────────────────────────────────────────────
 
-TOOLS="passwd pwck useradd userdel usermod chpasswd chage groupadd groupdel groupmod grpck chfn chsh newgrp"
-SETUID_TOOLS="passwd chfn chsh newgrp"
+TOOLS="passwd pwck useradd userdel usermod chpasswd chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp"
+SETUID_TOOLS="passwd chfn chsh newgrp gpasswd"
 
 # The tools an unprivileged user runs are installed in bin, the rest in sbin,
 # which is the split the GNU package uses: sbin is not on a normal user's
 # PATH, so `passwd` there would be "command not found".
-USER_TOOLS="passwd chfn chsh newgrp chage"
+USER_TOOLS="$SETUID_TOOLS chage"
 BINDIR="/usr/sbin"
 USER_BINDIR="/usr/bin"
 
@@ -317,7 +317,7 @@ test_user_lifecycle() {
 # ── Group lifecycle ─────────────────────────────────────────────────
 
 test_group_lifecycle() {
-    section "Group lifecycle (groupadd → groupmod → groupdel → grpck)"
+    section "Group lifecycle (groupadd → gpasswd → groupmod → groupdel → grpck)"
 
     # Clean up from any previous failed run
     groupdel lifecycle_testgrp 2>/dev/null || true
@@ -328,6 +328,11 @@ test_group_lifecycle() {
 
     assert_file_contains "group in /etc/group" \
         /etc/group "^lifecycle_testgrp:"
+
+    assert_ok "gpasswd -a root lifecycle_testgrp" \
+        gpasswd -a root lifecycle_testgrp
+    assert_file_contains "gpasswd added root to group" \
+        /etc/group "^lifecycle_testgrp:.*root"
 
     # Modify group name
     assert_ok "groupmod -n lifecycle_renamed lifecycle_testgrp" \

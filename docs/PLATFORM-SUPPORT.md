@@ -90,7 +90,7 @@ tools, which are root-only anyway and reach `/etc/shadow` directly.
 ### 2. No NSS
 
 `shadow_core::process` resolves the calling user through `getpwuid_r`, used by
-`passwd`, `chfn`, `chsh`, `chage` and `newgrp`.
+`passwd`, `chfn`, `chsh`, `chage`, `newgrp` and `gpasswd`.
 
 glibc answers such lookups through its NSS module system, so it sees users from
 LDAP, SSSD, Active Directory or systemd-userdb. musl has no NSS module system

@@ -23,6 +23,8 @@ mod test_chpasswd;
 mod test_chsh;
 #[path = "by-util/test_fuzz_corpus.rs"]
 mod test_fuzz_corpus;
+#[path = "by-util/test_gpasswd.rs"]
+mod test_gpasswd;
 #[path = "by-util/test_groupadd.rs"]
 mod test_groupadd;
 #[path = "by-util/test_groupdel.rs"]

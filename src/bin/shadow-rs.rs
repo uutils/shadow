@@ -24,9 +24,9 @@ use std::process::ExitCode;
 
 type Applet = fn(&[OsString]) -> i32;
 
-/// Applets that keep euid 0 for an unprivileged caller: the same four that
+/// Applets that keep euid 0 for an unprivileged caller: the same five that
 /// `make install` marks setuid.
-const SETUID_APPLETS: [&str; 4] = ["passwd", "chfn", "chsh", "newgrp"];
+const SETUID_APPLETS: [&str; 5] = ["passwd", "chfn", "chsh", "newgrp", "gpasswd"];
 
 /// Every applet compiled into this binary, by name, in `--list` order.
 // `#[cfg]` is not accepted on the elements of a `vec![]` literal, so the
@@ -49,6 +49,8 @@ fn applets() -> Vec<(&'static str, Applet)> {
     table.push(("groupadd", |a| groupadd::uumain(a.iter().cloned())));
     #[cfg(feature = "groupdel")]
     table.push(("groupdel", |a| groupdel::uumain(a.iter().cloned())));
+    #[cfg(feature = "gpasswd")]
+    table.push(("gpasswd", |a| gpasswd::uumain(a.iter().cloned())));
     #[cfg(feature = "groupmod")]
     table.push(("groupmod", |a| groupmod::uumain(a.iter().cloned())));
     #[cfg(feature = "grpck")]
@@ -223,9 +225,9 @@ fn print_available_utils() {
 mod tests {
     use super::*;
 
-    const ALL_TOOLS: [&str; 14] = [
-        "chage", "chfn", "chpasswd", "chsh", "groupadd", "groupdel", "groupmod", "grpck", "newgrp",
-        "passwd", "pwck", "useradd", "userdel", "usermod",
+    const ALL_TOOLS: [&str; 15] = [
+        "chage", "chfn", "chpasswd", "chsh", "gpasswd", "groupadd", "groupdel", "groupmod",
+        "grpck", "newgrp", "passwd", "pwck", "useradd", "userdel", "usermod",
     ];
 
     // The table drives both dispatch and `--list`, so it must contain only
@@ -247,7 +249,7 @@ mod tests {
         for tool in ALL_TOOLS {
             assert_eq!(
                 keeps_privilege(tool),
-                matches!(tool, "passwd" | "chfn" | "chsh" | "newgrp"),
+                matches!(tool, "passwd" | "chfn" | "chsh" | "newgrp" | "gpasswd"),
                 "{tool}"
             );
         }
