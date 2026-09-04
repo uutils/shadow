@@ -265,6 +265,10 @@ test_user_lifecycle() {
     assert_ok "passwd -l lifecycle_user" passwd -l lifecycle_user
     assert_file_contains "password locked (! prefix)" \
         /etc/shadow '^lifecycle_user:!'
+    # Every rewrite must leave the file as the distribution installed it;
+    # unix_chkpwd and friends are sgid shadow and rely on it.
+    assert_ok "/etc/shadow is still root:shadow 0640 after passwd -l" \
+        test "$(stat -c '%U:%G %a' /etc/shadow)" = "root:shadow 640"
 
     assert_ok "passwd -u lifecycle_user" passwd -u lifecycle_user
     assert_file_not_contains "password unlocked (no ! prefix)" \
@@ -363,6 +367,58 @@ test_individual_tools() {
 
 # ── PAM authentication ──────────────────────────────────────────────
 
+# Authenticate as $1 with password $2 through `su` run by testrunner. Root's
+# own `su` never asks for a password (pam_rootok), so an unprivileged caller is
+# the only way to make PAM actually verify one. Exit 0 = authenticated.
+su_as_testrunner() {
+    expect -c "
+        set timeout 15
+        log_user 0
+        spawn su -s /bin/bash testrunner -c {su -s /bin/bash -c id $1}
+        expect {
+            -nocase {password:} { send \"$2\r\"; exp_continue }
+            {uid=} { exit 0 }
+            -nocase {failure} { exit 1 }
+            eof { exit 2 }
+            timeout { exit 3 }
+        }
+    "
+}
+
+# $1 changes their own password from $2 to $3 with our passwd, as themselves.
+# Runs under `su -c`, which has no controlling terminal, so the prompts arrive
+# on stdin/stderr — the path the conversation function must handle.
+change_own_password() {
+    expect -c "
+        set timeout 20
+        log_user 0
+        spawn su -s /bin/bash $1 -c $BINDIR/passwd
+        expect {
+            -nocase -re {current.*password:|\\(current\\).*:} { send \"$2\r\"; exp_continue }
+            -nocase -re {new.*password:} { send \"$3\r\"; exp_continue }
+            -nocase -re {(retype|again).*:} { send \"$3\r\"; exp_continue }
+            -nocase {failure} { exit 10 }
+            eof { catch wait result; exit [lindex \$result 3] }
+            timeout { exit 99 }
+        }
+    "
+}
+
+# root sets $1's password to $2 with our passwd (no current password asked).
+set_password_as_root() {
+    expect -c "
+        set timeout 20
+        log_user 0
+        spawn $BINDIR/passwd $1
+        expect {
+            -nocase -re {new.*password:} { send \"$2\r\"; exp_continue }
+            -nocase -re {(retype|again).*:} { send \"$2\r\"; exp_continue }
+            eof { catch wait result; exit [lindex \$result 3] }
+            timeout { exit 99 }
+        }
+    "
+}
+
 test_pam_auth() {
     section "PAM authentication"
 
@@ -375,33 +431,28 @@ test_pam_auth() {
     assert_ok "chpasswd -e sets pamtest_user password" \
         bash -c "echo 'pamtest_user:$hashed' | chpasswd -e"
 
-    # Use expect to test su authentication
-    assert_ok "su with known password via expect" \
-        expect -c '
-            set timeout 10
-            spawn su -s /bin/bash -c "id" pamtest_user
-            expect "Password:"
-            send "PamPass789\r"
-            expect {
-                "uid=" { exit 0 }
-                timeout { exit 1 }
-                eof { exit 1 }
-            }
-        '
+    assert_ok "known password authenticates through PAM" \
+        su_as_testrunner pamtest_user PamPass789
+    assert_fail "wrong password is rejected" \
+        su_as_testrunner pamtest_user WrongPass000
 
-    # Verify the output contains the right user
-    assert_contains "su runs as pamtest_user" "pamtest_user" \
-        expect -c '
-            set timeout 10
-            spawn su -s /bin/bash -c "id" pamtest_user
-            expect "Password:"
-            send "PamPass789\r"
-            expect {
-                "pamtest_user" { exit 0 }
-                timeout { exit 1 }
-                eof { exit 1 }
-            }
-        '
+    # The reason passwd is setuid: a user changes their own password. This is
+    # pam_unix end to end — authenticate with the current password through
+    # the unprivileged helper, then rewrite /etc/shadow with the privilege the
+    # setuid bit provides.
+    assert_ok "pamtest_user changes own password with passwd" \
+        change_own_password pamtest_user PamPass789 NewPass456
+    assert_ok "new password authenticates" \
+        su_as_testrunner pamtest_user NewPass456
+    assert_fail "old password no longer authenticates" \
+        su_as_testrunner pamtest_user PamPass789
+    assert_ok "/etc/shadow is still root:shadow 0640 after a PAM change" \
+        test "$(stat -c '%U:%G %a' /etc/shadow)" = "root:shadow 640"
+
+    assert_ok "root sets pamtest_user's password with passwd" \
+        set_password_as_root pamtest_user RootSet321
+    assert_ok "root-set password authenticates" \
+        su_as_testrunner pamtest_user RootSet321
 
     # Clean up
     userdel -r pamtest_user 2>/dev/null || true
@@ -459,6 +510,15 @@ test_landlock() {
 
         assert_ok "passwd -S works under Landlock" \
             passwd -S landlock_user
+        # The mutation path spawns nscd/logger and rewrites the file inside
+        # the sandbox; both have to be allowed by the rule set.
+        assert_ok "passwd -l works under Landlock" passwd -l landlock_user
+        assert_file_contains "lock applied under Landlock" \
+            /etc/shadow '^landlock_user:!'
+        assert_ok "passwd -u works under Landlock" passwd -u landlock_user
+        assert_ok "passwd -x 90 works under Landlock" passwd -x 90 landlock_user
+        assert_ok "unprivileged passwd -S works under Landlock" \
+            su -s /bin/bash testrunner -c "passwd -S testrunner"
 
         userdel -r landlock_user 2>/dev/null || true
     else

@@ -22,8 +22,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 COPY . .
 
-RUN cargo build --release --features pam \
-    && make install DESTDIR=/install PREFIX=/usr
+# The multicall layout the release archive uses: one setuid binary plus
+# symlinks. Its build target enables `pam`.
+RUN make install-multicall DESTDIR=/install PREFIX=/usr
 
 # ── Stage 2: runtime with tests ────────────────────────────────────
 FROM debian:13

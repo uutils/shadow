@@ -113,6 +113,28 @@ jobs:
       - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
 
+  e2e:
+    name: End-to-end (install, setuid, PAM, Landlock)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # A real deployment: release build with pam, `make install-multicall`
+      # over GNU's binaries, then the deployment test suite as root and as an
+      # unprivileged user. This is the only place PAM password changes, the
+      # setuid privilege model and the Landlock rules are exercised for real.
+      - name: Build e2e image
+        run: |
+          for attempt in 1 2 3; do
+            docker compose build e2e && exit 0
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::e2e image build attempt $attempt failed (likely a registry timeout); retrying in 30s"
+              sleep 30
+            fi
+          done
+          exit 1
+      - name: Run deployment tests
+        run: docker compose run --rm e2e
+
   test-docker:
     name: Test (${{ matrix.target }})
     if: github.event_name == 'push'
