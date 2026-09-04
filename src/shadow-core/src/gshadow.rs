@@ -19,6 +19,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use crate::error::ShadowError;
+pub use crate::records::Layout;
 use crate::validate::{validate_field, validate_list_item};
 
 /// A single entry from `/etc/gshadow`.
@@ -127,8 +128,9 @@ pub fn read_gshadow_file(path: &Path) -> Result<Vec<GshadowEntry>, ShadowError> 
 
     for line in reader.lines() {
         let line = line?;
-        let trimmed = line.trim_start();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+        // Comments, blank lines and NIS compat lines are not entries. Use
+        // read_*_with_layout when they must survive a rewrite.
+        if crate::records::is_raw_line(&line) {
             continue;
         }
         entries.push(line.parse()?);
@@ -148,6 +150,44 @@ pub fn write_gshadow<W: Write>(entries: &[GshadowEntry], mut writer: W) -> Resul
         writeln!(writer, "{entry}")?;
     }
     Ok(())
+}
+
+impl crate::records::Named for GshadowEntry {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Read `/etc/gshadow` keeping comments, blank lines and NIS compat lines.
+///
+/// Returns the entries plus the [`crate::records::Layout`] that
+/// [`write_gshadow_with_layout`] needs to put those lines back.
+///
+/// # Errors
+///
+/// Returns `ShadowError` if the file cannot be opened or an entry is malformed.
+pub fn read_gshadow_with_layout(
+    path: &Path,
+) -> Result<(Vec<GshadowEntry>, crate::records::Layout), ShadowError> {
+    crate::records::read_with_layout(path)
+}
+
+/// Write entries back, restoring the lines [`read_gshadow_with_layout`] preserved.
+///
+/// # Errors
+///
+/// Returns `ShadowError` on a write failure or an entry that would corrupt the
+/// record format.
+pub fn write_gshadow_with_layout<W: Write>(
+    entries: &[GshadowEntry],
+    layout: &crate::records::Layout,
+    mut writer: W,
+) -> Result<(), ShadowError> {
+    crate::records::write_with_layout(entries, layout, &mut writer, |entry, w| {
+        entry.validate_fields()?;
+        writeln!(w, "{entry}")?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]

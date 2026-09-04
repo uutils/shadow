@@ -13,6 +13,7 @@ pub mod date;
 pub mod error;
 pub mod os_error;
 pub mod passwd;
+pub mod records;
 pub mod validate;
 
 #[cfg(feature = "shadow")]
