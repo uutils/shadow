@@ -122,6 +122,8 @@ fn do_groupadd(matches: &clap::ArgMatches) -> UResult<()> {
         .get_one::<String>(options::PASSWORD)
         .cloned()
         .unwrap_or_else(|| "!".to_string());
+    shadow_core::validate::validate_field("password", &password)
+        .map_err(|e| GroupaddError::BadArgument(e.to_string()))?;
 
     let prefix = matches.get_one::<String>(options::PREFIX).map(Path::new);
     let root_dir = matches.get_one::<String>(options::ROOT).map(Path::new);

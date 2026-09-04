@@ -158,6 +158,65 @@ fn test_conflicting_user_group_no_user_group() {
 // Root-only tests -- exercise real operations via --root
 // ---------------------------------------------------------------------------
 
+// A newline in -c once appended a second record — `evil::0:0::/:/bin/sh`, a
+// passwordless UID 0 account — and a colon added a field that made the file
+// unreadable for every tool. Both must be refused before anything is written.
+#[test]
+fn test_comment_with_newline_or_colon_is_rejected() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    let original = read_passwd(&dir);
+
+    let code = run_with_root(&dir, &["-N", "-c", "x\nevil::0:0::/:/bin/sh", "inj"]);
+    assert_eq!(code, 3, "newline in comment must be a bad argument");
+    let code = run_with_root(&dir, &["-N", "-c", "a:b", "inj"]);
+    assert_eq!(code, 3, "colon in comment must be a bad argument");
+
+    assert_eq!(read_passwd(&dir), original, "nothing may be written");
+    assert!(!read_shadow(&dir).contains("inj:"));
+}
+
+#[test]
+fn test_shell_and_password_fields_are_validated() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    assert_eq!(run_with_root(&dir, &["-N", "-s", "/bin/sh:x", "u"]), 3);
+    assert_eq!(run_with_root(&dir, &["-N", "-p", "$6$a\nb", "u"]), 3);
+    assert!(!read_passwd(&dir).contains("u:"));
+}
+
+// A `..` in -d used to abort the tool after passwd and shadow were written
+// but before the home existed; -d and -k are created and chowned as root, so
+// they must be absolute and must not climb.
+#[test]
+fn test_home_and_skel_must_be_absolute_without_parent_dirs() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    let original = read_passwd(&dir);
+
+    assert_eq!(
+        run_with_root(&dir, &["-N", "-d", "/home/../srv/foo", "foo"]),
+        3
+    );
+    assert_eq!(run_with_root(&dir, &["-N", "-d", "relative/foo", "foo"]), 3);
+    assert_eq!(
+        run_with_root(&dir, &["-N", "-m", "-k", "/etc/../root", "foo"]),
+        3
+    );
+
+    assert_eq!(read_passwd(&dir), original, "nothing may be written");
+    assert!(!dir.path().join("srv/foo").exists());
+}
+
 #[test]
 fn test_create_user_basic() {
     if common::skip_unless_root() {

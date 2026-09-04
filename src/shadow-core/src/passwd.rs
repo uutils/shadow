@@ -20,6 +20,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use crate::error::ShadowError;
+use crate::validate::validate_field;
 
 /// A single entry from `/etc/passwd`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -47,6 +48,26 @@ impl fmt::Display for PasswdEntry {
             "{}:{}:{}:{}:{}:{}:{}",
             self.name, self.passwd, self.uid, self.gid, self.gecos, self.home, self.shell
         )
+    }
+}
+
+impl PasswdEntry {
+    /// Refuse an entry whose text fields would break the file format.
+    ///
+    /// The writer calls this before emitting every line, so a `:` or a
+    /// newline smuggled into a GECOS field can never add a field or a
+    /// record to `/etc/passwd`; tools validate earlier to give a precise
+    /// error, this is the last line of defence.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ShadowError::Validation` naming the field and character.
+    pub fn validate_fields(&self) -> Result<(), ShadowError> {
+        validate_field("login name", &self.name)?;
+        validate_field("password field", &self.passwd)?;
+        validate_field("GECOS field", &self.gecos)?;
+        validate_field("home directory", &self.home)?;
+        validate_field("login shell", &self.shell)
     }
 }
 
@@ -137,6 +158,7 @@ pub fn read_passwd_file(path: &Path) -> Result<Vec<PasswdEntry>, ShadowError> {
 /// Returns `ShadowError` on I/O write failure.
 pub fn write_passwd<W: Write>(entries: &[PasswdEntry], mut writer: W) -> Result<(), ShadowError> {
     for entry in entries {
+        entry.validate_fields()?;
         writeln!(writer, "{entry}")?;
     }
     Ok(())
@@ -145,6 +167,35 @@ pub fn write_passwd<W: Write>(entries: &[PasswdEntry], mut writer: W) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The writer is the last line of defence: whatever a tool forgot to
+    // check, a field that would add a record or a field never reaches disk.
+    #[test]
+    fn test_write_refuses_field_separators_and_newlines() {
+        let mut entry = PasswdEntry {
+            name: "inj".into(),
+            passwd: "x".into(),
+            uid: 1000,
+            gid: 1000,
+            gecos: "x\nevil::0:0::/:/bin/sh".into(),
+            home: "/home/inj".into(),
+            shell: "/bin/sh".into(),
+        };
+        let mut out = Vec::new();
+        assert!(write_passwd(std::slice::from_ref(&entry), &mut out).is_err());
+        assert!(
+            out.is_empty(),
+            "nothing may be written for a rejected entry"
+        );
+
+        entry.gecos = "Jane Doe,,,".into();
+        entry.shell = "/bin/sh:x".into();
+        assert!(write_passwd(std::slice::from_ref(&entry), &mut out).is_err());
+
+        entry.shell = "/bin/sh".into();
+        write_passwd(std::slice::from_ref(&entry), &mut out).unwrap();
+        assert_eq!(out, b"inj:x:1000:1000:Jane Doe,,,:/home/inj:/bin/sh\n");
+    }
 
     #[test]
     fn test_parse_valid_entry() {

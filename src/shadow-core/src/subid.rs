@@ -22,6 +22,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use crate::error::ShadowError;
+use crate::validate::validate_field;
 
 /// A single entry from `/etc/subuid` or `/etc/subgid`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -37,6 +38,18 @@ pub struct SubIdEntry {
 impl fmt::Display for SubIdEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}:{}", self.name, self.start, self.count)
+    }
+}
+
+impl SubIdEntry {
+    /// Refuse an entry whose name would break the file format; see
+    /// [`crate::passwd::PasswdEntry::validate_fields`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `ShadowError::Validation` naming the character.
+    pub fn validate_fields(&self) -> Result<(), ShadowError> {
+        validate_field("owner name", &self.name)
     }
 }
 
@@ -106,6 +119,7 @@ pub fn read_subid_file(path: &Path) -> Result<Vec<SubIdEntry>, ShadowError> {
 /// Returns `ShadowError` on I/O write failure.
 pub fn write_subid<W: Write>(entries: &[SubIdEntry], mut writer: W) -> Result<(), ShadowError> {
     for entry in entries {
+        entry.validate_fields()?;
         writeln!(writer, "{entry}")?;
     }
     Ok(())

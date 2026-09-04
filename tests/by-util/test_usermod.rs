@@ -144,6 +144,30 @@ fn test_change_comment() {
     );
 }
 
+// A value that would add a field or a record is refused with exit 3 before
+// the file is locked, so the entry is left exactly as it was.
+#[test]
+fn test_fields_with_colon_or_newline_are_rejected_before_write() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Old Name:/home/testuser:/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "testuser:x:1000:\n",
+    );
+    let original = read_passwd(&dir);
+
+    assert_eq!(run_with_prefix(&dir, &["-c", "a:b", "testuser"]), 3);
+    assert_eq!(run_with_prefix(&dir, &["-s", "/bin/sh\nx", "testuser"]), 3);
+    assert_eq!(run_with_prefix(&dir, &["-d", "/home/x\r", "testuser"]), 3);
+    assert_eq!(run_with_prefix(&dir, &["-p", "$6$a:b", "testuser"]), 3);
+
+    assert_eq!(read_passwd(&dir), original);
+    assert!(read_shadow(&dir).contains("testuser:$6$hash:"));
+}
+
 #[test]
 fn test_change_home() {
     if common::skip_unless_root() {

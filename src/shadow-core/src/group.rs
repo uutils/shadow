@@ -18,6 +18,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use crate::error::ShadowError;
+use crate::validate::{validate_field, validate_list_item};
 
 /// A single entry from `/etc/group`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -42,6 +43,23 @@ impl fmt::Display for GroupEntry {
             self.gid,
             self.members.join(",")
         )
+    }
+}
+
+impl GroupEntry {
+    /// Refuse an entry whose text fields would break the file format; see
+    /// [`crate::passwd::PasswdEntry::validate_fields`]. Members must also be
+    /// free of the `,` that separates them.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ShadowError::Validation` naming the field and character.
+    pub fn validate_fields(&self) -> Result<(), ShadowError> {
+        validate_field("group name", &self.name)?;
+        validate_field("password field", &self.passwd)?;
+        self.members
+            .iter()
+            .try_for_each(|m| validate_list_item("member name", m))
     }
 }
 
@@ -116,6 +134,7 @@ pub fn read_group_file(path: &Path) -> Result<Vec<GroupEntry>, ShadowError> {
 /// Returns `ShadowError` on I/O write failure.
 pub fn write_group<W: Write>(entries: &[GroupEntry], mut writer: W) -> Result<(), ShadowError> {
     for entry in entries {
+        entry.validate_fields()?;
         writeln!(writer, "{entry}")?;
     }
     Ok(())

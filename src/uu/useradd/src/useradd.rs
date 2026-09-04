@@ -327,6 +327,26 @@ fn write_defaults(matches: &clap::ArgMatches, out: &mut dyn std::io::Write) -> U
 // ---------------------------------------------------------------------------
 
 /// Parse CLI arguments into `UseraddOptions`.
+fn bad_argument(e: &shadow_core::error::ShadowError) -> UseraddError {
+    UseraddError::BadArgument(e.to_string())
+}
+
+/// `-d` and `-k` name directories that are created, chowned and copied as
+/// root, so beyond the field rules they must be absolute and must not climb
+/// with `..`.
+fn validate_directory_arg(what: &str, path: &str) -> Result<(), UseraddError> {
+    validate::validate_field(what, path).map_err(|e| bad_argument(&e))?;
+    let climbs = Path::new(path)
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir));
+    if !path.starts_with('/') || climbs {
+        return Err(UseraddError::BadArgument(format!(
+            "invalid {what} '{path}': must be an absolute path without '..'"
+        )));
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_lines)]
 fn parse_options(matches: &clap::ArgMatches) -> Result<UseraddOptions, UseraddError> {
     let login = matches
@@ -403,6 +423,17 @@ fn parse_options(matches: &clap::ArgMatches) -> Result<UseraddOptions, UseraddEr
         .get_one::<String>(options::PASSWORD)
         .cloned()
         .unwrap_or_else(|| "!".to_string());
+
+    // Everything that lands in a passwd or shadow field is checked before a
+    // single file is touched: a `:` would add a field and a newline a whole
+    // record. The shadow-core writers refuse the same characters again.
+    validate::validate_field("comment", &comment).map_err(|e| bad_argument(&e))?;
+    validate::validate_field("shell", &shell).map_err(|e| bad_argument(&e))?;
+    validate::validate_field("password", &password).map_err(|e| bad_argument(&e))?;
+    if let Some(dir) = &home_dir {
+        validate_directory_arg("home directory", dir)?;
+    }
+    validate_directory_arg("skeleton directory", &skel_dir)?;
 
     let inactive = match matches.get_one::<String>(options::INACTIVE) {
         Some(s) => {

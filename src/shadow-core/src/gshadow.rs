@@ -19,6 +19,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use crate::error::ShadowError;
+use crate::validate::{validate_field, validate_list_item};
 
 /// A single entry from `/etc/gshadow`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -43,6 +44,26 @@ impl fmt::Display for GshadowEntry {
             self.admins.join(","),
             self.members.join(",")
         )
+    }
+}
+
+impl GshadowEntry {
+    /// Refuse an entry whose text fields would break the file format; see
+    /// [`crate::passwd::PasswdEntry::validate_fields`]. Administrators and
+    /// members must also be free of the `,` that separates them.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ShadowError::Validation` naming the field and character.
+    pub fn validate_fields(&self) -> Result<(), ShadowError> {
+        validate_field("group name", &self.name)?;
+        validate_field("password hash", &self.passwd)?;
+        self.admins
+            .iter()
+            .try_for_each(|a| validate_list_item("administrator name", a))?;
+        self.members
+            .iter()
+            .try_for_each(|m| validate_list_item("member name", m))
     }
 }
 
@@ -123,6 +144,7 @@ pub fn read_gshadow_file(path: &Path) -> Result<Vec<GshadowEntry>, ShadowError> 
 /// Returns `ShadowError` on I/O write failure.
 pub fn write_gshadow<W: Write>(entries: &[GshadowEntry], mut writer: W) -> Result<(), ShadowError> {
     for entry in entries {
+        entry.validate_fields()?;
         writeln!(writer, "{entry}")?;
     }
     Ok(())

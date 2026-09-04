@@ -73,47 +73,48 @@ pub fn validate_username(name: &str) -> Result<(), ShadowError> {
     Ok(())
 }
 
-/// A validated Linux username.
+/// Reject a value that would corrupt a colon-separated account file.
 ///
-/// Guarantees that the contained string passes all `validate_username` rules.
-/// Use `Username::new()` to validate and construct.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Username(String);
-
-impl Username {
-    /// Validate and create a new `Username`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ShadowError::Validation` if the name violates any rule.
-    pub fn new(name: &str) -> Result<Self, ShadowError> {
-        validate_username(name)?;
-        Ok(Self(name.to_string()))
+/// Fields are written verbatim, so a `:` adds a field, a newline adds a
+/// record — `useradd -c $'x\nevil::0:0::/:/bin/sh'` created a passwordless
+/// UID 0 account — and any other control character corrupts the output of
+/// every program that reads the file. `what` names the field in the error.
+///
+/// # Errors
+///
+/// Returns `ShadowError::Validation` naming the offending character.
+pub fn validate_field(what: &str, value: &str) -> Result<(), ShadowError> {
+    if let Some(bad) = value.chars().find(|c| *c == ':' || c.is_control()) {
+        return Err(ShadowError::Validation(
+            format!("invalid {what}: must not contain {}", describe_char(bad)).into(),
+        ));
     }
-
-    /// Get the username as a string slice.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
+    Ok(())
 }
 
-impl std::fmt::Display for Username {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+/// [`validate_field`] for one item of a comma-separated list (group members
+/// and administrators), which additionally must not contain the separator.
+///
+/// # Errors
+///
+/// Returns `ShadowError::Validation` naming the offending character.
+pub fn validate_list_item(what: &str, value: &str) -> Result<(), ShadowError> {
+    validate_field(what, value)?;
+    if value.contains(',') {
+        return Err(ShadowError::Validation(
+            format!("invalid {what}: must not contain ','").into(),
+        ));
     }
+    Ok(())
 }
 
-impl AsRef<str> for Username {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::ops::Deref for Username {
-    type Target = str;
-    fn deref(&self) -> &str {
-        &self.0
+fn describe_char(c: char) -> String {
+    match c {
+        ':' => "':'".to_string(),
+        '\n' => "a newline".to_string(),
+        '\r' => "a carriage return".to_string(),
+        '\0' => "a NUL byte".to_string(),
+        c => format!("control character U+{:04X}", u32::from(c)),
     }
 }
 
@@ -207,20 +208,33 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
-    // Username newtype tests
+    // Field validation
     // -------------------------------------------------------------------
 
     #[test]
-    fn test_username_newtype_valid() {
-        let u = Username::new("testuser").unwrap();
-        assert_eq!(u.as_str(), "testuser");
-        assert_eq!(&*u, "testuser"); // Deref
-        assert_eq!(format!("{u}"), "testuser"); // Display
+    fn test_validate_field_accepts_ordinary_values() {
+        assert!(validate_field("GECOS", "Jane Doe,Room 1,555-1234,,").is_ok());
+        assert!(validate_field("home", "/home/jane doe").is_ok());
+        assert!(validate_field("password", "$6$salt$hash").is_ok());
+        assert!(validate_field("GECOS", "").is_ok());
+        assert!(validate_field("GECOS", "Zoë Müller").is_ok());
     }
 
     #[test]
-    fn test_username_newtype_invalid() {
-        assert!(Username::new("").is_err());
-        assert!(Username::new("Root").is_err());
+    fn test_validate_field_rejects_separators_and_control_chars() {
+        let err = validate_field("comment", "a:b").unwrap_err().to_string();
+        assert_eq!(err, "invalid comment: must not contain ':'");
+        assert!(validate_field("comment", "x\nevil::0:0::/:/bin/sh").is_err());
+        assert!(validate_field("comment", "x\r").is_err());
+        assert!(validate_field("comment", "x\0").is_err());
+        assert!(validate_field("comment", "x\u{1b}[31m").is_err());
+        assert!(validate_field("comment", "x\ty").is_err());
+    }
+
+    #[test]
+    fn test_validate_list_item_rejects_comma() {
+        assert!(validate_list_item("member", "alice").is_ok());
+        assert!(validate_list_item("member", "alice,bob").is_err());
+        assert!(validate_list_item("member", "ali:ce").is_err());
     }
 }

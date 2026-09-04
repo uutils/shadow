@@ -120,6 +120,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         shadow_core::validate::validate_username(name)
             .map_err(|e| GroupmodError::BadArgument(format!("{e}")))?;
     }
+    if let Some(password) = new_password {
+        shadow_core::validate::validate_field("password", password)
+            .map_err(|e| GroupmodError::BadArgument(e.to_string()))?;
+    }
 
     // Parse new GID if provided.
     let parsed_gid: Option<u32> = new_gid

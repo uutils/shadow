@@ -44,6 +44,7 @@ mod options {
 #[derive(Debug)]
 enum UsermodError {
     CantUpdate(String),
+    BadArgument(String),
     UserNotFound(String),
     UidInUse(String),
 }
@@ -51,9 +52,10 @@ enum UsermodError {
 impl fmt::Display for UsermodError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CantUpdate(msg) | Self::UserNotFound(msg) | Self::UidInUse(msg) => {
-                f.write_str(msg)
-            }
+            Self::CantUpdate(msg)
+            | Self::BadArgument(msg)
+            | Self::UserNotFound(msg)
+            | Self::UidInUse(msg) => f.write_str(msg),
         }
     }
 }
@@ -64,6 +66,7 @@ impl UError for UsermodError {
     fn code(&self) -> i32 {
         match self {
             Self::CantUpdate(_) => 1,
+            Self::BadArgument(_) => 3,
             Self::UserNotFound(_) => 6,
             Self::UidInUse(_) => 4,
         }
@@ -96,6 +99,20 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // Dropped before recursive_chown so long-running operations remain interruptible.
     let signals = shadow_core::hardening::SignalBlocker::block_critical()
         .map_err(|e| UsermodError::CantUpdate(format!("cannot block signals: {e}")))?;
+
+    // A value that would add a field or a record to /etc/passwd is rejected
+    // before any file is locked or written; exit 3 like other bad arguments.
+    for (what, key) in [
+        ("comment", options::COMMENT),
+        ("home directory", options::HOME),
+        ("shell", options::SHELL),
+        ("password hash", options::PASSWORD),
+    ] {
+        if let Some(value) = matches.get_one::<String>(key) {
+            validate::validate_field(what, value)
+                .map_err(|e| UsermodError::BadArgument(e.to_string()))?;
+        }
+    }
 
     // Modify /etc/passwd.
     let passwd_path = root.passwd_path();
@@ -170,15 +187,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let expire = matches.get_one::<String>(options::EXPIREDATE);
     let inactive = matches.get_one::<i64>(options::INACTIVE);
     let new_password = matches.get_one::<String>(options::PASSWORD);
-
-    if let Some(pw) = new_password
-        && pw.contains([':', '\n', '\r'])
-    {
-        return Err(UsermodError::CantUpdate(
-            "invalid password hash: must not contain ':', '\\n', or '\\r'".into(),
-        )
-        .into());
-    }
 
     let login_changing = new_login.is_some();
     if shadow_path.exists()

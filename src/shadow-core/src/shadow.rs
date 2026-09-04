@@ -19,6 +19,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use crate::error::ShadowError;
+use crate::validate::validate_field;
 
 /// A single entry from `/etc/shadow`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -162,6 +163,20 @@ impl fmt::Display for ShadowEntry {
     }
 }
 
+impl ShadowEntry {
+    /// Refuse an entry whose text fields would break the file format; see
+    /// [`crate::passwd::PasswdEntry::validate_fields`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `ShadowError::Validation` naming the field and character.
+    pub fn validate_fields(&self) -> Result<(), ShadowError> {
+        validate_field("login name", &self.name)?;
+        validate_field("password hash", &self.passwd)?;
+        validate_field("reserved field", &self.reserved)
+    }
+}
+
 impl FromStr for ShadowEntry {
     type Err = ShadowError;
 
@@ -245,6 +260,7 @@ pub fn read_shadow_file(path: &Path) -> Result<Vec<ShadowEntry>, ShadowError> {
 /// Returns `ShadowError` on I/O write failure.
 pub fn write_shadow<W: Write>(entries: &[ShadowEntry], mut writer: W) -> Result<(), ShadowError> {
     for entry in entries {
+        entry.validate_fields()?;
         writeln!(writer, "{entry}")?;
     }
     Ok(())
