@@ -91,6 +91,7 @@ struct GrpckOptions {
     read_only: bool,
     group_path: PathBuf,
     gshadow_path: PathBuf,
+    root: SysRoot,
 }
 
 impl GrpckOptions {
@@ -110,6 +111,7 @@ impl GrpckOptions {
             read_only: matches.get_flag(options::READ_ONLY),
             group_path,
             gshadow_path,
+            root,
         }
     }
 }
@@ -142,9 +144,8 @@ fn run_checks(opts: &GrpckOptions) -> UResult<()> {
         match raw_line.parse::<GroupEntry>() {
             Ok(entry) => group_entries.push(entry),
             Err(e) => {
-                if !opts.quiet {
-                    uucore::show_error!("invalid group file entry at line {line_num}: {e}");
-                }
+                // grpck(8) -q: "Report errors only." Errors are always shown.
+                uucore::show_error!("invalid group file entry at line {line_num}: {e}");
                 errors += 1;
             }
         }
@@ -157,11 +158,24 @@ fn run_checks(opts: &GrpckOptions) -> UResult<()> {
     // groups with GID 0 that are not "root").
     errors += check_gid_consistency(&group_entries, opts.quiet);
 
-    // Load and check gshadow if it exists.
-    let gshadow_entries = load_gshadow_file(&opts.gshadow_path, opts.quiet);
-    if !gshadow_entries.is_empty() {
-        errors += check_group_gshadow_consistency(&group_entries, &gshadow_entries, opts.quiet);
+    // Load and check gshadow whenever the file is there. Keying the check on
+    // "did any entry parse" meant a malformed or empty gshadow next to a
+    // populated group file reported nothing at all.
+    if opts.gshadow_path.exists() {
+        match gshadow::read_gshadow_file(&opts.gshadow_path) {
+            Ok(gshadow_entries) => {
+                errors +=
+                    check_group_gshadow_consistency(&group_entries, &gshadow_entries, opts.quiet);
+            }
+            Err(e) => {
+                uucore::show_error!("cannot read {}: {e}", opts.gshadow_path.display());
+                errors += 1;
+            }
+        }
     }
+
+    // Members and administrators must name real users.
+    errors += check_members_exist(&group_entries, &opts.root);
 
     // Never rewrite the files when errors were found: sorting works on the
     // entries that parsed, so writing would drop every line just reported.
@@ -266,22 +280,6 @@ fn check_group_gshadow_consistency(
     errors
 }
 
-/// Load gshadow file, returning empty vec if file does not exist.
-fn load_gshadow_file(path: &Path, quiet: bool) -> Vec<GshadowEntry> {
-    if !path.exists() {
-        return Vec::new();
-    }
-    match gshadow::read_gshadow_file(path) {
-        Ok(entries) => entries,
-        Err(e) => {
-            if !quiet {
-                uucore::show_warning!("cannot open {}: {e}", path.display());
-            }
-            Vec::new()
-        }
-    }
-}
-
 /// Sort group entries by GID and write back atomically.
 ///
 /// NOTE: Sorting operates on parsed entries and discards any comments or
@@ -374,6 +372,29 @@ fn sort_gshadow_by_group(
     result
 }
 
+/// grpck(8) verifies "a valid list of members and administrators": a name in
+/// either list that no account carries is a dangling reference.
+fn check_members_exist(entries: &[GroupEntry], root: &shadow_core::sysroot::SysRoot) -> u32 {
+    let passwd_path = root.passwd_path();
+    if !passwd_path.exists() {
+        return 0;
+    }
+    let Ok(users) = shadow_core::passwd::read_passwd_file(&passwd_path) else {
+        return 0;
+    };
+    let known: std::collections::HashSet<&str> = users.iter().map(|u| u.name.as_str()).collect();
+
+    let mut errors = 0;
+    for group in entries {
+        for member in &group.members {
+            if !known.contains(member.as_str()) {
+                uucore::show_error!("group '{}': member '{member}' does not exist", group.name);
+                errors += 1;
+            }
+        }
+    }
+    errors
+}
 #[must_use]
 pub fn uu_app() -> Command {
     Command::new("grpck")
@@ -550,6 +571,7 @@ mod tests {
             read_only: true,
             group_path,
             gshadow_path: dir.path().join("gshadow_nonexistent"),
+            root: SysRoot::new(Some(dir.path())),
         };
 
         let result = run_checks(&opts);
@@ -569,6 +591,7 @@ mod tests {
             read_only: true,
             group_path,
             gshadow_path: dir.path().join("gshadow_nonexistent"),
+            root: SysRoot::new(Some(dir.path())),
         };
 
         let result = run_checks(&opts);
@@ -588,6 +611,7 @@ mod tests {
             read_only: false,
             group_path: group_path.clone(),
             gshadow_path,
+            root: SysRoot::new(Some(dir.path())),
         };
 
         let result = run_checks(&opts);

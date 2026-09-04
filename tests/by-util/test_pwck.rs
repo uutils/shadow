@@ -452,3 +452,16 @@ fn test_sort_keeps_each_comment_with_its_entry() {
         "each comment follows the entry it described, and the compat line stays last"
     );
 }
+
+#[test]
+fn test_relative_home_and_shell_are_reported() {
+    // Resolving a relative path against pwck's working directory reported on
+    // whatever happened to be there; the relative path is itself the fault.
+    let dir = setup_root(
+        "rel:x:1000:1000::home/rel:bin/sh\n",
+        "rel:!:1::::::\n",
+        "rel:x:1000:\n",
+    );
+    let prefix = dir.path().to_str().unwrap();
+    assert_eq!(run(&["pwck", "-r", "-R", prefix]), 2);
+}

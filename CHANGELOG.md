@@ -123,6 +123,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `grpck -q` reports errors again: every error print was suppressed along with
+  the warnings, so `-q` hid exactly what `grpck(8)` says it keeps. A malformed
+  or unreadable `/etc/gshadow` is now an error rather than "nothing to check",
+  and members and administrators are checked against `/etc/passwd` (#246)
+- `pwck` reports a relative home directory or login shell instead of resolving
+  it against its own working directory and reporting on whatever was there,
+  and a sort that cannot be written exits 6 as `pwck(8)` documents (#246)
 - `groupadd` takes the group lock *before* reading `/etc/group`. The name
   check and the GID allocation ran on a snapshot taken beforehand, so two
   concurrent `groupadd -r` calls could allocate the same GID and two

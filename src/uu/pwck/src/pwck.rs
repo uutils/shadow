@@ -10,7 +10,7 @@
 
 use std::collections::HashSet;
 use std::fmt;
-use std::io::{BufRead, Write as _};
+use std::io::{BufRead, Write};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -272,7 +272,8 @@ fn sort_and_write(passwd_path: &Path, shadow_path: &Path, read_only: bool) -> UR
     atomic::atomic_write(passwd_path, |f| {
         passwd::write_passwd_with_layout(&sorted_passwd, &passwd_layout, f)
     })
-    .map_err(|e| PwckError::CantUpdate(format!("cannot update {}: {e}", passwd_path.display())))?;
+    // pwck(8) exit 6 is "can not sort"; this is the write that performs it.
+    .map_err(|e| PwckError::CantSort(format!("cannot sort {}: {e}", passwd_path.display())))?;
 
     if shadow_path.exists() {
         let shadow_lock = FileLock::acquire(shadow_path).map_err(|e| {
@@ -369,6 +370,70 @@ struct CheckResult {
 // Core verification logic
 // ---------------------------------------------------------------------------
 
+/// Check an entry's home directory and login shell.
+///
+/// A relative path is reported as such: resolving it against pwck's working
+/// directory would report on whatever happened to be there. `/nonexistent` is
+/// the conventional placeholder for a system account and is skipped, as are
+/// the usual no-login shells, which need not be listed in `/etc/shells`.
+fn check_home_and_shell(
+    entry: &PasswdEntry,
+    root: &SysRoot,
+    valid_shells: &HashSet<PathBuf>,
+    stderr: &mut dyn Write,
+) -> u32 {
+    let mut errors = 0;
+
+    if !entry.home.is_empty() && entry.home != "/nonexistent" {
+        if entry.home.starts_with('/') {
+            if !root.resolve(&entry.home).exists() {
+                let _ = writeln!(
+                    stderr,
+                    "user '{}': directory '{}' does not exist",
+                    entry.name, entry.home
+                );
+                errors += 1;
+            }
+        } else {
+            let _ = writeln!(
+                stderr,
+                "user '{}': directory '{}' is not an absolute path",
+                entry.name, entry.home
+            );
+            errors += 1;
+        }
+    }
+
+    if !entry.shell.is_empty() {
+        if entry.shell.starts_with('/') {
+            let is_nologin = matches!(
+                entry.shell.as_str(),
+                "/usr/sbin/nologin" | "/sbin/nologin" | "/bin/false" | "/usr/bin/false"
+            );
+            if !is_nologin
+                && !valid_shells.contains(Path::new(&entry.shell))
+                && !root.resolve(&entry.shell).exists()
+            {
+                let _ = writeln!(
+                    stderr,
+                    "user '{}': program '{}' does not exist",
+                    entry.name, entry.shell
+                );
+                errors += 1;
+            }
+        } else {
+            let _ = writeln!(
+                stderr,
+                "user '{}': program '{}' is not an absolute path",
+                entry.name, entry.shell
+            );
+            errors += 1;
+        }
+    }
+
+    errors
+}
+
 /// Run all passwd-related integrity checks.
 #[allow(clippy::too_many_arguments)]
 fn check_passwd_entries(
@@ -429,48 +494,9 @@ fn check_passwd_entries(
             }
         }
 
-        // Check 5: Home directory exists.
-        // GNU skips "/nonexistent" (conventional placeholder for system accounts).
-        // Output format matches GNU exactly (no "pwck:" prefix).
-        if !quiet && !entry.home.is_empty() && entry.home != "/nonexistent" {
-            let home_path = if entry.home.starts_with('/') {
-                root.resolve(&entry.home)
-            } else {
-                PathBuf::from(&entry.home)
-            };
-            if !home_path.exists() {
-                let _ = writeln!(
-                    stderr,
-                    "user '{}': directory '{}' does not exist",
-                    entry.name, entry.home
-                );
-                errors += 1;
-            }
-        }
-
-        // Check 6: Login shell is valid.
-        if !quiet && !entry.shell.is_empty() {
-            let shell_path = if entry.shell.starts_with('/') {
-                root.resolve(&entry.shell)
-            } else {
-                PathBuf::from(&entry.shell)
-            };
-            let is_nologin = entry.shell == "/usr/sbin/nologin"
-                || entry.shell == "/sbin/nologin"
-                || entry.shell == "/bin/false"
-                || entry.shell == "/usr/bin/false";
-
-            if !is_nologin
-                && !valid_shells.contains(Path::new(&entry.shell))
-                && !shell_path.exists()
-            {
-                let _ = writeln!(
-                    stderr,
-                    "user '{}': program '{}' does not exist",
-                    entry.name, entry.shell
-                );
-                errors += 1;
-            }
+        // Checks 5 and 6: the home directory and the login shell.
+        if !quiet {
+            errors += check_home_and_shell(entry, root, valid_shells, &mut stderr);
         }
 
         // Check 9: Password should be 'x' (hash in shadow file).

@@ -242,3 +242,23 @@ fn test_read_only_and_sort_conflict() {
     assert_ne!(code, 0, "-r and -s cannot be combined");
     let _ = dir;
 }
+
+#[test]
+fn test_quiet_still_reports_errors_and_bad_gshadow() {
+    // grpck(8) -q: "Report errors only" — it suppresses warnings, not errors.
+    let (dir, gp, gsp) = setup_files("bad:x:notanumber:\n", "bad:!::\n");
+    let _ = &dir;
+    assert_eq!(
+        run(&["grpck", "-r", "-q", &gp, &gsp]),
+        2,
+        "a malformed entry is an error even with -q"
+    );
+}
+
+#[test]
+fn test_malformed_gshadow_is_reported() {
+    // A gshadow that cannot be parsed used to read as "nothing to check".
+    let (dir, gp, gsp) = setup_files("good:x:1000:\n", "this is not a gshadow line\n");
+    let _ = &dir;
+    assert_eq!(run(&["grpck", "-r", &gp, &gsp]), 2);
+}
