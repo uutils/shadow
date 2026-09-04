@@ -120,6 +120,17 @@ fn read_shells(path: &Path) -> Result<Vec<String>, ChshError> {
     Ok(shells)
 }
 
+/// The account's current login shell.
+fn current_shell(root: &SysRoot, user: &str) -> Result<String, ChshError> {
+    let entries = passwd::read_passwd_file(&root.passwd_path())
+        .map_err(|e| ChshError::Error(format!("cannot read passwd: {e}")))?;
+    entries
+        .iter()
+        .find(|e| e.name == user)
+        .map(|e| e.shell.clone())
+        .ok_or_else(|| ChshError::Error(format!("user '{user}' does not exist")))
+}
+
 /// Whether the user's *current* login shell is listed in `/etc/shells`.
 ///
 /// A user whose shell is not listed is a restricted account (shells(5)); such
@@ -127,59 +138,81 @@ fn read_shells(path: &Path) -> Result<Vec<String>, ChshError> {
 /// current shell cannot be read, is treated as restricted (fail closed). An
 /// empty current shell means the default `/bin/sh`, which is not restricted.
 fn current_shell_is_listed(root: &SysRoot, user: &str) -> bool {
-    let Ok(entries) = passwd::read_passwd_file(&root.passwd_path()) else {
+    let Ok(shell) = current_shell(root, user) else {
         return false;
     };
-    let Some(entry) = entries.iter().find(|e| e.name == user) else {
-        return false;
-    };
-    if entry.shell.is_empty() {
+    if shell.is_empty() {
         return true;
     }
     match read_shells(&root.shells_path()) {
-        Ok(shells) if shells.is_empty() => entry.shell == "/bin/sh",
-        Ok(shells) => shells.contains(&entry.shell),
+        Ok(shells) if shells.is_empty() => shell == "/bin/sh",
+        Ok(shells) => shells.contains(&shell),
         Err(_) => false,
     }
 }
 
-/// Check if a shell is valid: must be an absolute path, must exist as a
-/// regular file, and must be listed in `/etc/shells` (unless caller is root).
-fn validate_shell(shell: &str, shells_path: &Path) -> Result<(), ChshError> {
+/// Prompt for a new login shell, showing the current one -- what chsh(1) does
+/// when no `-s` option is given. `None` means the answer was empty or repeated
+/// the current value, so there is nothing to change. Selecting the system
+/// default (an empty field) is only possible with `-s ''`, since an empty
+/// answer here means "keep what I have".
+fn prompt_for_shell(root: &SysRoot, user: &str) -> Result<Option<String>, ChshError> {
+    let current = current_shell(root, user)?;
+    let _ = writeln!(
+        io::stderr(),
+        "Changing the login shell for {user}\nEnter the new value, or press ENTER for the default"
+    );
+    let answer = shadow_core::tty::prompt_line(&format!("\tLogin Shell [{current}]: "))
+        .map_err(|e| ChshError::Error(format!("cannot read from the terminal: {e}")))?;
+    if answer.is_empty() || answer == current {
+        return Ok(None);
+    }
+    Ok(Some(answer))
+}
+
+/// Check that a shell may be set: an absolute path that exists, and, for a
+/// caller who is not root, one listed in `/etc/shells`.
+///
+/// **The order of the two tests matters.** `chsh` is installed setuid-root, so
+/// `Path::exists` answers with root's view of the filesystem. Testing
+/// existence first turns the tool into an oracle for paths the caller cannot
+/// otherwise stat: `chsh -s /root/.ssh/id_ed25519` would answer "is not listed
+/// in /etc/shells" for a file that exists and "does not exist" for one that
+/// does not. For a non-root caller the membership test therefore runs first,
+/// and it discloses nothing, `/etc/shells` being world-readable.
+///
+/// An empty shell is accepted from anyone: passwd(5) gives the field no
+/// meaning of its own, and `login` falls back to `/bin/sh`, so it selects the
+/// system default rather than naming a program.
+fn validate_shell(shell: &str, shells_path: &Path, caller_is_root: bool) -> Result<(), ChshError> {
+    if shell.is_empty() {
+        return Ok(());
+    }
+
     if !shell.starts_with('/') {
         return Err(ChshError::Error(format!(
             "'{shell}' is not an absolute path"
         )));
     }
 
-    let path = Path::new(shell);
-    if !path.exists() {
-        return Err(ChshError::Error(format!("'{shell}' does not exist")));
-    }
-
-    // Root can set any existing shell, bypassing the /etc/shells check.
-    if shadow_core::hardening::caller_is_root() {
-        return Ok(());
-    }
-
-    let valid_shells = read_shells(shells_path)?;
-
-    // If /etc/shells is empty or missing, only /bin/sh is implicitly valid.
-    if valid_shells.is_empty() {
-        if shell == "/bin/sh" {
-            return Ok(());
+    if !caller_is_root {
+        let valid_shells = read_shells(shells_path)?;
+        // An empty or missing /etc/shells leaves only /bin/sh implicitly valid.
+        let listed = if valid_shells.is_empty() {
+            shell == "/bin/sh"
+        } else {
+            valid_shells.iter().any(|s| s == shell)
+        };
+        if !listed {
+            return Err(ChshError::Error(format!(
+                "'{shell}' is not listed in {}",
+                shells_path.display()
+            )));
         }
-        return Err(ChshError::Error(format!(
-            "'{shell}' is not listed in {}",
-            shells_path.display()
-        )));
     }
 
-    if !valid_shells.iter().any(|s| s == shell) {
-        return Err(ChshError::Error(format!(
-            "'{shell}' is not listed in {}",
-            shells_path.display()
-        )));
+    if !Path::new(shell).exists() {
+        return Err(ChshError::Error(format!("'{shell}' does not exist")));
     }
 
     Ok(())
@@ -193,9 +226,9 @@ fn mutate_passwd<F>(root: &SysRoot, username: &str, mutate: F) -> UResult<()>
 where
     F: FnOnce(&mut PasswdEntry) -> Result<(), String>,
 {
-    if rustix::process::geteuid().is_root() {
-        let _ = shadow_core::process::setuid(0);
-    }
+    // euid 0 is all the lock and the atomic write need. setuid(0) would also
+    // change the *real* uid, after which caller_is_root() -- deliberately real
+    // uid based -- would answer true for every caller.
 
     let _signals = shadow_core::hardening::SignalBlocker::block_critical()
         .map_err(|e| ChshError::Error(e.to_string()))?;
@@ -286,36 +319,46 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     let target_user = resolve_target_user(&matches)?;
 
-    // Non-root users can only change their own shell, and must prove they are
-    // who they claim before anything is written.
-    if !shadow_core::hardening::caller_is_root() {
-        let current_user = shadow_core::hardening::current_username()
+    // A non-root caller may only change their own shell, and only if the
+    // account is not restricted. Authentication is deferred until the new
+    // value has been checked, so nobody types a password only to be told the
+    // shell was refused.
+    let caller = if shadow_core::hardening::caller_is_root() {
+        None
+    } else {
+        let user = shadow_core::hardening::current_username()
             .map_err(|e| ChshError::Error(e.to_string()))?;
-        if current_user != target_user {
+        if user != target_user {
             return Err(ChshError::Error("you may only change your own login shell".into()).into());
         }
         // chsh(1): an account whose current shell is not in /etc/shells is
         // restricted and may not change it. Otherwise a deliberately confined
         // account (e.g. /bin/rbash, kept out of /etc/shells) could escape.
-        if !current_shell_is_listed(&root, &current_user) {
-            return Err(ChshError::Error(format!(
-                "you may not change the shell for '{current_user}'"
-            ))
-            .into());
+        if !current_shell_is_listed(&root, &user) {
+            return Err(
+                ChshError::Error(format!("you may not change the shell for '{user}'")).into(),
+            );
         }
-        authenticate_caller(&current_user)?;
-    }
-
-    let Some(new_shell) = matches.get_one::<String>(options::SHELL) else {
-        return Err(ChshError::Error("no shell specified; use -s SHELL".into()).into());
+        Some(user)
     };
 
-    // Validate the shell before acquiring the lock.
-    validate_shell(new_shell, &root.shells_path())?;
+    let new_shell = if let Some(shell) = matches.get_one::<String>(options::SHELL) {
+        shell.clone()
+    } else if let Some(shell) = prompt_for_shell(&root, &target_user)? {
+        shell
+    } else {
+        return Ok(());
+    };
 
-    let shell_clone = new_shell.clone();
+    // Check the value before taking the lock and before asking for a password.
+    validate_shell(&new_shell, &root.shells_path(), caller.is_none())?;
+
+    if let Some(user) = &caller {
+        authenticate_caller(user)?;
+    }
+
     mutate_passwd(&root, &target_user, move |entry| {
-        entry.shell = shell_clone;
+        entry.shell = new_shell;
         Ok(())
     })?;
 
@@ -484,8 +527,63 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let shells_path = dir.path().join("shells");
         std::fs::write(&shells_path, "/bin/sh\n").expect("write");
-        let result = validate_shell("bin/sh", &shells_path);
-        assert!(result.is_err());
+        assert!(validate_shell("bin/sh", &shells_path, false).is_err());
+        assert!(validate_shell("bin/sh", &shells_path, true).is_err());
+    }
+
+    /// An empty shell field is the system default, not a missing program.
+    #[test]
+    fn test_validate_shell_accepts_empty() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shells_path = dir.path().join("shells");
+        std::fs::write(&shells_path, "/bin/sh\n").expect("write");
+        validate_shell("", &shells_path, false).expect("empty shell is the default");
+        validate_shell("", &shells_path, true).expect("empty shell is the default");
+    }
+
+    /// Setuid-root, `Path::exists` sees what root sees. A non-root caller must
+    /// therefore be told "not listed" for any unlisted path, whether or not it
+    /// exists, so the tool cannot be used to probe the filesystem.
+    #[test]
+    fn test_validate_shell_does_not_leak_existence_to_non_root() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shells_path = dir.path().join("shells");
+        std::fs::write(&shells_path, "/bin/sh\n").expect("write");
+
+        let secret = dir.path().join("secret");
+        std::fs::write(&secret, "").expect("write");
+        let existing = secret.to_string_lossy().into_owned();
+        let missing = dir.path().join("absent").to_string_lossy().into_owned();
+
+        let for_existing =
+            validate_shell(&existing, &shells_path, false).expect_err("unlisted shell");
+        let for_missing =
+            validate_shell(&missing, &shells_path, false).expect_err("unlisted shell");
+        assert!(
+            format!("{for_existing}").contains("is not listed"),
+            "existence must not be reported: {for_existing}"
+        );
+        assert!(
+            format!("{for_missing}").contains("is not listed"),
+            "existence must not be reported: {for_missing}"
+        );
+    }
+
+    /// Root bypasses /etc/shells but still may not set a shell that is absent.
+    #[test]
+    fn test_validate_shell_root_bypasses_listing_but_not_existence() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shells_path = dir.path().join("shells");
+        std::fs::write(&shells_path, "/bin/sh\n").expect("write");
+
+        let unlisted = dir.path().join("custom");
+        std::fs::write(&unlisted, "").expect("write");
+        let unlisted = unlisted.to_string_lossy().into_owned();
+        validate_shell(&unlisted, &shells_path, true).expect("root may set an unlisted shell");
+
+        let missing = dir.path().join("absent").to_string_lossy().into_owned();
+        let err = validate_shell(&missing, &shells_path, true).expect_err("absent shell");
+        assert!(format!("{err}").contains("does not exist"), "{err}");
     }
 
     // -----------------------------------------------------------------------

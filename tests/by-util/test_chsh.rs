@@ -35,11 +35,14 @@ fn test_unknown_flag_exits_one() {
     assert_eq!(code, 1, "unknown flag should exit 1");
 }
 
+/// Without `-s`, chsh prompts for the new shell, so it must not be given a
+/// target it can never change. An unknown login fails before any prompt: for a
+/// non-root caller because it is not their own account, for root because the
+/// account has no record to show a current value from.
 #[test]
-fn test_no_shell_flag_exits_error() {
-    // Without -s flag, chsh should error
-    let code = run(&["chsh"]);
-    assert_eq!(code, 1, "no -s flag should exit 1");
+fn test_unknown_user_exits_error_without_prompting() {
+    let code = run(&["chsh", "no-such-user-9f3a1c"]);
+    assert_eq!(code, 1, "unknown login should exit 1");
 }
 
 // ---------------------------------------------------------------------------
