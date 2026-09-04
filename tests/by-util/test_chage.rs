@@ -290,3 +290,25 @@ fn test_remove_expiredate() {
         "expire_date should be empty after removal, got: {content}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Aging-field bounds (chage(1))
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_negative_aging_values_are_rejected() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    // The range check runs before any file is opened, so this touches nothing
+    // even though chage has no prefix option: a day count may only be -1
+    // ("unset") or non-negative.
+    for flag in ["-m", "-M", "-W", "-I"] {
+        assert_eq!(
+            run(&["chage", flag, "-5", "no_such_user_for_chage_test"]),
+            2,
+            "{flag} -5 must be an invalid argument"
+        );
+    }
+}

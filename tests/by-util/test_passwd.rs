@@ -469,3 +469,43 @@ fn test_gnu_compat_lock_unlock() {
         "unlock should remove ! — got: {content}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Aging-field bounds (passwd(1))
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_maxdays_minus_one_clears_the_field() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    // passwd(1) documents `-x -1` as "no maximum": the field is cleared, not
+    // stored as the literal -1.
+    let dir = setup_prefix("alice:$6$hash:19500:0:99999:7:::\n");
+    let code = run_with_prefix(&dir, &["-x", "-1", "alice"]);
+    assert_eq!(code, 0, "-x -1 should be accepted");
+    assert!(
+        read_shadow(&dir).starts_with("alice:$6$hash:19500:0::7:"),
+        "max-age should be empty, got: {}",
+        read_shadow(&dir)
+    );
+}
+
+#[test]
+fn test_negative_aging_values_are_rejected() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix("alice:$6$hash:19500:0:99999:7:::\n");
+    let before = read_shadow(&dir);
+    for flag in ["-n", "-x", "-w", "-i"] {
+        assert_eq!(
+            run_with_prefix(&dir, &[flag, "-5", "alice"]),
+            6,
+            "{flag} -5 must be an invalid argument"
+        );
+    }
+    assert_eq!(read_shadow(&dir), before, "nothing may be written");
+}

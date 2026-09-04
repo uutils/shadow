@@ -78,6 +78,8 @@ enum PasswdError {
     /// Exit 10 — PAM returned an error.
     #[cfg_attr(not(feature = "pam"), allow(dead_code))]
     PamError(String),
+    /// Exit 6 — a numeric option was given a value outside its range.
+    InvalidArgument(String),
 }
 
 impl fmt::Display for PasswdError {
@@ -87,7 +89,8 @@ impl fmt::Display for PasswdError {
             | Self::UnexpectedFailure(msg)
             | Self::FileMissing(msg)
             | Self::FileBusy(msg)
-            | Self::PamError(msg) => f.write_str(msg),
+            | Self::PamError(msg)
+            | Self::InvalidArgument(msg) => f.write_str(msg),
         }
     }
 }
@@ -102,6 +105,7 @@ impl UError for PasswdError {
             Self::FileMissing(_) => 4,
             Self::FileBusy(_) => 5,
             Self::PamError(_) => 10,
+            Self::InvalidArgument(_) => 6,
         }
     }
 }
@@ -229,6 +233,20 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let inactive = matches.get_one::<i64>(options::INACTIVE).copied();
     let has_aging = min.is_some() || max.is_some() || warn.is_some() || inactive.is_some();
 
+    // The aging fields count days: only -1, meaning "unset", may be negative.
+    // passwd(1) documents `-x -1` for "no maximum"; anything below that was
+    // stored verbatim and left a nonsensical policy behind.
+    for (value, flag) in [(min, "-n"), (max, "-x"), (warn, "-w"), (inactive, "-i")] {
+        if let Some(days) = value
+            && days < -1
+        {
+            return Err(PasswdError::InvalidArgument(format!(
+                "invalid value '{days}' for {flag}: expected -1 or a day count"
+            ))
+            .into());
+        }
+    }
+
     // Admin operations (lock/unlock/delete/expire/aging) require the real
     // caller to be root. Non-root users can only change their own password
     // (the default PAM path below).
@@ -267,18 +285,20 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 entry.expire();
             }
 
-            // Apply aging fields.
+            // Apply aging fields. -1 clears the field (passwd(1) documents
+            // `-x -1` as "no maximum"), matching how chage writes them.
+            let field = |v: i64| if v == -1 { None } else { Some(v) };
             if let Some(v) = min {
-                entry.min_age = Some(v);
+                entry.min_age = field(v);
             }
             if let Some(v) = max {
-                entry.max_age = Some(v);
+                entry.max_age = field(v);
             }
             if let Some(v) = warn {
-                entry.warn_days = Some(v);
+                entry.warn_days = field(v);
             }
             if let Some(v) = inactive {
-                entry.inactive_days = Some(v);
+                entry.inactive_days = field(v);
             }
 
             Ok(())
@@ -353,6 +373,7 @@ pub fn uu_app() -> Command {
                 .long("inactive")
                 .help("disable the password INACTIVE days past its expiry")
                 .value_name("INACTIVE")
+                .allow_hyphen_values(true)
                 .value_parser(clap::value_parser!(i64)),
         )
         .arg(
@@ -369,6 +390,7 @@ pub fn uu_app() -> Command {
                 .long("mindays")
                 .help("require at least MIN_DAYS between password changes")
                 .value_name("MIN_DAYS")
+                .allow_hyphen_values(true)
                 .value_parser(clap::value_parser!(i64)),
         )
         .arg(
@@ -421,6 +443,7 @@ pub fn uu_app() -> Command {
                 .long("warndays")
                 .help("warn the user WARN_DAYS before password expiry")
                 .value_name("WARN_DAYS")
+                .allow_hyphen_values(true)
                 .value_parser(clap::value_parser!(i64)),
         )
         .arg(
@@ -429,6 +452,7 @@ pub fn uu_app() -> Command {
                 .long("maxdays")
                 .help("require a password change at least every MAX_DAYS")
                 .value_name("MAX_DAYS")
+                .allow_hyphen_values(true)
                 .value_parser(clap::value_parser!(i64)),
         )
         .arg(

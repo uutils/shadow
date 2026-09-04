@@ -64,6 +64,8 @@ enum ChageError {
     FileBusy(String),
     /// Exit 15 — shadow entry not found for user.
     ShadowNotFound(String),
+    /// Exit 2 — a numeric option was given a value outside its range.
+    InvalidArgument(String),
 }
 
 impl fmt::Display for ChageError {
@@ -72,7 +74,8 @@ impl fmt::Display for ChageError {
             Self::PermissionDenied(msg)
             | Self::UnexpectedFailure(msg)
             | Self::FileBusy(msg)
-            | Self::ShadowNotFound(msg) => f.write_str(msg),
+            | Self::ShadowNotFound(msg)
+            | Self::InvalidArgument(msg) => f.write_str(msg),
         }
     }
 }
@@ -86,6 +89,7 @@ impl UError for ChageError {
             Self::UnexpectedFailure(_) => 3,
             Self::FileBusy(_) => 5,
             Self::ShadowNotFound(_) => 15,
+            Self::InvalidArgument(_) => 2,
         }
     }
 }
@@ -285,6 +289,25 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             "no aging fields specified (interactive mode not yet supported)".into(),
         )
         .into());
+    }
+
+    // The aging fields count days: only -1, meaning "unset", may be negative.
+    // A value such as -5 was accepted and written, and every later reader then
+    // saw a nonsensical policy.
+    for (value, flag) in [
+        (inactive, "--inactive"),
+        (mindays, "--mindays"),
+        (maxdays, "--maxdays"),
+        (warndays, "--warndays"),
+    ] {
+        if let Some(&days) = value
+            && days < -1
+        {
+            return Err(ChageError::InvalidArgument(format!(
+                "invalid value '{days}' for {flag}: expected -1 or a day count"
+            ))
+            .into());
+        }
     }
 
     // Parse date-valued arguments before acquiring locks.

@@ -110,6 +110,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The password-aging fields reject a negative day count other than `-1`.
+  `chage -M -5` and `passwd -x -5` stored the value verbatim and left a
+  nonsensical policy behind; they now exit 2 and 6 respectively, the codes
+  their man pages give for an invalid option argument. `passwd -n/-x/-w/-i`
+  also accept `-1` at last (clap rejected the leading hyphen) and treat it as
+  "clear the field", the way `chage` already did (#248)
 - `chpasswd` hashes before taking the `/etc/shadow` lock. A batch of yescrypt
   or high-`rounds=` hashes held the lock, with signals blocked, for the whole
   run (#248)
