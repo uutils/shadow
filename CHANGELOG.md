@@ -51,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `userdel -r` no longer deletes a home directory that the user does not own
+  or that another account shares, unless `-f` is given (`userdel(8)` ties both
+  to `-f`). It could previously erase a service account's root-owned
+  `/srv/data`, or one of two accounts' shared home (#243)
 - The account tools now take `/etc/.pwd.lock` (the `lckpwdf(3)` lock) in
   addition to the `.lock` files, so they exclude the rest of the system —
   `vipw`, `systemd-sysusers`, `libuser` and `pam_unix`'s own `passwd`. Before
@@ -88,6 +92,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `userdel` now removes the user's private group (the `USERGROUPS_ENAB` group
+  named after the login) when it has no other members, purges the user's
+  `/etc/subuid` and `/etc/subgid` ranges so a later same-named user does not
+  inherit them, and exits 6 (not 1) for a user that does not exist — with `-f`
+  it tolerates the absence and cleans up whatever remains (#243)
 - `groupmod -g` now updates `/etc/passwd`: users whose primary group is the
   one being renumbered follow it, instead of being left with a primary GID
   that no longer names a group. It also rejects GID `4294967295`

@@ -38,14 +38,16 @@ mod exit_codes {
     pub const CANT_REMOVE_HOME: i32 = 12;
 }
 
-// Variant names mirror GNU userdel(8)'s documented exit-code names
-// (CANT_UPDATE_PASSWD, ...), so the shared prefix is intentional.
-#[allow(clippy::enum_variant_names)]
+mod extra_exit_codes {
+    pub const USER_NOT_FOUND: i32 = 6;
+}
+
 #[derive(Debug)]
 enum UserdelError {
     CantUpdatePasswd(String),
     CantUpdateGroup(String),
     CantRemoveHome(String),
+    UserNotFound(String),
 }
 
 impl fmt::Display for UserdelError {
@@ -53,7 +55,8 @@ impl fmt::Display for UserdelError {
         match self {
             Self::CantUpdatePasswd(msg)
             | Self::CantUpdateGroup(msg)
-            | Self::CantRemoveHome(msg) => f.write_str(msg),
+            | Self::CantRemoveHome(msg)
+            | Self::UserNotFound(msg) => f.write_str(msg),
         }
     }
 }
@@ -66,6 +69,7 @@ impl UError for UserdelError {
             Self::CantUpdatePasswd(_) => exit_codes::CANT_UPDATE_PASSWD,
             Self::CantUpdateGroup(_) => exit_codes::CANT_UPDATE_GROUP,
             Self::CantRemoveHome(_) => exit_codes::CANT_REMOVE_HOME,
+            Self::UserNotFound(_) => extra_exit_codes::USER_NOT_FOUND,
         }
     }
 }
@@ -84,6 +88,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         return Err(shadow_core::cli::AlreadyPrinted(exit_codes::INVALID_SYNTAX).into());
     };
     let remove_home = matches.get_flag(options::REMOVE);
+    let force = matches.get_flag(options::FORCE);
     let prefix = matches
         .get_one::<String>(options::PREFIX)
         .or_else(|| matches.get_one::<String>(options::ROOT))
@@ -97,64 +102,92 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         );
     }
 
-    // Read the user's home directory and UID from /etc/passwd BEFORE removing
-    // the entry (needed for home removal and audit logging).
+    // Read the account BEFORE removing it: home, uid and primary gid are
+    // needed for home removal, the private-group cleanup and the audit event.
     let passwd_path = root.passwd_path();
     let pre_entries = passwd::read_passwd_file(&passwd_path)
         .map_err(|e| UserdelError::CantUpdatePasswd(format!("cannot read passwd: {e}")))?;
-    let saved_uid = pre_entries
-        .iter()
-        .find(|e| e.name == *login)
-        .map_or(0, |e| e.uid);
-    let saved_home = if remove_home {
-        pre_entries
-            .iter()
-            .find(|e| e.name == *login)
-            .map(|e| e.home.clone())
-    } else {
-        None
-    };
+
+    let target = pre_entries.iter().find(|e| e.name == *login).cloned();
+
+    // userdel(8): exit 6 when the user does not exist. With -f the removal of
+    // whatever remains (group membership, subordinate IDs) still proceeds.
+    if target.is_none() && !force {
+        return Err(UserdelError::UserNotFound(format!("user '{login}' does not exist")).into());
+    }
+
+    let saved_uid = target.as_ref().map_or(0, |e| e.uid);
+    let primary_gid = target.as_ref().map(|e| e.gid);
+    let saved_home = target.as_ref().map(|e| e.home.clone());
+    // A home shared with another still-present account must not be deleted
+    // unless forced (userdel(8): -r removes it "even if another user uses the
+    // same home directory" only with -f).
+    let home_shared_by_other = target.as_ref().is_some_and(|t| {
+        !t.home.is_empty()
+            && pre_entries
+                .iter()
+                .any(|e| e.name != *login && e.home == t.home)
+    });
+
+    // USERGROUPS_ENAB defaults to "yes" when unset or the file is absent.
+    let usergroups_enab = shadow_core::login_defs::LoginDefs::load(&root.login_defs_path())
+        .ok()
+        .and_then(|d| d.get("USERGROUPS_ENAB").map(|v| v == "yes"))
+        .unwrap_or(true);
 
     // Block signals for the file-modification critical section only.
     // Dropped before home removal so long-running deletions remain interruptible.
     let signals = shadow_core::hardening::SignalBlocker::block_critical()
         .map_err(|e| UserdelError::CantUpdatePasswd(format!("cannot block signals: {e}")))?;
 
-    // 1. Remove from /etc/passwd
-    remove_entry_from_file::<PasswdEntry>(&passwd_path, login, "passwd")
-        .map_err(UserdelError::CantUpdatePasswd)?;
+    // 1. Remove from /etc/passwd (only if present; with -f it may be absent).
+    if target.is_some() {
+        remove_entry_from_file::<PasswdEntry>(&passwd_path, login, "passwd")
+            .map_err(UserdelError::CantUpdatePasswd)?;
+    }
 
-    // 2. Remove from /etc/shadow
+    // 2. Remove from /etc/shadow (a missing entry is not an error).
     let shadow_path = root.shadow_path();
     if shadow_path.exists() {
         let _ = remove_entry_from_file::<ShadowEntry>(&shadow_path, login, "shadow");
     }
 
-    // 3. Remove from /etc/group membership lists
+    // 3. Remove from /etc/group membership lists.
     let group_path = root.group_path();
     if group_path.exists() {
         remove_from_group_members(&group_path, login).map_err(UserdelError::CantUpdateGroup)?;
     }
 
-    // 4. Remove from /etc/gshadow membership lists
-    let gshadow_path = root.resolve("/etc/gshadow");
+    // 4. Remove from /etc/gshadow membership lists.
+    let gshadow_path = root.gshadow_path();
     if gshadow_path.exists() {
         let _ = remove_from_gshadow_members(&gshadow_path, login);
     }
 
+    // 5. Remove the user's private group (USERGROUPS_ENAB), the counterpart of
+    //    what useradd creates.
+    if usergroups_enab {
+        remove_user_private_group(&root, login, primary_gid, &pre_entries, force)
+            .map_err(UserdelError::CantUpdateGroup)?;
+    }
+
+    // 6. Remove any subordinate UID/GID ranges owned by the user, so a later
+    //    user of the same name does not inherit them.
+    remove_subid_rows(&root.subuid_path(), login);
+    remove_subid_rows(&root.subgid_path(), login);
+
     // Restore signals before potentially long-running home removal.
     drop(signals);
 
-    // 5. Optionally remove home directory (using the path saved from passwd).
+    // 7. Optionally remove the home directory and mail spool.
     if remove_home {
         if let Some(ref home_dir) = saved_home
             && !home_dir.is_empty()
         {
             let home = root.resolve(home_dir);
-            safe_remove_home(&home)?;
+            safe_remove_home(&home, saved_uid, force, home_shared_by_other)?;
         }
 
-        // Remove mail spool.
         let mail = root.resolve(&format!("/var/mail/{login}"));
         if mail.exists() {
             let _ = std::fs::remove_file(&mail);
@@ -180,7 +213,10 @@ pub fn uu_app() -> Command {
             Arg::new(options::FORCE)
                 .short('f')
                 .long("force")
-                .help("Accepted for compatibility; currently has no effect")
+                .help(
+                    "Remove even if the user does not exist, and with -r remove the home \
+                     directory even if it is not owned by the user or is shared",
+                )
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -223,12 +259,26 @@ const PROTECTED_DIRS: &[&str] = &[
 ];
 
 /// Safely remove a home directory with multiple safeguards:
+/// - Refuse a home shared with another account, or not owned by the user,
+///   unless `force` (userdel(8) ties both to `-f`).
 /// - Refuse to remove protected system directories.
 /// - Refuse to follow symlinks at the top level.
 /// - Refuse to remove a mount point (different device than parent).
-fn safe_remove_home(home: &Path) -> Result<(), UserdelError> {
+fn safe_remove_home(
+    home: &Path,
+    owner_uid: u32,
+    force: bool,
+    shared_by_other: bool,
+) -> Result<(), UserdelError> {
     if !home.exists() {
         return Ok(());
+    }
+
+    if shared_by_other && !force {
+        return Err(UserdelError::CantRemoveHome(format!(
+            "not removing '{}': it is used by another user (use -f to force)",
+            home.display()
+        )));
     }
 
     // Resolve symlinks and relative components so tricks like
@@ -254,6 +304,19 @@ fn safe_remove_home(home: &Path) -> Result<(), UserdelError> {
             "refusing to follow symlink at '{}'",
             home.display()
         )));
+    }
+
+    // Refuse a directory the user does not own, unless forced: it may be a
+    // shared or system path the account merely pointed at.
+    {
+        use std::os::unix::fs::MetadataExt;
+        if !force && meta.uid() != owner_uid {
+            return Err(UserdelError::CantRemoveHome(format!(
+                "not removing '{}': owned by uid {} not {owner_uid} (use -f to force)",
+                home.display(),
+                meta.uid()
+            )));
+        }
     }
 
     // Refuse to remove a mount point (device ID differs from parent).
@@ -396,6 +459,126 @@ fn remove_from_gshadow_members(path: &Path, login: &str) -> Result<(), String> {
 
     drop(lock);
     Ok(())
+}
+
+/// Remove the user's private group — the group named after the login that
+/// `useradd` creates under `USERGROUPS_ENAB`.
+///
+/// It is removed only when it has no members left; and, unless `force`, only
+/// when it is not another user's primary group (userdel(8): `-f` removes it
+/// "even if it is the primary group of another user"). Membership stripping
+/// has already run, so `members` holds only supplementary members.
+fn remove_user_private_group(
+    root: &SysRoot,
+    login: &str,
+    saved_gid: Option<u32>,
+    pre_entries: &[PasswdEntry],
+    force: bool,
+) -> Result<(), String> {
+    let group_path = root.group_path();
+    if !group_path.exists() {
+        return Ok(());
+    }
+
+    let group_lock =
+        FileLock::acquire(&group_path).map_err(|e| format!("cannot lock group file: {e}"))?;
+    let mut entries =
+        group::read_group_file(&group_path).map_err(|e| format!("cannot read group: {e}"))?;
+
+    let Some(idx) = entries.iter().position(|g| g.name == login) else {
+        return Ok(());
+    };
+    // Keep it if other users still belong to it.
+    if !entries[idx].members.is_empty() {
+        return Ok(());
+    }
+    let gid = entries[idx].gid;
+    // Keep it if it is a private group whose GID is not the user's primary
+    // one (then it is not really this user's), or another user's primary
+    // group, unless forced.
+    if saved_gid != Some(gid) && !force {
+        return Ok(());
+    }
+    if !force && pre_entries.iter().any(|e| e.name != login && e.gid == gid) {
+        return Ok(());
+    }
+
+    entries.remove(idx);
+    write_group_or_empty(&group_path, &entries).map_err(|e| format!("cannot write group: {e}"))?;
+    drop(group_lock);
+
+    // Mirror the removal in gshadow.
+    let gshadow_path = root.gshadow_path();
+    if gshadow_path.exists() {
+        let gs_lock =
+            FileLock::acquire(&gshadow_path).map_err(|e| format!("cannot lock gshadow: {e}"))?;
+        if let Ok(mut gs) = gshadow::read_gshadow_file(&gshadow_path) {
+            let before = gs.len();
+            gs.retain(|g| g.name != login);
+            if gs.len() != before {
+                write_gshadow_or_empty(&gshadow_path, &gs)
+                    .map_err(|e| format!("cannot write gshadow: {e}"))?;
+            }
+        }
+        drop(gs_lock);
+    }
+
+    Ok(())
+}
+
+/// Remove every subordinate-ID row owned by `login` from a subuid/subgid file.
+///
+/// Best-effort: a missing file is nothing to do, and if the user held the only
+/// rows the now-empty file is unlinked (an absent file means "no ranges",
+/// which the atomic writer's zero-length guard would otherwise forbid).
+fn remove_subid_rows(path: &Path, login: &str) {
+    use shadow_core::subid;
+
+    if !path.exists() {
+        return;
+    }
+    let Ok(lock) = FileLock::acquire(path) else {
+        return;
+    };
+    if let Ok(mut entries) = subid::read_subid_file(path) {
+        let before = entries.len();
+        entries.retain(|e| e.name != login);
+        if entries.len() != before {
+            if entries.is_empty() {
+                let _ = std::fs::remove_file(path);
+            } else {
+                let _ = atomic::atomic_write(path, |f| subid::write_subid(&entries, f));
+            }
+        }
+    }
+    drop(lock);
+}
+
+/// Write group entries, unlinking the file instead if the result is empty
+/// (the atomic writer refuses a zero-length file, but an empty group file is
+/// valid — and only reached in a fully torn-down `--prefix` tree).
+fn write_group_or_empty(
+    path: &Path,
+    entries: &[group::GroupEntry],
+) -> Result<(), shadow_core::error::ShadowError> {
+    if entries.is_empty() {
+        let _ = std::fs::remove_file(path);
+        Ok(())
+    } else {
+        atomic::atomic_write(path, |f| group::write_group(entries, f))
+    }
+}
+
+fn write_gshadow_or_empty(
+    path: &Path,
+    entries: &[gshadow::GshadowEntry],
+) -> Result<(), shadow_core::error::ShadowError> {
+    if entries.is_empty() {
+        let _ = std::fs::remove_file(path);
+        Ok(())
+    } else {
+        atomic::atomic_write(path, |f| gshadow::write_gshadow(entries, f))
+    }
 }
 
 #[cfg(test)]

@@ -141,11 +141,14 @@ fn test_delete_user_remove_home() {
 
     let dir = setup_root_dir();
 
-    // Create the home directory that userdel -r should remove.
+    // Create the home directory that userdel -r should remove, owned by the
+    // user as useradd would leave it (userdel -r without -f only removes a
+    // home the user owns).
     let home_path = dir.path().join("home/testuser");
     std::fs::create_dir_all(&home_path).expect("failed to create home dir");
     std::fs::write(home_path.join("somefile.txt"), "content")
         .expect("failed to write file in home");
+    std::os::unix::fs::chown(&home_path, Some(1000), Some(1000)).expect("chown home to user");
 
     // Update passwd to point home to the temp dir path.
     let passwd_path = dir.path().join("etc/passwd");
@@ -311,4 +314,152 @@ fn test_delete_multiple_users_sequentially() {
         passwd.contains("root:"),
         "root should remain, got: {passwd}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Safety and cleanup (userdel(8))
+// ---------------------------------------------------------------------------
+
+/// A tree where `priv` has a private group of the same name and a home.
+fn setup_private_group_dir() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let etc = dir.path().join("etc");
+    std::fs::create_dir_all(&etc).expect("etc");
+    std::fs::write(
+        etc.join("passwd"),
+        "root:x:0:0:root:/root:/bin/bash\n\
+         priv:x:1000:1000:Priv:/home/priv:/bin/bash\n",
+    )
+    .unwrap();
+    std::fs::write(
+        etc.join("shadow"),
+        "root:*:19500:0:99999:7:::\npriv:$6$h:19500:0:99999:7:::\n",
+    )
+    .unwrap();
+    std::fs::write(etc.join("group"), "root:x:0:\npriv:x:1000:\n").unwrap();
+    std::fs::write(etc.join("gshadow"), "root:*::\npriv:!::\n").unwrap();
+    std::fs::write(etc.join("subuid"), "priv:100000:65536\nkeep:200000:65536\n").unwrap();
+    std::fs::write(etc.join("subgid"), "priv:100000:65536\n").unwrap();
+    dir
+}
+
+#[test]
+fn test_missing_user_exits_6() {
+    if common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_root_dir();
+    assert_eq!(run_with_root(&dir, &["ghost"]), 6, "missing user is exit 6");
+    // -f makes it tolerant.
+    assert_eq!(
+        run_with_root(&dir, &["-f", "ghost"]),
+        0,
+        "-f tolerates absence"
+    );
+}
+
+#[test]
+fn test_private_group_is_removed() {
+    if common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_private_group_dir();
+    assert_eq!(run_with_root(&dir, &["priv"]), 0);
+    let group = read_group(&dir);
+    assert!(
+        !group.contains("priv:x:1000:"),
+        "private group gone: {group}"
+    );
+    assert!(group.contains("root:x:0:"), "other groups kept");
+    // subuid rows for priv gone, others kept; subgid emptied → file unlinked.
+    let subuid = std::fs::read_to_string(dir.path().join("etc/subuid")).unwrap();
+    assert!(
+        !subuid.contains("priv:") && subuid.contains("keep:"),
+        "subuid: {subuid}"
+    );
+    assert!(
+        !dir.path().join("etc/subgid").exists(),
+        "emptied subgid is unlinked"
+    );
+}
+
+#[test]
+fn test_private_group_kept_when_it_has_other_members() {
+    if common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_private_group_dir();
+    // Add another member to priv's group.
+    std::fs::write(
+        dir.path().join("etc/group"),
+        "root:x:0:\npriv:x:1000:someone\n",
+    )
+    .unwrap();
+    assert_eq!(run_with_root(&dir, &["priv"]), 0);
+    let group = read_group(&dir);
+    assert!(
+        group.contains("priv:x:1000:someone"),
+        "kept with member: {group}"
+    );
+}
+
+#[test]
+fn test_remove_home_refuses_foreign_owner_without_force() {
+    if common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_private_group_dir();
+    let home = dir.path().join("home/priv");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(home.join("f"), "x").unwrap();
+    // Home owned by someone else (uid 4242), not priv (1000).
+    std::os::unix::fs::chown(&home, Some(4242), None).unwrap();
+
+    assert_eq!(
+        run_with_root(&dir, &["-r", "priv"]),
+        12,
+        "a home not owned by the user must not be removed"
+    );
+    assert!(home.exists(), "home must still exist after refusal");
+
+    // But the account itself is still removed (userdel proceeds, home refused
+    // is a separate exit). Re-create priv to test -f removes the home.
+    std::fs::write(
+        dir.path().join("etc/passwd"),
+        "root:x:0:0:root:/root:/bin/bash\npriv:x:1000:1000:Priv:/home/priv:/bin/bash\n",
+    )
+    .unwrap();
+    assert_eq!(
+        run_with_root(&dir, &["-r", "-f", "priv"]),
+        0,
+        "-f forces removal"
+    );
+    assert!(!home.exists(), "-f removes the foreign-owned home");
+}
+
+#[test]
+fn test_remove_home_refuses_shared_home_without_force() {
+    if common::skip_unless_root() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let etc = dir.path().join("etc");
+    std::fs::create_dir_all(&etc).unwrap();
+    // Two accounts share /home/shared.
+    std::fs::write(
+        etc.join("passwd"),
+        "a:x:1000:1000:A:/home/shared:/bin/sh\nb:x:1001:1001:B:/home/shared:/bin/sh\n",
+    )
+    .unwrap();
+    std::fs::write(etc.join("group"), "a:x:1000:\nb:x:1001:\n").unwrap();
+    let home = dir.path().join("home/shared");
+    std::fs::create_dir_all(&home).unwrap();
+    std::os::unix::fs::chown(&home, Some(1000), None).unwrap();
+
+    assert_eq!(
+        run_with_root(&dir, &["-r", "a"]),
+        12,
+        "a home shared with another account must not be removed"
+    );
+    assert!(home.exists(), "shared home must survive");
 }
