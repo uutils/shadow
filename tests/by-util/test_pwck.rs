@@ -14,6 +14,9 @@ use std::ffi::OsString;
 
 /// Run `pwck` as a child process with `--root DIR`.
 ///
+/// Needs root: `chroot(2)` does, and the tool refuses `--root` for anyone
+/// else. Every test using this is guarded with `skip_unless_root`.
+///
 /// `--root` performs a real chroot(2), so it cannot be exercised in-process:
 /// the test binary itself would end up inside the tree, and every later test
 /// would fail looking for /tmp. pwck has no `--prefix`, matching GNU, so a
@@ -342,6 +345,9 @@ fn read_etc(dir: &tempfile::TempDir, name: &str) -> String {
 
 #[test]
 fn test_sort_with_parse_error_does_not_write() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
     // A malformed line plus a comment and out-of-order entries: `-s` would
     // reorder and, on the old code, drop the comment and the unparsable line.
     let dir = setup_root(
@@ -365,6 +371,9 @@ fn test_sort_with_parse_error_does_not_write() {
 
 #[test]
 fn test_read_only_and_sort_conflict() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
     let dir = setup_root(
         "root:x:0:0::/root:/bin/sh\n",
         "root:!:19500::::::\n",
@@ -376,6 +385,9 @@ fn test_read_only_and_sort_conflict() {
 
 #[test]
 fn test_sort_keeps_each_comment_with_its_entry() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
     let dir = setup_root(
         "# top comment\n\
          z:x:3000:3000::/home/z:/bin/sh\n\
@@ -405,6 +417,9 @@ fn test_sort_keeps_each_comment_with_its_entry() {
 
 #[test]
 fn test_relative_home_and_shell_are_reported() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
     // Resolving a relative path against pwck's working directory reported on
     // whatever happened to be there; the relative path is itself the fault.
     let dir = setup_root(
