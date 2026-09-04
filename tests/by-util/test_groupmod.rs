@@ -46,6 +46,11 @@ fn read_gshadow(dir: &tempfile::TempDir) -> String {
     std::fs::read_to_string(dir.path().join("etc/gshadow")).expect("failed to read gshadow file")
 }
 
+/// Read the passwd file content back from a prefix dir.
+fn read_passwd(dir: &tempfile::TempDir) -> String {
+    std::fs::read_to_string(dir.path().join("etc/passwd")).expect("failed to read passwd file")
+}
+
 // ---------------------------------------------------------------------------
 // Non-root tests — exercise clap parsing and error paths
 // ---------------------------------------------------------------------------
@@ -93,6 +98,56 @@ fn test_change_gid() {
         content.contains("testgrp:x:9999:"),
         "GID should be changed to 9999, got: {content}"
     );
+}
+
+// groupmod(8): changing a group's GID re-homes the users whose primary group
+// it is, so they are not left pointing at a GID that no longer names a group.
+#[test]
+fn test_change_gid_updates_primary_group_members_in_passwd() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root(
+        "devs:x:1000:\n",
+        "devs:!::\n",
+        "root:x:0:0:root:/root:/bin/bash\n\
+         alice:x:1500:1000:Alice:/home/alice:/bin/bash\n\
+         bob:x:1600:1000:Bob:/home/bob:/bin/bash\n\
+         carol:x:1700:1700:Carol:/home/carol:/bin/bash\n",
+    );
+
+    let prefix = dir.path().to_str().expect("temp dir path is valid UTF-8");
+    let code = run(&["groupmod", "-g", "2000", "-P", prefix, "devs"]);
+    assert_eq!(code, 0, "changing GID should exit 0");
+
+    assert!(read_group(&dir).contains("devs:x:2000:"));
+    let passwd = read_passwd(&dir);
+    assert!(
+        passwd.contains("alice:x:1500:2000:") && passwd.contains("bob:x:1600:2000:"),
+        "primary-group members should follow the GID, got: {passwd}"
+    );
+    assert!(
+        passwd.contains("carol:x:1700:1700:"),
+        "unrelated users must be untouched, got: {passwd}"
+    );
+}
+
+#[test]
+fn test_gid_minus_one_sentinel_is_rejected() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root(
+        "g:x:1000:\n",
+        "g:!::\n",
+        "root:x:0:0:root:/root:/bin/bash\n",
+    );
+    let prefix = dir.path().to_str().expect("temp dir path is valid UTF-8");
+    let code = run(&["groupmod", "-g", "4294967295", "-P", prefix, "g"]);
+    assert_eq!(code, 3, "(gid_t)-1 must be a bad argument");
+    assert!(read_group(&dir).contains("g:x:1000:"), "group unchanged");
 }
 
 #[test]

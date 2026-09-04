@@ -88,6 +88,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `groupmod -g` now updates `/etc/passwd`: users whose primary group is the
+  one being renumbered follow it, instead of being left with a primary GID
+  that no longer names a group. It also rejects GID `4294967295`
+  (`(gid_t)-1`, the "no change" sentinel), and takes the passwd lock before
+  the group lock so its lock order stays acyclic with `useradd`/`usermod`
+  (#245)
 - `groupadd -K` now honours any login.defs key, not only the four GID-range
   ones, and rejects malformed pairs the same way `useradd -K` does; both tools
   share one parser in `shadow-core` (#223)

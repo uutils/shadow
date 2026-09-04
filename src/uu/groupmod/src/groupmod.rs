@@ -20,6 +20,7 @@ use shadow_core::group::{self};
 use shadow_core::gshadow::{self};
 use shadow_core::lock::FileLock;
 use shadow_core::nscd;
+use shadow_core::passwd;
 use shadow_core::sysroot::SysRoot;
 
 mod options {
@@ -125,11 +126,17 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             .map_err(|e| GroupmodError::BadArgument(e.to_string()))?;
     }
 
-    // Parse new GID if provided.
+    // Parse new GID if provided. u32::MAX is (gid_t)-1, the "no change"
+    // sentinel of chown/setresgid, and must never be stored.
     let parsed_gid: Option<u32> = new_gid
         .map(|s| {
-            s.parse::<u32>()
-                .map_err(|_| GroupmodError::BadArgument(format!("invalid GID '{s}'")))
+            let gid = s
+                .parse::<u32>()
+                .map_err(|_| GroupmodError::BadArgument(format!("invalid GID '{s}'")))?;
+            if gid == u32::MAX {
+                return Err(GroupmodError::BadArgument(format!("invalid GID '{s}'")));
+            }
+            Ok(gid)
         })
         .transpose()?;
 
@@ -138,8 +145,22 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let _signals = shadow_core::hardening::SignalBlocker::block_critical()
         .map_err(|e| GroupmodError::CantUpdate(format!("cannot block signals: {e}")))?;
 
-    // Lock and read /etc/group.
+    // Lock order across the tools is passwd < group < gshadow < shadow, so
+    // take the passwd lock first when -g will need it (see below), never after
+    // group. This keeps the ordering acyclic with useradd/usermod.
     let group_path = root.group_path();
+    let passwd_path = root.passwd_path();
+    // Only the -g path touches passwd, and only if it exists (a --prefix tree
+    // may not carry one). Guarded like the gshadow write below.
+    let update_passwd = parsed_gid.is_some() && passwd_path.exists();
+    let passwd_lock = if update_passwd {
+        Some(FileLock::acquire(&passwd_path).map_err(|e| {
+            GroupmodError::CantUpdate(format!("cannot lock {}: {e}", passwd_path.display()))
+        })?)
+    } else {
+        None
+    };
+
     let group_lock = FileLock::acquire(&group_path).map_err(|e| {
         GroupmodError::CantUpdate(format!("cannot lock {}: {e}", group_path.display()))
     })?;
@@ -155,6 +176,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         .ok_or_else(|| {
             GroupmodError::GroupNotFound(format!("group '{group_name}' does not exist"))
         })?;
+
+    let old_gid = entries[idx].gid;
 
     // Check GID collision.
     if let Some(gid) = parsed_gid {
@@ -188,7 +211,37 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         GroupmodError::CantUpdate(format!("cannot write {}: {e}", group_path.display()))
     })?;
 
+    // groupmod(8): "Users who use the group as their primary group are updated
+    // to keep the group as their primary group." Do it while we still hold the
+    // passwd lock we took above, then release group then passwd.
+    if let Some(new_gid_val) = parsed_gid
+        && new_gid_val != old_gid
+        && update_passwd
+    {
+        let mut pw_entries = passwd::read_passwd_file(&passwd_path).map_err(|e| {
+            GroupmodError::CantUpdate(format!("cannot read {}: {e}", passwd_path.display()))
+        })?;
+        let mut changed = false;
+        for e in &mut pw_entries {
+            if e.gid == old_gid {
+                e.gid = new_gid_val;
+                changed = true;
+            }
+        }
+        if changed {
+            atomic::atomic_write(&passwd_path, |f| passwd::write_passwd(&pw_entries, f)).map_err(
+                |e| {
+                    GroupmodError::CantUpdate(format!(
+                        "cannot write {}: {e}",
+                        passwd_path.display()
+                    ))
+                },
+            )?;
+        }
+    }
+
     drop(group_lock);
+    drop(passwd_lock);
 
     // Update /etc/gshadow.
     let gshadow_path = root.gshadow_path();
