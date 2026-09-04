@@ -37,8 +37,8 @@ version = "0.2.2"
 edition = "2024"
 rust-version = "1.94.0"
 license = "MIT"
-repository = "https://github.com/uutils/shadow-rs"
-homepage = "https://github.com/uutils/shadow-rs"
+repository = "https://github.com/uutils/shadow"
+homepage = "https://github.com/uutils/shadow"
 keywords = ["shadow-utils", "uutils", "shadow", "passwd", "linux"]
 categories = ["command-line-utilities"]
 

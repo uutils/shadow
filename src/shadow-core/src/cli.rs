@@ -20,7 +20,7 @@ use uucore::error::{UError, UResult};
 pub const VERSION: &str = concat!("(uutils shadow-rs) ", env!("CARGO_PKG_VERSION"));
 
 /// Footer appended to `--help` to identify the project.
-pub const AFTER_HELP: &str = "Part of the uutils project: https://github.com/uutils/shadow-rs";
+pub const AFTER_HELP: &str = "Part of the uutils project: https://github.com/uutils/shadow";
 
 /// Error whose message has already been written to the terminal; it carries
 /// only the exit code.

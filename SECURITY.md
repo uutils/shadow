@@ -15,7 +15,7 @@ We take security issues extremely seriously.
 Instead, please report vulnerabilities via GitHub's private vulnerability
 reporting feature:
 
-1. Go to https://github.com/uutils/shadow-rs/security/advisories
+1. Go to https://github.com/uutils/shadow/security/advisories
 2. Click "New draft security advisory"
 3. Fill in the details
 
