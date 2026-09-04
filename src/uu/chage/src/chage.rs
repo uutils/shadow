@@ -226,11 +226,11 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     // Parse date-valued arguments before acquiring locks.
     let lastday_val = match lastday {
-        Some(s) => Some(parse_date_arg(s).map_err(ChageError::UnexpectedFailure)?),
+        Some(s) => Some(parse_date_arg(s).map_err(ChageError::InvalidArgument)?),
         None => None,
     };
     let expiredate_val = match expiredate {
-        Some(s) => Some(parse_date_arg(s).map_err(ChageError::UnexpectedFailure)?),
+        Some(s) => Some(parse_date_arg(s).map_err(ChageError::InvalidArgument)?),
         None => None,
     };
 
