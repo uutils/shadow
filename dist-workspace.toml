@@ -10,7 +10,7 @@ members = ["cargo:."]
 [dist]
 cargo-dist-version = "0.32.0"
 ci = "github"
-targets = ["x86_64-unknown-linux-gnu"]
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 # Archives only. The shell installer drops binaries in ~/.local/bin, which is
 # misleading for setuid-root account tools — they need root ownership and the
 # setuid bit to do anything useful (see the install notes in the README).
@@ -26,8 +26,25 @@ features = ["pam"]
 [dist.binaries]
 "*" = ["shadow-rs"]
 
+# arm64 is built on a native arm64 runner rather than cross-compiled, which is
+# what makes it possible at all here: `shadow-core::crypt` links crypt(3) and
+# the `pam` feature links libpam, so a cross build would need an arm64 sysroot
+# carrying both. dist picks a native runner for aarch64 by itself, but its
+# default and the x86_64 default are both Ubuntu 22.04, whose deprecation
+# starts on 2026-09-17. Pinning 24.04 keeps the two archives on the same
+# runner generation and off a deprecated image.
+#
+# The higher runner does raise the glibc floor for the dynamically linked
+# archives. That is what the static musl archive below is for; the gap is
+# documented in docs/PLATFORM-SUPPORT.md.
+[dist.github-custom-runners]
+x86_64-unknown-linux-gnu = "ubuntu-24.04"
+aarch64-unknown-linux-gnu = "ubuntu-24.04-arm"
+global = "ubuntu-24.04"
+
 # `shadow-core::crypt` links crypt(3), which on Debian/Ubuntu lives in
-# libxcrypt rather than glibc; the `pam` feature above links libpam.
+# libxcrypt rather than glibc; the `pam` feature above links libpam. Both are
+# installed on every build runner, so the arm64 job gets the arm64 packages.
 [dist.dependencies.apt]
 libcrypt-dev = "*"
 libpam0g-dev = "*"

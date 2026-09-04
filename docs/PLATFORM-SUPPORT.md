@@ -4,33 +4,39 @@ What shadow-rs builds and runs on, which archives a release publishes, and
 exactly where one build behaves differently from another.
 
 The distinction that matters most is the C library. Every release publishes
-two archives, glibc and static musl, and they are **not interchangeable**: the
-glibc archive is the full build; the static musl archive is a self-contained
-binary for containers and embedded images that gives up three capabilities,
-each stated below. The archive name carries a `-static` suffix so the two are
-never confused.
+glibc archives for two architectures and one static musl archive, and the two
+kinds are **not interchangeable**: the glibc archives are the full build; the
+static musl archive is a self-contained binary for containers and embedded
+images that gives up three capabilities, each stated below. Its name carries a
+`-static` suffix so the two are never confused.
 
 ## Release archives
 
-| Archive | libc | Linking | `pam` feature | Use it for |
-|---|---|---|---|---|
-| `uu_shadow-x86_64-unknown-linux-gnu.tar.gz` | glibc | dynamic (libpam, libcrypt, libc) | on | Any regular distribution install. The full build. |
-| `uu_shadow-x86_64-unknown-linux-musl-static.tar.gz` | musl | static, no runtime dependencies | off | Minimal containers and embedded images with a local `/etc/passwd`, no directory service and no PAM stack. |
+| Archive | Architecture | libc | Linking | `pam` feature | Use it for |
+|---|---|---|---|---|---|
+| `uu_shadow-x86_64-unknown-linux-gnu.tar.gz` | x86-64 | glibc | dynamic (libpam, libcrypt, libc) | on | Any regular distribution install. The full build. |
+| `uu_shadow-aarch64-unknown-linux-gnu.tar.gz` | arm64 | glibc | dynamic (libpam, libcrypt, libc) | on | The same build for arm64 servers and Apple-silicon containers. |
+| `uu_shadow-x86_64-unknown-linux-musl-static.tar.gz` | x86-64 | musl | static, no runtime dependencies | off | Minimal containers and embedded images with a local `/etc/passwd`, no directory service and no PAM stack. |
 
-Both archives ship a `.sha256` file in `sha256sum -c` format and contain the
+Every archive ships a `.sha256` file in `sha256sum -c` format and contains the
 `shadow-rs` multicall binary with `LICENSE`, `README.md` and `CHANGELOG.md`;
 the musl archive also carries this document, so the trade-off travels with the
 binary.
 
-The two are produced differently. The glibc archive is dist's regular target
-build with `features = ["pam"]`. dist cannot vary features per target, and
-`pam` must be off for musl (see below), so the musl archive is built by
-`make dist-musl` and attached by dist as an extra artifact of the same release.
-Anyone can reproduce it with that one command.
+The glibc archives are dist's regular target builds with `features = ["pam"]`.
+**arm64 is built on a native arm64 runner, not cross-compiled**, which is what
+makes it straightforward: `shadow-core::crypt` links crypt(3) and the `pam`
+feature links libpam, so a cross build would need an arm64 sysroot carrying
+both, while a native runner installs them from apt like any other build.
 
-Only `x86_64` is published. aarch64 needs the target's crypt(3) and PAM
-libraries, hence a cross-compilation setup or a native runner; tracked in
-[#222](https://github.com/uutils/shadow/issues/222).
+The musl archive is produced differently. dist cannot vary features per target
+and `pam` must be off for musl (see below), so it is built by `make dist-musl`
+and attached as an extra artifact of the same release. Anyone can reproduce it
+with that one command.
+
+Both glibc archives are built on Ubuntu 24.04 images, so they carry that
+image's glibc floor. A system older than it should use the static musl
+archive, which has no libc dependency at all.
 
 ## Test matrix
 
@@ -38,9 +44,13 @@ CI runs the full suite on three images:
 
 | Image | Base | libc | PAM | SELinux |
 |---|---|---|---|---|
-| `debian` | `rust:latest` (Trixie) | glibc | Linux-PAM | headers |
-| `alpine` | `rust:alpine` | musl (dynamic) | Linux-PAM | none |
-| `fedora` | `fedora:latest` | glibc | Linux-PAM | enforcing |
+| `debian` | `rust:1.98-trixie` | glibc | Linux-PAM | headers |
+| `alpine` | `rust:1.98-alpine3.23` | musl (dynamic) | Linux-PAM | none |
+| `fedora` | `fedora:44` | glibc | Linux-PAM | enforcing |
+
+The base images are pinned. An unpinned tag lands a new toolchain on `main`
+with no pull request to run it against, and clippy gains lints between Rust
+releases; Renovate proposes the bumps instead.
 
 The `alpine` image links musl dynamically and therefore *does* have PAM; it
 tests musl's libc behaviour (no NSS, no yescrypt), not the static archive. The
