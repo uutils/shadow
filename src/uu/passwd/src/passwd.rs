@@ -468,44 +468,6 @@ fn cmd_status(root: &SysRoot, target_user: Option<&str>) -> UResult<()> {
 // Security hardening — privilege dropping during PAM conversation
 // ---------------------------------------------------------------------------
 
-/// RAII guard that drops effective UID and restores on drop.
-///
-/// When passwd is installed setuid-root, we want to drop to the caller's
-/// real UID during the PAM conversation so that the PAM modules see the
-/// actual caller, not root. The destructor re-elevates.
-#[cfg_attr(not(feature = "pam"), allow(dead_code))]
-struct PrivDrop {
-    original_euid: u32,
-}
-
-impl PrivDrop {
-    /// Drop effective UID to the given UID.
-    #[cfg_attr(not(feature = "pam"), allow(dead_code))]
-    fn drop_to(uid: u32) -> Result<Self, PasswdError> {
-        let original_euid = rustix::process::geteuid().as_raw();
-        if original_euid != uid {
-            shadow_core::process::seteuid(uid).map_err(|e| {
-                PasswdError::UnexpectedFailure(format!("cannot drop privileges: {e}"))
-            })?;
-        }
-        Ok(Self { original_euid })
-    }
-}
-
-impl Drop for PrivDrop {
-    fn drop(&mut self) {
-        if let Err(e) = shadow_core::process::seteuid(self.original_euid) {
-            // Failing to restore privileges is a critical error — log it loudly.
-            // We can't return an error from Drop, so at least make it visible.
-            let _ = writeln!(
-                std::io::stderr().lock(),
-                "passwd: CRITICAL: failed to restore euid to {}: {e}",
-                self.original_euid
-            );
-        }
-    }
-}
-
 // Note: custom SIGINT handler removed — it required unsafe (sigaction +
 // libc::write + libc::_exit). SIGINT terminates without unwinding, so
 // EchoGuard::drop won't run. Terminal echo restoration after Ctrl+C relies
@@ -543,7 +505,10 @@ fn cmd_pam_change(matches: &clap::ArgMatches, target_user: &str) -> UResult<()> 
 
         // Drop privileges to caller's real UID during PAM conversation.
         // Re-elevate automatically when _priv_drop goes out of scope.
-        let _priv_drop = PrivDrop::drop_to(rustix::process::getuid().as_raw())?;
+        let _priv_drop = shadow_core::process::PrivDrop::drop_to(
+            rustix::process::getuid().as_raw(),
+        )
+        .map_err(|e| PasswdError::UnexpectedFailure(format!("cannot drop privileges: {e}")))?;
 
         // Non-root users changing their own password must authenticate first.
         if !shadow_core::hardening::caller_is_root()

@@ -293,3 +293,45 @@ pub fn verify_argv0_matches_execfn(argv0: &str) -> bool {
 
     argv0_base == execfn_base
 }
+
+// ---------------------------------------------------------------------------
+// Privilege dropping
+// ---------------------------------------------------------------------------
+
+/// RAII guard that drops the effective UID and restores it when dropped.
+///
+/// A setuid-root tool should run its PAM conversation as the real caller, so
+/// that PAM modules see the actual user rather than root. Restoration happens
+/// in `Drop`, so it also covers the early-return and error paths.
+pub struct PrivDrop {
+    original_euid: u32,
+}
+
+impl PrivDrop {
+    /// Drop the effective UID to `uid`, restoring the previous value on drop.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `seteuid` failure if privileges cannot be dropped. Callers
+    /// must treat that as fatal rather than continuing as root.
+    pub fn drop_to(uid: u32) -> io::Result<Self> {
+        let original_euid = rustix::process::geteuid().as_raw();
+        if original_euid != uid {
+            seteuid(uid)?;
+        }
+        Ok(Self { original_euid })
+    }
+}
+
+impl Drop for PrivDrop {
+    fn drop(&mut self) {
+        if let Err(e) = seteuid(self.original_euid) {
+            // Drop cannot report an error, and carrying on with the wrong
+            // effective UID is worse than being noisy about it.
+            uucore::show_error!(
+                "CRITICAL: failed to restore euid to {}: {e}",
+                self.original_euid
+            );
+        }
+    }
+}
