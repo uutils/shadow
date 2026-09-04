@@ -10,6 +10,7 @@
 //! Modifies the GECOS field of `/etc/passwd`.
 
 use std::fmt;
+use std::io::Write as _;
 
 use clap::{Arg, ArgAction, Command};
 
@@ -85,12 +86,158 @@ impl Gecos {
         }
     }
 
+    /// The four sub-fields `CHFN_RESTRICT` governs, in `FIELDS` order.
+    fn restrictable(&self) -> [&str; 4] {
+        [
+            &self.full_name,
+            &self.room,
+            &self.work_phone,
+            &self.home_phone,
+        ]
+    }
+
     /// Serialize back to a GECOS string.
     fn to_gecos_string(&self) -> String {
         format!(
             "{},{},{},{},{}",
             self.full_name, self.room, self.work_phone, self.home_phone, self.other
         )
+    }
+}
+
+/// The GECOS fields a non-root caller may be allowed to change: the
+/// `CHFN_RESTRICT` letter that governs each, the name used in diagnostics, and
+/// the label chfn(1) prints when prompting. The last sub-field ("other") is
+/// root-only in every configuration and so is not listed here.
+const FIELDS: [(char, &str, &str); 4] = [
+    ('f', "full name", "Full Name"),
+    ('r', "room number", "Room Number"),
+    ('w', "work phone", "Work Phone"),
+    ('h', "home phone", "Home Phone"),
+];
+
+/// The sub-fields this run changes. `None` leaves a sub-field as it is, which
+/// is what both an omitted option and an empty answer at a prompt mean.
+struct Changes {
+    /// The restrictable fields, in `FIELDS` order.
+    fields: [Option<String>; 4],
+    /// The last sub-field, which only root may set.
+    other: Option<String>,
+}
+
+impl Changes {
+    /// Read the requested changes from the command line or, when no field
+    /// option is given, by prompting -- chfn(1) then "prompts the user with
+    /// the current values for all of the fields". `allowed` is `None` for root
+    /// and otherwise the `CHFN_RESTRICT` letter set: a field the caller may not
+    /// change is never prompted for, rather than prompted for and then refused.
+    fn collect(
+        matches: &clap::ArgMatches,
+        root: &SysRoot,
+        user: &str,
+        allowed: Option<&str>,
+    ) -> Result<Self, ChfnError> {
+        let names = [
+            options::FULL_NAME,
+            options::ROOM,
+            options::WORK_PHONE,
+            options::HOME_PHONE,
+        ];
+        let fields = names.map(|name| matches.get_one::<String>(name).cloned());
+        let other = matches.get_one::<String>(options::OTHER).cloned();
+
+        if fields.iter().any(Option::is_some) || other.is_some() {
+            return Ok(Self { fields, other });
+        }
+
+        if let Some(set) = allowed
+            && !FIELDS.iter().any(|(letter, _, _)| set.contains(*letter))
+        {
+            return Err(ChfnError::Error(
+                "you may not change any of your finger information (restricted by CHFN_RESTRICT)"
+                    .into(),
+            ));
+        }
+
+        let current = current_gecos(root, user)?;
+        let _ = writeln!(
+            std::io::stderr(),
+            "Changing the user information for {user}\nEnter the new value, or press ENTER for the default"
+        );
+
+        let mut fields: [Option<String>; 4] = Self::default_fields();
+        for (i, ((letter, _, label), value)) in
+            FIELDS.iter().zip(current.restrictable()).enumerate()
+        {
+            if allowed.is_some_and(|set| !set.contains(*letter)) {
+                continue;
+            }
+            fields[i] = prompt_field(label, value)?;
+        }
+
+        Ok(Self {
+            fields,
+            other: None,
+        })
+    }
+
+    /// An all-`None` field array; `[None; 4]` needs `Copy`, which `String` is not.
+    fn default_fields() -> [Option<String>; 4] {
+        [const { None }; 4]
+    }
+
+    /// Whether there is nothing to write.
+    fn is_empty(&self) -> bool {
+        self.fields.iter().all(Option::is_none) && self.other.is_none()
+    }
+
+    /// Reject values that would corrupt the record, before any lock is taken
+    /// and before the caller is asked for a password.
+    fn validate(&self) -> Result<(), ChfnError> {
+        for (value, (_, name, _)) in self.fields.iter().zip(FIELDS) {
+            if let Some(v) = value {
+                validate_gecos_field(v, name, false)?;
+            }
+        }
+        if let Some(v) = &self.other {
+            validate_gecos_field(v, "other", true)?;
+        }
+        Ok(())
+    }
+
+    /// Enforce `CHFN_RESTRICT` on a non-root caller.
+    fn check_permitted(&self, allowed: &str) -> Result<(), ChfnError> {
+        if self.other.is_some() {
+            return Err(ChfnError::Error(
+                "only root may change the 'other' field".into(),
+            ));
+        }
+        for (value, (letter, name, _)) in self.fields.iter().zip(FIELDS) {
+            if value.is_some() && !allowed.contains(letter) {
+                return Err(ChfnError::Error(format!(
+                    "you may not change the {name} (restricted by CHFN_RESTRICT)"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Overwrite the sub-fields this run changes, leaving the others alone.
+    fn apply(&self, gecos: &mut Gecos) {
+        let targets = [
+            &mut gecos.full_name,
+            &mut gecos.room,
+            &mut gecos.work_phone,
+            &mut gecos.home_phone,
+        ];
+        for (target, value) in targets.into_iter().zip(&self.fields) {
+            if let Some(v) = value {
+                target.clone_from(v);
+            }
+        }
+        if let Some(v) = &self.other {
+            gecos.other.clone_from(v);
+        }
     }
 }
 
@@ -103,6 +250,28 @@ impl Gecos {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// The account's current GECOS sub-fields, for the interactive prompts.
+fn current_gecos(root: &SysRoot, user: &str) -> Result<Gecos, ChfnError> {
+    let entries = passwd::read_passwd_file(&root.passwd_path())
+        .map_err(|e| ChfnError::Error(format!("cannot read passwd: {e}")))?;
+    entries
+        .iter()
+        .find(|e| e.name == user)
+        .map(|e| Gecos::parse(&e.gecos))
+        .ok_or_else(|| ChfnError::Error(format!("user '{user}' does not exist")))
+}
+
+/// Prompt for one field, showing its current value; an empty answer keeps it.
+fn prompt_field(label: &str, current: &str) -> Result<Option<String>, ChfnError> {
+    let answer = shadow_core::tty::prompt_line(&format!("\t{label} [{current}]: "))
+        .map_err(|e| ChfnError::Error(format!("cannot read from the terminal: {e}")))?;
+    if answer.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(answer))
+    }
+}
 
 /// Resolve the target username from args or current user.
 fn resolve_target_user(matches: &clap::ArgMatches) -> Result<String, ChfnError> {
@@ -169,10 +338,9 @@ fn mutate_passwd<F>(root: &SysRoot, username: &str, mutate: F) -> UResult<()>
 where
     F: FnOnce(&mut PasswdEntry) -> Result<(), String>,
 {
-    // Consolidate real + effective UID to root for file operations.
-    if rustix::process::geteuid().is_root() {
-        let _ = shadow_core::process::setuid(0);
-    }
+    // euid 0 is all the lock and the atomic write need. Calling setuid(0)
+    // here would also change the *real* uid, after which caller_is_root() --
+    // which is deliberately real-uid based -- would answer true for everyone.
 
     let _signals = shadow_core::hardening::SignalBlocker::block_critical()
         .map_err(|e| ChfnError::Error(e.to_string()))?;
@@ -249,98 +417,43 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     let target_user = resolve_target_user(&matches)?;
 
-    // Non-root users can only change their own info, and must prove they are
-    // who they claim before anything is written.
-    if !shadow_core::hardening::caller_is_root() {
-        let current_user = shadow_core::hardening::current_username()
+    // A non-root caller may only change their own information, and only the
+    // fields CHFN_RESTRICT lists. The identity check comes first;
+    // authentication is deferred until the change is known to be valid and
+    // permitted, so nobody types a password only to have the value refused.
+    let caller = if shadow_core::hardening::caller_is_root() {
+        None
+    } else {
+        let user = shadow_core::hardening::current_username()
             .map_err(|e| ChfnError::Error(e.to_string()))?;
-        if current_user != target_user {
+        if user != target_user {
             return Err(
                 ChfnError::Error("you may only change your own finger information".into()).into(),
             );
         }
-        authenticate_caller(&current_user)?;
+        Some(user)
+    };
+    let allowed = caller.as_ref().map(|_| chfn_restrict(&root));
+
+    let changes = Changes::collect(&matches, &root, &target_user, allowed.as_deref())?;
+    if changes.is_empty() {
+        // Every prompt was answered with ENTER: nothing to do, and nothing to
+        // report as an error.
+        return Ok(());
+    }
+    changes.validate()?;
+    if let Some(set) = &allowed {
+        changes.check_permitted(set)?;
     }
 
-    // At least one field flag must be present (we require flags, no interactive mode).
-    let has_full_name = matches.contains_id(options::FULL_NAME);
-    let has_room = matches.contains_id(options::ROOM);
-    let has_work_phone = matches.contains_id(options::WORK_PHONE);
-    let has_home_phone = matches.contains_id(options::HOME_PHONE);
-    let has_other = matches.contains_id(options::OTHER);
-
-    if !has_full_name && !has_room && !has_work_phone && !has_home_phone && !has_other {
-        return Err(ChfnError::Error(
-            "no flags specified; use -f, -r, -w, -h, or -o to change finger information".into(),
-        )
-        .into());
-    }
-
-    // Collect and validate the new values.
-    let new_full_name = matches.get_one::<String>(options::FULL_NAME);
-    let new_room = matches.get_one::<String>(options::ROOM);
-    let new_work_phone = matches.get_one::<String>(options::WORK_PHONE);
-    let new_home_phone = matches.get_one::<String>(options::HOME_PHONE);
-    let new_other = matches.get_one::<String>(options::OTHER);
-
-    // Validate sub-fields before acquiring the lock.
-    if let Some(v) = new_full_name {
-        validate_gecos_field(v, "full name", false)?;
-    }
-    if let Some(v) = new_room {
-        validate_gecos_field(v, "room number", false)?;
-    }
-    if let Some(v) = new_work_phone {
-        validate_gecos_field(v, "work phone", false)?;
-    }
-    if let Some(v) = new_home_phone {
-        validate_gecos_field(v, "home phone", false)?;
-    }
-    if let Some(v) = new_other {
-        validate_gecos_field(v, "other", true)?;
-    }
-
-    // Non-root users may not set the "other" field, and may change the rest
-    // only within CHFN_RESTRICT (login.defs). Root is unrestricted.
-    if !shadow_core::hardening::caller_is_root() {
-        if new_other.is_some() {
-            return Err(ChfnError::Error("only root may change the 'other' field".into()).into());
-        }
-        let allowed = chfn_restrict(&root);
-        for (present, letter, name) in [
-            (has_full_name, 'f', "full name"),
-            (has_room, 'r', "room number"),
-            (has_work_phone, 'w', "work phone"),
-            (has_home_phone, 'h', "home phone"),
-        ] {
-            if present && !allowed.contains(letter) {
-                return Err(ChfnError::Error(format!(
-                    "you may not change the {name} (restricted by CHFN_RESTRICT)"
-                ))
-                .into());
-            }
-        }
+    // The change is valid and permitted; now prove who is asking.
+    if let Some(user) = &caller {
+        authenticate_caller(user)?;
     }
 
     mutate_passwd(&root, &target_user, |entry| {
         let mut gecos = Gecos::parse(&entry.gecos);
-
-        if let Some(v) = new_full_name {
-            gecos.full_name.clone_from(v);
-        }
-        if let Some(v) = new_room {
-            gecos.room.clone_from(v);
-        }
-        if let Some(v) = new_work_phone {
-            gecos.work_phone.clone_from(v);
-        }
-        if let Some(v) = new_home_phone {
-            gecos.home_phone.clone_from(v);
-        }
-        if let Some(v) = new_other {
-            gecos.other.clone_from(v);
-        }
-
+        changes.apply(&mut gecos);
         entry.gecos = gecos.to_gecos_string();
         Ok(())
     })?;
