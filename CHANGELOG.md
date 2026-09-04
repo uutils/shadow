@@ -51,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `chpasswd` refuses an empty plaintext password. `alice:` on stdin hashed the
+  empty string into a perfectly valid hash, so the account then logged in with
+  a bare Enter; only `-e`, which takes a pre-computed field, may carry an
+  empty value. It also stops trimming the line, so a password with trailing
+  whitespace is stored as supplied rather than silently changed (#248)
 - `chfn` now honours `CHFN_RESTRICT` from login.defs: a non-root user may
   change only the GECOS sub-fields it lists (unset means none, per
   login.defs(5)), instead of any field. GECOS values are also rejected if they
@@ -105,6 +110,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `chpasswd` hashes before taking the `/etc/shadow` lock. A batch of yescrypt
+  or high-`rounds=` hashes held the lock, with signals blocked, for the whole
+  run (#248)
 - `usermod -l` refuses a login name that already exists (exit 9). Renaming
   onto an existing account produced two entries with the same name in
   `/etc/passwd` and `/etc/shadow` — `usermod -l root alice` gave a second

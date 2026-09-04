@@ -85,27 +85,30 @@ impl UError for ChpasswdError {
 struct PasswordPair {
     username: String,
     password: zeroize::Zeroizing<String>,
+    /// Input line the pair came from, for error messages.
+    line_number: usize,
 }
 
 /// Parse a single input line into a `username:password` pair.
 ///
-/// The format is `username:password` where username cannot be empty
-/// and the password is everything after the first colon (may be empty
-/// only if the `-e` flag is used).
+/// The format is `username:password`. The username may not be empty, and the
+/// password is everything after the first colon, **verbatim** — trailing
+/// whitespace is part of the password, so the line is not trimmed; only a
+/// trailing CR from CRLF input is removed.
 fn parse_input_line(line: &str, line_number: usize) -> Result<PasswordPair, ChpasswdError> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    if line.is_empty() {
         return Err(ChpasswdError::InvalidInput(format!(
             "line {line_number}: empty line"
         )));
     }
 
-    let colon_pos = trimmed.find(':').ok_or_else(|| {
+    let colon_pos = line.find(':').ok_or_else(|| {
         ChpasswdError::InvalidInput(format!("line {line_number}: missing ':' separator"))
     })?;
 
-    let username = &trimmed[..colon_pos];
-    let password = &trimmed[colon_pos + 1..];
+    let username = &line[..colon_pos];
+    let password = &line[colon_pos + 1..];
 
     if username.is_empty() {
         return Err(ChpasswdError::InvalidInput(format!(
@@ -116,7 +119,26 @@ fn parse_input_line(line: &str, line_number: usize) -> Result<PasswordPair, Chpa
     Ok(PasswordPair {
         username: username.to_string(),
         password: zeroize::Zeroizing::new(password.to_string()),
+        line_number,
     })
+}
+
+/// Refuse an empty password in plaintext mode.
+///
+/// Hashing `""` produces a perfectly valid hash, and the account then logs in
+/// with a bare Enter. Only `-e`, which takes a pre-computed field, may carry
+/// an empty value (`!`/`*` style locks are written that way).
+fn reject_empty_plaintext(pairs: &[PasswordPair], plaintext: bool) -> Result<(), ChpasswdError> {
+    if !plaintext {
+        return Ok(());
+    }
+    match pairs.iter().find(|p| p.password.is_empty()) {
+        Some(pair) => Err(ChpasswdError::InvalidInput(format!(
+            "line {}: no password supplied for '{}'",
+            pair.line_number, pair.username
+        ))),
+        None => Ok(()),
+    }
 }
 
 /// Read all `username:password` pairs from stdin.
@@ -231,6 +253,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // Read all pairs from stdin before acquiring locks.
     let pairs = read_pairs_from_stdin()?;
 
+    reject_empty_plaintext(&pairs, hash_config.is_some())?;
+
     // Apply all password changes in a single locked transaction.
     apply_password_changes(&root, &pairs, hash_config.as_ref())
 }
@@ -295,6 +319,24 @@ fn apply_password_changes(
     pairs: &[PasswordPair],
     hash_config: Option<&(shadow_core::crypt::CryptMethod, Option<u32>)>,
 ) -> UResult<()> {
+    // Hash before taking the lock. crypt(3) with yescrypt or a high SHA
+    // rounds= count is deliberately slow, and a batch of them held the
+    // /etc/shadow lock (with signals blocked) for the whole run.
+    let mut hashed: Vec<(&str, String)> = Vec::with_capacity(pairs.len());
+    for pair in pairs {
+        let hash = if let Some((method, rounds)) = hash_config {
+            shadow_core::crypt::hash_password(&pair.password, *method, *rounds).map_err(|e| {
+                ChpasswdError::UnexpectedFailure(format!(
+                    "failed to hash password for '{}': {e}",
+                    pair.username
+                ))
+            })?
+        } else {
+            pair.password.to_string()
+        };
+        hashed.push((pair.username.as_str(), hash));
+    }
+
     // Consolidate real + effective UID to root for file operations.
     if rustix::process::geteuid().is_root() {
         let _ = shadow_core::process::setuid(0);
@@ -330,27 +372,14 @@ fn apply_password_changes(
     let today = days_since_epoch()?;
 
     // Apply each pair.
-    for pair in pairs {
-        let Some(entry) = entries.iter_mut().find(|e| e.name == pair.username) else {
+    for (username, hash) in hashed {
+        let Some(entry) = entries.iter_mut().find(|e| e.name == username) else {
             drop(lock);
             return Err(ChpasswdError::InvalidInput(format!(
-                "user '{}' does not exist in {}",
-                pair.username,
+                "user '{username}' does not exist in {}",
                 shadow_path.display()
             ))
             .into());
-        };
-
-        // Hash plaintext passwords or use pre-encrypted value directly.
-        let hash = if let Some((method, rounds)) = hash_config {
-            shadow_core::crypt::hash_password(&pair.password, *method, *rounds).map_err(|e| {
-                ChpasswdError::UnexpectedFailure(format!(
-                    "failed to hash password for '{}': {e}",
-                    pair.username
-                ))
-            })?
-        } else {
-            pair.password.to_string()
         };
 
         entry.passwd = hash;
@@ -569,10 +598,33 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_input_line_leading_whitespace() {
-        let pair = parse_input_line("  testuser:$6$hash  ", 1).expect("should handle whitespace");
-        assert_eq!(pair.username, "testuser");
-        assert_eq!(&*pair.password, "$6$hash");
+    fn test_reject_empty_plaintext() {
+        let pairs = vec![
+            parse_input_line("alice:secret", 1).expect("parses"),
+            parse_input_line("bob:", 2).expect("parses"),
+        ];
+        // -e mode: an empty field is a deliberate lock, allowed.
+        assert!(reject_empty_plaintext(&pairs, false).is_ok());
+        // Plaintext mode: hashing "" would let bob log in with a bare Enter.
+        let err = reject_empty_plaintext(&pairs, true).expect_err("must refuse");
+        assert!(
+            format!("{err}").contains("line 2") && format!("{err}").contains("bob"),
+            "message should name the offending line: {err}"
+        );
+    }
+
+    /// Whitespace is data, not noise: the password is everything after the
+    /// first colon, so a trailing space belongs to it. Trimming it silently
+    /// set a different password than the caller supplied.
+    #[test]
+    fn test_parse_input_line_preserves_whitespace() {
+        let pair = parse_input_line("  testuser:$6$hash  ", 1).expect("parses");
+        assert_eq!(pair.username, "  testuser");
+        assert_eq!(&*pair.password, "$6$hash  ");
+
+        // CRLF input loses only the carriage return.
+        let pair = parse_input_line("alice:secret\r", 2).expect("parses");
+        assert_eq!(&*pair.password, "secret");
     }
 
     // -----------------------------------------------------------------------
