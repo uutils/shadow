@@ -2,13 +2,15 @@ name: Security audit
 
 # spell-checker:ignore (misc) rustsec
 
+# Scheduled only. A change to the dependencies is already checked on the pull
+# request by the Cargo Deny job in ci.yml, which runs the advisory check along
+# with licences and bans; running a second advisory tool on push duplicated it.
+# What that job cannot do is notice an advisory published against code nobody
+# has touched, which is what this is for.
 on:
   schedule:
     - cron: "0 0 * * *"
-  push:
-    paths:
-      - "**/Cargo.toml"
-      - "**/Cargo.lock"
+  workflow_dispatch:
 permissions:
   contents: read
   checks: write
