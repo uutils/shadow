@@ -31,7 +31,6 @@ tempfile = { workspace = true }
 default = []
 crypt = []
 pam = []
-selinux = []
 shadow = []
 group = []
 gshadow = []

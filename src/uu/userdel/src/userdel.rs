@@ -335,7 +335,6 @@ where
     }
 
     atomic::atomic_write(path, |f| {
-        use std::io::Write;
         for line in &kept_lines {
             writeln!(f, "{line}")?;
         }

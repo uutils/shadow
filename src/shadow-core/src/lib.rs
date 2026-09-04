@@ -39,9 +39,6 @@ pub mod pam;
 #[allow(unsafe_code)]
 pub mod crypt;
 
-#[cfg(feature = "selinux")]
-pub mod selinux;
-
 // Process-level POSIX wrappers (setuid, sigprocmask, etc.) — FFI requires unsafe.
 #[allow(unsafe_code)]
 pub mod process;
