@@ -1191,7 +1191,19 @@ mod tests {
         std::fs::write(&passwd_path, "root:x:0:0\n").expect("write passwd");
         std::fs::write(etc.join("group"), "root:x:0:\n").expect("write group");
 
-        let code = run(&["pwck", "-r", passwd_path.to_str().expect("non-utf8 path")]);
+        // Name the shadow file too. Left to default it would be the host's
+        // /etc/shadow, which an unprivileged test runner cannot read -- the
+        // test would then report "cannot open" instead of the bad entry it is
+        // about.
+        let shadow_path = dir.path().join("shadow");
+        std::fs::write(&shadow_path, "root:!:19000:0:99999:7:::\n").expect("write shadow");
+
+        let code = run(&[
+            "pwck",
+            "-r",
+            passwd_path.to_str().expect("non-utf8 path"),
+            shadow_path.to_str().expect("non-utf8 path"),
+        ]);
 
         assert_eq!(
             code,
