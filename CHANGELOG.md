@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `groupadd -K` now honours any login.defs key, not only the four GID-range
+  ones, and rejects malformed pairs the same way `useradd -K` does; both tools
+  share one parser in `shadow-core` (#223)
 - Without the `pam` feature, `chfn` and `chsh` refuse non-root invocations
   rather than applying an unauthenticated change. Every install path enables
   the feature; a static musl build would not — see

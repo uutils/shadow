@@ -92,6 +92,24 @@ impl LoginDefs {
     }
 }
 
+/// Split a `-K KEY=VALUE` argument into its key and value.
+///
+/// Shared by every tool that accepts login.defs overrides so they agree on
+/// what is malformed: a missing `=` or an empty key is rejected, an empty
+/// value is allowed (it unsets the key for this run).
+///
+/// # Errors
+///
+/// Returns [`ShadowError::Validation`] for a malformed pair.
+pub fn parse_override(kv: &str) -> Result<(&str, &str), ShadowError> {
+    match kv.split_once('=') {
+        Some((key, value)) if !key.is_empty() => Ok((key, value)),
+        _ => Err(ShadowError::Validation(
+            format!("invalid key=value pair: '{kv}'").into(),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,6 +121,22 @@ mod tests {
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(content.as_bytes()).unwrap();
         path
+    }
+
+    #[test]
+    fn test_parse_override_accepts_key_value() {
+        assert_eq!(parse_override("GID_MIN=9100").unwrap(), ("GID_MIN", "9100"));
+        // An empty value is a legitimate way to unset a key for the run.
+        assert_eq!(parse_override("SKEL=").unwrap(), ("SKEL", ""));
+        // Only the first '=' separates; the value may contain more.
+        assert_eq!(parse_override("A=b=c").unwrap(), ("A", "b=c"));
+    }
+
+    #[test]
+    fn test_parse_override_rejects_malformed() {
+        assert!(parse_override("GID_MIN").is_err(), "missing '='");
+        assert!(parse_override("=9100").is_err(), "empty key");
+        assert!(parse_override("").is_err(), "empty argument");
     }
 
     #[test]

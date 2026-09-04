@@ -24,7 +24,7 @@ use shadow_core::audit;
 use shadow_core::group::{self, GroupEntry};
 use shadow_core::gshadow::{self, GshadowEntry};
 use shadow_core::lock::FileLock;
-use shadow_core::login_defs::LoginDefs;
+use shadow_core::login_defs::{self, LoginDefs};
 use shadow_core::nscd;
 use shadow_core::passwd::{self, PasswdEntry};
 use shadow_core::shadow::{self, ShadowEntry};
@@ -637,22 +637,16 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
 fn parse_login_defs_overrides(
     matches: &clap::ArgMatches,
 ) -> Result<Vec<(String, String)>, UseraddError> {
-    let key_values: Vec<&String> = matches
+    matches
         .get_many::<String>(options::KEY)
-        .map_or_else(Vec::new, Iterator::collect);
-    let mut overrides = Vec::with_capacity(key_values.len());
-    for kv in &key_values {
-        let (k, v) = kv
-            .split_once('=')
-            .ok_or_else(|| UseraddError::BadArgument(format!("invalid key=value pair: '{kv}'")))?;
-        if k.is_empty() {
-            return Err(UseraddError::BadArgument(format!(
-                "invalid key=value pair: '{kv}'"
-            )));
-        }
-        overrides.push((k.to_string(), v.to_string()));
-    }
-    Ok(overrides)
+        .into_iter()
+        .flatten()
+        .map(|kv| {
+            login_defs::parse_override(kv)
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .map_err(|e| UseraddError::BadArgument(e.to_string()))
+        })
+        .collect()
 }
 
 /// Merge `-K` overrides into `defs` so later lookups use the new values.

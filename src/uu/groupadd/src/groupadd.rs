@@ -19,7 +19,7 @@ use shadow_core::audit;
 use shadow_core::group::{self, GroupEntry};
 use shadow_core::gshadow::{self, GshadowEntry};
 use shadow_core::lock::FileLock;
-use shadow_core::login_defs::LoginDefs;
+use shadow_core::login_defs::{self, LoginDefs};
 use shadow_core::nscd;
 use shadow_core::sysroot::SysRoot;
 use shadow_core::uid_alloc;
@@ -127,16 +127,18 @@ fn do_groupadd(matches: &clap::ArgMatches) -> UResult<()> {
     let root_dir = matches.get_one::<String>(options::ROOT).map(Path::new);
     let root = SysRoot::new(prefix.or(root_dir));
 
-    // Parse -K KEY=VALUE overrides.
-    let key_values: Vec<&String> = matches
+    // Load login.defs once and fold the -K overrides into it, so every later
+    // lookup — not just the GID range — sees the overridden values.
+    let mut defs = LoginDefs::load(&root.login_defs_path())
+        .map_err(|e| GroupaddError::CantUpdate(format!("{e}")))?;
+    for kv in matches
         .get_many::<String>(options::KEY)
-        .map_or_else(Vec::new, Iterator::collect);
-    let mut login_defs_overrides: Vec<(&str, &str)> = Vec::new();
-    for kv in &key_values {
-        let (k, v) = kv
-            .split_once('=')
-            .ok_or_else(|| GroupaddError::BadArgument(format!("invalid key=value pair: '{kv}'")))?;
-        login_defs_overrides.push((k, v));
+        .into_iter()
+        .flatten()
+    {
+        let (key, value) = login_defs::parse_override(kv)
+            .map_err(|e| GroupaddError::BadArgument(e.to_string()))?;
+        defs.set(key, value);
     }
 
     // Validate the group name.
@@ -164,15 +166,7 @@ fn do_groupadd(matches: &clap::ArgMatches) -> UResult<()> {
     }
 
     // Determine GID.
-    let gid = determine_gid(
-        matches,
-        &existing_groups,
-        force,
-        non_unique,
-        system,
-        &root,
-        &login_defs_overrides,
-    )?;
+    let gid = determine_gid(matches, &existing_groups, force, non_unique, system, &defs)?;
 
     // Block signals for the duration of the critical section so a SIGINT
     // between lock acquisition and atomic_write cannot leave stale lock files.
@@ -199,8 +193,7 @@ fn determine_gid(
     force: bool,
     non_unique: bool,
     system: bool,
-    root: &SysRoot,
-    overrides: &[(&str, &str)],
+    defs: &LoginDefs,
 ) -> Result<u32, GroupaddError> {
     let explicit_gid = matches.get_one::<String>(options::GID);
 
@@ -211,7 +204,7 @@ fn determine_gid(
 
         if !non_unique && existing_groups.iter().any(|g| g.gid == gid) {
             if force {
-                allocate_gid(root, existing_groups, system, overrides)
+                allocate_gid(defs, existing_groups, system)
             } else {
                 Err(GroupaddError::GidInUse(format!(
                     "GID '{gid}' already exists"
@@ -221,7 +214,7 @@ fn determine_gid(
             Ok(gid)
         }
     } else {
-        allocate_gid(root, existing_groups, system, overrides)
+        allocate_gid(defs, existing_groups, system)
     }
 }
 
@@ -291,34 +284,12 @@ fn write_gshadow_entry(
 
 /// Allocate the next available GID from login.defs ranges.
 fn allocate_gid(
-    root: &SysRoot,
+    defs: &LoginDefs,
     existing: &[GroupEntry],
     system: bool,
-    overrides: &[(&str, &str)],
 ) -> Result<u32, GroupaddError> {
-    let defs = LoginDefs::load(&root.login_defs_path())
-        .map_err(|e| GroupaddError::CantUpdate(format!("{e}")))?;
-
-    // Apply -K overrides by creating a synthetic LoginDefs with the override values.
-    // We re-read and patch the range if overrides are present.
-    let (mut min, mut max) = uid_alloc::gid_range(&defs, system);
-
-    for &(key, val) in overrides {
-        match key {
-            "GID_MIN" | "SYS_GID_MIN" => {
-                if let Ok(v) = val.parse::<u32>() {
-                    min = v;
-                }
-            }
-            "GID_MAX" | "SYS_GID_MAX" => {
-                if let Ok(v) = val.parse::<u32>() {
-                    max = v;
-                }
-            }
-            _ => {}
-        }
-    }
-
+    // -K overrides were already merged into `defs` by the caller.
+    let (min, max) = uid_alloc::gid_range(defs, system);
     uid_alloc::next_gid(existing, min, max)
         .map_err(|e| GroupaddError::BadArgument(format!("cannot allocate GID: {e}")))
 }
@@ -350,10 +321,7 @@ pub fn uu_app() -> Command {
                 .long("key")
                 .value_name("KEY=VALUE")
                 .action(ArgAction::Append)
-                .help(
-                    "Override a GID-range key from login.defs (KEY=VALUE; \
-                     only GID_MIN, GID_MAX, SYS_GID_MIN, SYS_GID_MAX are honored)",
-                ),
+                .help("Override a login.defs key for this run (KEY=VALUE; may be repeated)"),
         )
         .arg(
             Arg::new(options::NON_UNIQUE)

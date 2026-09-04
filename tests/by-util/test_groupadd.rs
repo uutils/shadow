@@ -235,3 +235,61 @@ fn test_other_entries_preserved() {
         "freshgrp should be added, got: {content}"
     );
 }
+
+#[test]
+fn test_key_override_wins_over_login_defs() {
+    if common::skip_unless_root() {
+        return;
+    }
+    // login.defs says 5000-5999; -K must take precedence for this run.
+    let dir = setup_prefix("root:x:0:\n", "GID_MIN 5000\nGID_MAX 5999\n");
+    let code = run_with_prefix(
+        &dir,
+        &["-K", "GID_MIN=9100", "-K", "GID_MAX=9100", "keygrp"],
+    );
+    assert_eq!(code, 0, "groupadd -K should exit 0");
+    assert!(
+        read_group(&dir).contains("keygrp:x:9100:"),
+        "GID should come from -K, got: {}",
+        read_group(&dir)
+    );
+}
+
+#[test]
+fn test_key_sys_range_override_for_system_group() {
+    if common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_prefix("root:x:0:\n", "SYS_GID_MIN 100\nSYS_GID_MAX 999\n");
+    let code = run_with_prefix(
+        &dir,
+        &[
+            "-r",
+            "-K",
+            "SYS_GID_MIN=250",
+            "-K",
+            "SYS_GID_MAX=250",
+            "syskeygrp",
+        ],
+    );
+    assert_eq!(code, 0, "groupadd -r -K should exit 0");
+    assert!(
+        read_group(&dir).contains("syskeygrp:x:250:"),
+        "got: {}",
+        read_group(&dir)
+    );
+}
+
+#[test]
+fn test_key_missing_equals_exits_bad_argument() {
+    if common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_prefix("root:x:0:\n", "");
+    let code = run_with_prefix(&dir, &["-K", "GID_MIN", "badkeygrp"]);
+    assert_eq!(code, 3, "malformed KEY=VALUE should exit 3 (bad argument)");
+    assert!(
+        !read_group(&dir).contains("badkeygrp"),
+        "nothing must be written"
+    );
+}
