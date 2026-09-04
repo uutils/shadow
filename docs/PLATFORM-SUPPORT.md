@@ -38,9 +38,17 @@ Linux-PAM loads its modules with `dlopen`. A fully static binary cannot do
 that: musl's static `dlopen` is a stub that returns *"Dynamic loading not
 supported"*, and Alpine ships no `libpam.a` to link against in the first place.
 
-Effect: `passwd`'s interactive password change is unavailable. Everything else
-is unaffected — `passwd -S/-l/-u/-d/-e/-n/-x/-w/-i` and the other 13 tools
-reach `/etc/shadow` and crypt(3) directly.
+Effect, and this is the heaviest of the three gaps:
+
+- `passwd`'s interactive password change is unavailable.
+- `chfn` and `chsh` become **root-only**. They authenticate the caller through
+  PAM before applying a change, and a setuid-root tool must fail closed rather
+  than apply an unverified one — so without PAM they refuse every non-root
+  invocation outright.
+
+Unaffected: `passwd -S/-l/-u/-d/-e/-n/-x/-w/-i`, `newgrp` (which authenticates
+against the group password via crypt(3), not PAM), and the other 11 tools,
+which are root-only anyway and reach `/etc/shadow` directly.
 
 ### 2. No NSS
 

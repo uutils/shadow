@@ -23,6 +23,10 @@ rustix = { workspace = true }
 shadow-core = { workspace = true }
 uucore = { workspace = true }
 
+[features]
+default = []
+pam = ["shadow-core/pam"]
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

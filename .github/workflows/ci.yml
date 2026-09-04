@@ -57,6 +57,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libselinux1-dev libaudit-dev libcrypt-dev
       - run: cargo test --workspace
+      # Release binaries enable `pam`, and the feature changes behaviour rather
+      # than only adding code: without it the setuid tools refuse to
+      # authenticate. Both configurations have to be tested.
+      - run: cargo test --workspace --features pam
 
   msrv:
     name: MSRV (1.94.0)

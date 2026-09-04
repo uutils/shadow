@@ -20,7 +20,8 @@ all: build
 # Installed binaries must have it; the PAM headers are already listed as a
 # build requirement in the README.
 build:
-	cargo build --release --workspace --bins --exclude uu_shadow --features uu_passwd/pam
+	cargo build --release --workspace --bins --exclude uu_shadow \
+		--features uu_passwd/pam,uu_chfn/pam,uu_chsh/pam
 
 build-multicall:
 	cargo build --release --bin shadow-rs --features pam

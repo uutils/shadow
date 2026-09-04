@@ -235,7 +235,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     let target_user = resolve_target_user(&matches)?;
 
-    // Non-root users can only change their own info.
+    // Non-root users can only change their own info, and must prove they are
+    // who they claim before anything is written.
     if !shadow_core::hardening::caller_is_root() {
         let current_user = shadow_core::hardening::current_username()
             .map_err(|e| ChfnError::Error(e.to_string()))?;
@@ -244,6 +245,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 ChfnError::Error("you may only change your own finger information".into()).into(),
             );
         }
+        authenticate_caller(&current_user)?;
     }
 
     // At least one field flag must be present (we require flags, no interactive mode).
@@ -314,6 +316,46 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     uucore::show_error!("changed user '{target_user}' information");
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Caller authentication
+// ---------------------------------------------------------------------------
+
+/// Require the caller to authenticate before a non-root change is applied.
+///
+/// The tool is installed setuid-root, so the real UID check above establishes
+/// *who may be changed*; this establishes *who is asking*. Without it, anyone
+/// with access to an unlocked session could alter that user's account.
+/// Distributions ship a PAM service for this (`/etc/pam.d/chfn`), where
+/// `pam_rootok` lets root through and `common-auth` prompts everyone else.
+///
+/// Privileges are dropped to the real UID for the conversation so PAM modules
+/// see the actual caller, and restored when the guard falls out of scope.
+#[cfg(feature = "pam")]
+fn authenticate_caller(user: &str) -> Result<(), ChfnError> {
+    use shadow_core::pam::{ConvMode, PamContext};
+
+    let mut pam = PamContext::new("chfn", user, ConvMode::Tty)
+        .map_err(|e| ChfnError::Error(e.to_string()))?;
+
+    let _priv_drop = shadow_core::process::PrivDrop::drop_to(rustix::process::getuid().as_raw())
+        .map_err(|e| ChfnError::Error(format!("cannot drop privileges: {e}")))?;
+
+    pam.authenticate(0)
+        .map_err(|e| ChfnError::Error(e.to_string()))?;
+    pam.acct_mgmt(0)
+        .map_err(|e| ChfnError::Error(e.to_string()))?;
+    Ok(())
+}
+
+/// Without PAM there is no way to verify the caller, so refuse rather than
+/// silently applying an unauthenticated change to a setuid-root tool.
+#[cfg(not(feature = "pam"))]
+fn authenticate_caller(_user: &str) -> Result<(), ChfnError> {
+    Err(ChfnError::Error(
+        "PAM support is not compiled in — cannot authenticate; run as root".into(),
+    ))
 }
 
 /// Build the clap `Command` for `chfn`.
@@ -498,6 +540,22 @@ mod tests {
                 .get_one::<String>(options::FULL_NAME)
                 .map(String::as_str),
             Some("New Name")
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Caller authentication
+    // -----------------------------------------------------------------------
+
+    /// A setuid-root tool must fail closed: with no way to authenticate the
+    /// caller, it refuses rather than applying an unverified change.
+    #[test]
+    #[cfg(not(feature = "pam"))]
+    fn test_authenticate_caller_fails_closed_without_pam() {
+        let err = authenticate_caller("someone").expect_err("must refuse without PAM");
+        assert!(
+            format!("{err}").contains("cannot authenticate"),
+            "unexpected message: {err}"
         );
     }
 }

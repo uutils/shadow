@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `chfn` and `chsh` now authenticate the caller before applying a change.
+  Both are installed setuid-root and restricted non-root callers to their own
+  account, but never verified who was asking — anyone with access to an
+  unlocked session could change that user's login shell or GECOS field.
+  Distributions already ship `/etc/pam.d/chfn` and `/etc/pam.d/chsh` for this
+  (#226)
+
+### Changed
+
+- Without the `pam` feature, `chfn` and `chsh` refuse non-root invocations
+  rather than applying an unauthenticated change. Every install path enables
+  the feature; a static musl build would not — see
+  [docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md)
+- `PrivDrop`, the guard that lowers privileges for a PAM conversation, moved
+  from `passwd` into `shadow-core` so every setuid tool uses one implementation
+- CI lints and tests the `pam` code path, which the release binaries use but
+  no job previously exercised
+
 ## [0.2.2] - 2026-09-03
 
 First release to ship prebuilt binaries.

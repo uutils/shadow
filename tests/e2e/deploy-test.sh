@@ -171,8 +171,12 @@ test_setuid() {
     # passwd must be built with the `pam` cargo feature, otherwise the
     # interactive change path is compiled out and the tool can only report and
     # lock accounts — it cannot actually change a password.
-    assert_ok "passwd is linked against PAM" \
-        sh -c "ldd $BINDIR/passwd | grep -q libpam"
+    # chfn and chsh authenticate the caller through PAM before applying a
+    # change, so a build without the feature refuses every non-root use.
+    for tool in passwd chfn chsh; do
+        assert_ok "$tool is linked against PAM" \
+            sh -c "ldd $BINDIR/$tool | grep -q libpam"
+    done
 
     # Non-root user should be able to run passwd -S on themselves
     assert_ok "testrunner can run passwd -S" \
