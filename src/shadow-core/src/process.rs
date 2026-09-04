@@ -109,7 +109,7 @@ pub struct SavedSigSet {
     set: libc::sigset_t,
 }
 
-/// Block `SIGINT`, `SIGTERM`, `SIGHUP` and return the previous signal mask.
+/// Block `SIGINT`, `SIGQUIT`, `SIGTERM`, `SIGHUP` and return the previous mask.
 ///
 /// Calls `sigprocmask`, which modifies the *calling thread's* signal mask.
 /// For single-threaded shadow-rs tools this is effectively process-wide.
@@ -124,6 +124,11 @@ pub fn block_critical_signals() -> io::Result<SavedSigSet> {
             return Err(io::Error::last_os_error());
         }
         if libc::sigaddset(&raw mut block_set, libc::SIGINT) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SIGQUIT too: Ctrl-\ at a password prompt would otherwise kill the
+        // process without unwinding, leaving the terminal with echo off.
+        if libc::sigaddset(&raw mut block_set, libc::SIGQUIT) != 0 {
             return Err(io::Error::last_os_error());
         }
         if libc::sigaddset(&raw mut block_set, libc::SIGTERM) != 0 {

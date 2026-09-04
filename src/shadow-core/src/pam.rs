@@ -35,9 +35,7 @@ compile_error!(
 );
 
 use std::ffi::{CStr, CString};
-use std::fs::File;
-use std::io::{self, BufRead, Write};
-use std::os::unix::io::AsRawFd;
+use std::io;
 use std::ptr;
 
 use zeroize::Zeroize;
@@ -382,82 +380,27 @@ fn prompt_for_input(
 
 /// Prompt for and read one line, disabling echo unless `echo` is set.
 ///
-/// Prefers the controlling terminal (`/dev/tty`) so the prompt reaches the
-/// user even when stdin and stdout are redirected. When there is no
-/// controlling terminal — `su -c`, a systemd unit, cron, anything not
-/// started from a login shell — opening `/dev/tty` fails with `ENXIO`; the
-/// prompt then goes to stderr and the answer is read from stdin, the same
-/// fallback `getpass(3)` and PAM's own `misc_conv` use. Without it, a
-/// password change under `su -c` fails with "conversation failed".
+/// Delegates to [`crate::tty`], which prefers the controlling terminal and
+/// falls back to stderr/stdin when there is none.
 fn read_from_tty(message: &PamMessage, echo: bool) -> io::Result<zeroize::Zeroizing<String>> {
-    use std::os::unix::io::AsFd;
-
-    match File::options().read(true).write(true).open("/dev/tty") {
-        Ok(tty) => {
-            write_prompt(message, &tty)?;
-            let _guard = if echo {
-                None
-            } else {
-                Some(EchoGuard::disable(tty.as_fd())?)
-            };
-            let mut reader = io::BufReader::new(tty.try_clone()?);
-            let line = read_trimmed_line(&mut reader)?;
-            // Move the cursor past the hidden input. Best-effort.
-            if !echo {
-                let _ = (&tty).write_all(b"\n");
-            }
-            Ok(line)
-        }
-        // No controlling terminal: fall back to stderr for the prompt and
-        // stdin for the answer.
-        Err(e) if matches!(e.raw_os_error(), Some(libc::ENXIO | libc::ENODEV)) => {
-            let stderr = io::stderr();
-            write_prompt(message, &mut stderr.lock())?;
-            let stdin = io::stdin();
-            // Echo control only applies if stdin is itself a terminal; when it
-            // is a pipe, tcgetattr fails and there is no echo to suppress.
-            let _guard = if echo {
-                None
-            } else {
-                EchoGuard::disable(stdin.as_fd()).ok()
-            };
-            let line = read_trimmed_line(&mut stdin.lock())?;
-            if !echo {
-                let _ = writeln!(stderr.lock());
-            }
-            Ok(line)
-        }
-        Err(e) => Err(e),
-    }
-}
-
-/// Write a PAM prompt to a sink, flushing so it appears before the read.
-fn write_prompt<W: Write>(message: &PamMessage, mut sink: W) -> io::Result<()> {
-    if !message.msg.is_null() {
+    let prompt = if message.msg.is_null() {
+        String::new()
+    } else {
         // SAFETY: `msg` is a null-terminated C string provided by PAM.
-        let prompt = unsafe { CStr::from_ptr(message.msg) };
-        sink.write_all(prompt.to_bytes())?;
-        sink.flush()?;
-    }
-    Ok(())
-}
+        let text = unsafe { CStr::from_ptr(message.msg) };
+        text.to_string_lossy().into_owned()
+    };
 
-/// Read one line and strip a trailing CR/LF, keeping the buffer zeroizing.
-fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<zeroize::Zeroizing<String>> {
-    let mut line = zeroize::Zeroizing::new(String::new());
-    reader.read_line(&mut line)?;
-    if line.ends_with('\n') {
-        line.pop();
+    if echo {
+        crate::tty::prompt_line(&prompt).map(zeroize::Zeroizing::new)
+    } else {
+        crate::tty::read_password(&prompt)
     }
-    if line.ends_with('\r') {
-        line.pop();
-    }
-    Ok(line)
 }
 
 /// Read a line from stdin without prompting.
 fn read_from_stdin() -> io::Result<zeroize::Zeroizing<String>> {
-    read_trimmed_line(&mut io::stdin().lock())
+    crate::tty::read_stdin_line()
 }
 
 /// Allocate a C string with `libc::malloc` for use as a PAM response.
@@ -509,49 +452,6 @@ fn free_responses(responses: *mut PamResponse, count: usize) {
 // ---------------------------------------------------------------------------
 // Echo guard (RAII termios echo control)
 // ---------------------------------------------------------------------------
-
-/// RAII guard that disables terminal echo and restores it on drop.
-///
-/// Uses `rustix::termios` to manipulate the terminal's local flags. The
-/// original settings are saved and restored when the guard is dropped, even
-/// if the caller returns early or panics.
-struct EchoGuard {
-    fd: libc::c_int,
-    original: rustix::termios::Termios,
-}
-
-impl EchoGuard {
-    /// Disable echo on the given terminal, whichever fd it is reached through
-    /// (`/dev/tty` or stdin). Fails if the fd is not a terminal, which the
-    /// caller treats as "nothing to suppress".
-    fn disable<F: std::os::unix::io::AsFd>(fd: F) -> io::Result<Self> {
-        let borrowed = fd.as_fd();
-        let raw = borrowed.as_raw_fd();
-        let original = rustix::termios::tcgetattr(borrowed).map_err(io::Error::other)?;
-
-        let mut noecho = original.clone();
-        noecho.local_modes &=
-            !(rustix::termios::LocalModes::ECHO | rustix::termios::LocalModes::ECHONL);
-
-        rustix::termios::tcsetattr(borrowed, rustix::termios::OptionalActions::Now, &noecho)
-            .map_err(io::Error::other)?;
-
-        Ok(Self { fd: raw, original })
-    }
-}
-
-impl Drop for EchoGuard {
-    fn drop(&mut self) {
-        // SAFETY: `self.fd` is the raw fd from the tty file we opened. We use
-        // `BorrowedFd` to avoid consuming or closing the fd. The fd is still
-        // valid because the tty `File` that owns it outlives this guard in
-        // every call site.
-        use std::os::unix::io::BorrowedFd;
-        let fd = unsafe { BorrowedFd::borrow_raw(self.fd) };
-        let _ =
-            rustix::termios::tcsetattr(fd, rustix::termios::OptionalActions::Now, &self.original);
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Safe PAM context wrapper
