@@ -378,3 +378,47 @@ fn test_nonexistent_passwd_exits_cant_open() {
         "nonexistent passwd file should return exit code 3 (cant open)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// -s must not rewrite the files when there are errors (data-loss guard)
+// ---------------------------------------------------------------------------
+
+fn read_etc(dir: &tempfile::TempDir, name: &str) -> String {
+    std::fs::read_to_string(dir.path().join("etc").join(name)).expect("read etc file")
+}
+
+#[test]
+fn test_sort_with_parse_error_does_not_write() {
+    // A malformed line plus a comment and out-of-order entries: `-s` would
+    // reorder and, on the old code, drop the comment and the unparsable line.
+    let dir = setup_root(
+        "# keep this comment\n\
+         z:x:1000:1000::/home/z:/bin/sh\n\
+         broken:x:notanumber:0::/:/bin/sh\n\
+         a:x:500:500::/home/a:/bin/sh\n",
+        "z:!:19500::::::\na:!:19500::::::\n",
+        "z:x:1000:\na:x:500:\n",
+    );
+    let prefix = dir.path().to_str().unwrap();
+    let before = read_etc(&dir, "passwd");
+
+    let code = run(&["pwck", "-s", "-R", prefix]);
+    assert_eq!(code, 2, "a parse error must make pwck exit 2");
+    assert_eq!(
+        read_etc(&dir, "passwd"),
+        before,
+        "the file must be left untouched when there are errors"
+    );
+}
+
+#[test]
+fn test_read_only_and_sort_conflict() {
+    let dir = setup_root(
+        "root:x:0:0::/root:/bin/sh\n",
+        "root:!:19500::::::\n",
+        "root:x:0:\n",
+    );
+    let prefix = dir.path().to_str().unwrap();
+    let code = run(&["pwck", "-r", "-s", "-R", prefix]);
+    assert_ne!(code, 0, "-r and -s cannot be combined");
+}

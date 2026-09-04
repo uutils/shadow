@@ -51,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `pwck -s` and `grpck -s` no longer rewrite the files when a line failed to
+  parse. Sorting works on the entries that parsed, so the write silently
+  dropped every line the tool had just reported as invalid, along with all
+  comments. They now report the errors and exit 2 without writing. `-r` and
+  `-s` are also rejected together, as the man pages require (#246)
 - `userdel -r` no longer deletes a home directory that the user does not own
   or that another account shares, unless `-f` is given (`userdel(8)` ties both
   to `-f`). It could previously erase a service account's root-owned

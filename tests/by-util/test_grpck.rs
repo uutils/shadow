@@ -209,3 +209,36 @@ fn test_valid_group_without_gshadow_file() {
     ]);
     assert_eq!(code, 0, "valid group without gshadow file should return 0");
 }
+
+// ---------------------------------------------------------------------------
+// -s must not rewrite the files when there are errors (data-loss guard)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_sort_with_parse_error_does_not_write() {
+    let (dir, gp, gsp) = setup_files(
+        "# keep this comment\n\
+         z:x:1000:\n\
+         broken:x:notanumber:\n\
+         a:x:500:\n",
+        "z:!::\na:!::\n",
+    );
+    let before = std::fs::read_to_string(&gp).unwrap();
+
+    let code = run(&["grpck", "-s", &gp, &gsp]);
+    assert_eq!(code, 2, "a parse error must make grpck exit 2");
+    assert_eq!(
+        std::fs::read_to_string(&gp).unwrap(),
+        before,
+        "the file must be left untouched when there are errors"
+    );
+    let _ = dir;
+}
+
+#[test]
+fn test_read_only_and_sort_conflict() {
+    let (dir, gp, gsp) = setup_files("root:x:0:\n", "root:!::\n");
+    let code = run(&["grpck", "-r", "-s", &gp, &gsp]);
+    assert_ne!(code, 0, "-r and -s cannot be combined");
+    let _ = dir;
+}

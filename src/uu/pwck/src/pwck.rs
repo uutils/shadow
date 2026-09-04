@@ -194,6 +194,13 @@ fn run_checks(opts: &PwckOptions) -> UResult<()> {
     let shadow_result = check_shadow_entries(&shadow_entries, &passwd_entries, opts.quiet);
     errors += shadow_result.errors;
 
+    // Never rewrite the files when parse errors were found: sorting works on
+    // the entries that parsed, so writing would silently drop every line pwck
+    // just reported as invalid. Report the errors and stop.
+    if errors > 0 {
+        return Err(PwckError::BadEntry(String::new()).into());
+    }
+
     if opts.sort {
         sort_and_write(
             &opts.passwd_path,
@@ -206,12 +213,7 @@ fn run_checks(opts: &PwckOptions) -> UResult<()> {
         uucore::show_error!("no changes");
     }
 
-    if errors > 0 {
-        // GNU exits 2 silently (no additional message beyond the per-entry output).
-        Err(PwckError::BadEntry(String::new()).into())
-    } else {
-        Ok(())
-    }
+    Ok(())
 }
 
 /// Load shadow file, returning empty vec if file does not exist.
@@ -242,13 +244,13 @@ fn load_group_file(path: &Path, quiet: bool) -> Vec<GroupEntry> {
 
 /// Sort passwd entries by UID and write back atomically (for `--sort`).
 ///
-/// When `read_only` is true (i.e. `-r -s`), compute the sorted order but
-/// skip all file writes, matching GNU `pwck -r -s` behaviour.
+/// `-r` and `-s` cannot be combined (rejected by clap), so `read_only` is
+/// always false here; the parameter is kept as a defensive guard.
 ///
-/// NOTE: Sorting operates on parsed entries and discards any comments or
-/// blank lines from the original file. A lossless (comment-preserving)
-/// sort would require a significantly different parser that tracks raw
-/// lines alongside parsed entries. This matches GNU `pwck -s` behavior.
+/// NOTE: sorting operates on the parsed entries and does not yet preserve
+/// comments or blank lines. Comment preservation is tracked in #241; until
+/// then a `-s` that reorders the file drops them. This only runs when there
+/// were no parse errors.
 fn sort_and_write(
     passwd_path: &Path,
     shadow_path: &Path,
@@ -313,6 +315,8 @@ pub fn uu_app() -> Command {
                 .short('s')
                 .long("sort")
                 .help("Reorder entries by ascending UID")
+                // pwck(8): "The -r and -s options cannot be combined."
+                .conflicts_with(options::READ_ONLY)
                 .action(ArgAction::SetTrue),
         )
         .arg(

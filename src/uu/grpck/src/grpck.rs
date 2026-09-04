@@ -163,7 +163,14 @@ fn run_checks(opts: &GrpckOptions) -> UResult<()> {
         errors += check_group_gshadow_consistency(&group_entries, &gshadow_entries, opts.quiet);
     }
 
-    // Sort by GID if requested.
+    // Never rewrite the files when errors were found: sorting works on the
+    // entries that parsed, so writing would drop every line just reported.
+    if errors > 0 {
+        return Err(GrpckError::BadEntry(String::new()).into());
+    }
+
+    // Sort by GID if requested. `-r` and `-s` cannot be combined (rejected by
+    // clap), so the read-only guard is defensive.
     if opts.sort && !opts.read_only {
         sort_and_write(
             &opts.group_path,
@@ -173,11 +180,7 @@ fn run_checks(opts: &GrpckOptions) -> UResult<()> {
         )?;
     }
 
-    if errors > 0 {
-        Err(GrpckError::BadEntry(String::new()).into())
-    } else {
-        Ok(())
-    }
+    Ok(())
 }
 
 /// Read raw non-comment, non-blank lines from a file.
@@ -382,6 +385,8 @@ pub fn uu_app() -> Command {
                 .short('s')
                 .long("sort")
                 .help("Reorder entries by ascending GID")
+                // grpck(8): "The -r and -s options cannot be combined."
+                .conflicts_with(options::READ_ONLY)
                 .action(ArgAction::SetTrue),
         )
         .arg(
