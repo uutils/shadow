@@ -6,14 +6,11 @@
 
 //! Integration tests for the `pwck` utility.
 //!
-//! Tests that require root are guarded by `common::skip_unless_root()` and run inside
+//! Tests that require root are guarded by `crate::common::skip_unless_root()` and run inside
 //! Docker CI containers. Non-root tests exercise clap parsing and error paths
 //! that do not need privilege.
 
 use std::ffi::OsString;
-
-#[path = "../common/mod.rs"]
-mod common;
 
 /// Run `uumain` with the given args, returning the exit code.
 fn run(args: &[&str]) -> i32 {
@@ -35,6 +32,26 @@ fn setup_root(
     std::fs::write(etc.join("shadow"), shadow_content).expect("failed to write shadow file");
     std::fs::write(etc.join("group"), group_content).expect("failed to write group file");
     std::fs::write(etc.join("shells"), "/bin/bash\n/bin/sh\n").expect("failed to write shells");
+
+    // pwck resolves a shell and the shadow permissions against the prefix, so
+    // a fixture without them produces warnings unrelated to what a test is
+    // asserting.
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&bin).expect("failed to create bin dir");
+    for shell in ["bash", "sh"] {
+        std::fs::write(bin.join(shell), "#!/bin/sh\n").expect("failed to write shell");
+        let path = bin.join(shell);
+        let mut perms = std::fs::metadata(&path).expect("stat shell").permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        std::fs::set_permissions(&path, perms).expect("chmod shell");
+    }
+    let shadow = etc.join("shadow");
+    let mut perms = std::fs::metadata(&shadow)
+        .expect("stat shadow")
+        .permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o640);
+    std::fs::set_permissions(&shadow, perms).expect("chmod shadow");
+
     dir
 }
 
@@ -70,7 +87,7 @@ fn test_read_only_mode() {
 
 #[test]
 fn test_valid_files_exits_zero() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -98,7 +115,7 @@ fn test_valid_files_exits_zero() {
 
 #[test]
 fn test_missing_shadow_entry() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -130,7 +147,7 @@ fn test_missing_shadow_entry() {
 
 #[test]
 fn test_extra_shadow_entry() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -161,7 +178,7 @@ fn test_extra_shadow_entry() {
 
 #[test]
 fn test_invalid_uid() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -191,7 +208,7 @@ fn test_invalid_uid() {
 
 #[test]
 fn test_invalid_gid() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -221,7 +238,7 @@ fn test_invalid_gid() {
 
 #[test]
 fn test_duplicate_username() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -247,45 +264,59 @@ fn test_duplicate_username() {
     assert_eq!(code, 2, "duplicate username should be detected (exit 2)");
 }
 
+/// A duplicate UID is not itself a fault. Two accounts may deliberately share
+/// one -- `useradd -o` exists for that -- so `pwck` reports nothing and exits
+/// clean, which is what GNU shadow 4.17 does. A duplicate *name* is a fault,
+/// because a lookup by name then has two answers.
 #[test]
-fn test_duplicate_uid() {
-    if common::skip_unless_root() {
+fn test_duplicate_uid_is_not_an_error_but_a_duplicate_name_is() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
-    // Duplicate UIDs are detected by pwck. Two different users with same UID.
-    let dir = setup_root(
+    let shared_uid = setup_root(
         "alice:x:1000:1000::/home/alice:/bin/bash\nbob:x:1000:1000::/home/bob:/bin/bash\n",
         "alice:$6$hash:19000:0:99999:7:::\nbob:$6$hash:19000:0:99999:7:::\n",
         "users:x:1000:\n",
     );
-    std::fs::create_dir_all(dir.path().join("home/alice")).expect("mkdir alice home");
-    std::fs::create_dir_all(dir.path().join("home/bob")).expect("mkdir bob home");
+    std::fs::create_dir_all(shared_uid.path().join("home/alice")).expect("mkdir alice home");
+    std::fs::create_dir_all(shared_uid.path().join("home/bob")).expect("mkdir bob home");
 
-    let passwd_path = dir.path().join("etc/passwd");
-    let shadow_path = dir.path().join("etc/shadow");
-
-    // Duplicate UIDs produce warnings (not errors) in pwck -- verify it does
-    // not crash and completes. Exit code 0 is acceptable since duplicate UIDs
-    // are only a warning in most pwck implementations.
-    let code = run(&[
-        "pwck",
-        "-r",
-        "-R",
-        dir.path().to_str().expect("non-utf8 path"),
-        passwd_path.to_str().expect("non-utf8 path"),
-        shadow_path.to_str().expect("non-utf8 path"),
-    ]);
-    // Duplicate UIDs are a warning, not an error -- exit 0 is valid.
-    assert!(
-        code == 0 || code == 2,
-        "duplicate UID should either warn (exit 0) or error (exit 2), got {code}"
+    let out = crate::common::run_cmd(
+        crate::common::tool("pwck")
+            .arg("-r")
+            .arg("-R")
+            .arg(shared_uid.path()),
     );
+    out.assert_code(0);
+    assert!(
+        !out.stdout.contains("duplicate") && !out.stderr.contains("duplicate"),
+        "a shared UID must not be reported:\n{}{}",
+        out.stdout,
+        out.stderr
+    );
+
+    let shared_name = setup_root(
+        "alice:x:1000:1000::/home/alice:/bin/bash\nalice:x:1001:1000::/home/other:/bin/bash\n",
+        "alice:$6$hash:19000:0:99999:7:::\n",
+        "users:x:1000:\n",
+    );
+    std::fs::create_dir_all(shared_name.path().join("home/alice")).expect("mkdir alice home");
+    std::fs::create_dir_all(shared_name.path().join("home/other")).expect("mkdir other home");
+
+    crate::common::run_cmd(
+        crate::common::tool("pwck")
+            .arg("-r")
+            .arg("-R")
+            .arg(shared_name.path()),
+    )
+    .assert_code(2)
+    .assert_stderr_contains("duplicate password entry");
 }
 
 #[test]
 fn test_empty_username() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -315,7 +346,7 @@ fn test_empty_username() {
 
 #[test]
 fn test_missing_home_dir() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -345,7 +376,7 @@ fn test_missing_home_dir() {
 
 #[test]
 fn test_malformed_passwd_line() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 

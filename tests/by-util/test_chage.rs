@@ -6,309 +6,251 @@
 
 //! Integration tests for the `chage` utility.
 //!
-//! Tests that require root are guarded by `common::skip_unless_root()` and run inside
-//! Docker CI containers. Non-root tests exercise clap parsing and error paths
-//! that do not need privilege.
+//! These run the real binary against a `--prefix` tree and assert on what it
+//! writes and prints. They used to set a field through `shadow-core` and read
+//! it back, which tested the parser twice and `chage` not at all; the tool had
+//! no `--prefix` then, and `--root` performs a real `chroot(2)` that an
+//! in-process test cannot use.
 
-use std::ffi::OsString;
+use crate::common::{Output, run, tool};
 
-#[path = "../common/mod.rs"]
-mod common;
-
-/// Run `uumain` with the given args, returning the exit code.
-fn run(args: &[&str]) -> i32 {
-    let os_args: Vec<OsString> = args.iter().map(|s| (*s).into()).collect();
-    chage::uumain(os_args.into_iter())
-}
-
-/// Helper to create a temp dir with an `etc/shadow` file.
-fn setup_shadow(shadow_content: &str) -> tempfile::TempDir {
+/// A prefix tree holding `etc/shadow`, and `etc/passwd` for the tools that
+/// look an account up before touching its aging fields.
+fn prefix(shadow: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let etc = dir.path().join("etc");
     std::fs::create_dir_all(&etc).expect("failed to create etc dir");
-    std::fs::write(etc.join("shadow"), shadow_content).expect("failed to write shadow file");
+    std::fs::write(etc.join("shadow"), shadow).expect("failed to write shadow file");
+    std::fs::write(
+        etc.join("passwd"),
+        "testuser:x:4000:4000::/home/testuser:/bin/sh\n",
+    )
+    .expect("failed to write passwd file");
     dir
 }
 
-/// Read the shadow file content back from a prefix dir.
-fn read_shadow(dir: &tempfile::TempDir) -> String {
-    std::fs::read_to_string(dir.path().join("etc/shadow")).expect("failed to read shadow file")
+/// The account's shadow line, without its trailing newline.
+fn shadow_line(dir: &tempfile::TempDir) -> String {
+    std::fs::read_to_string(dir.path().join("etc/shadow"))
+        .expect("failed to read shadow file")
+        .trim_end()
+        .to_string()
+}
+
+/// Run `chage --prefix <dir> <args...>`.
+fn chage(dir: &tempfile::TempDir, args: &[&str]) -> Output {
+    let mut cmd = tool("chage");
+    cmd.arg("--prefix").arg(dir.path()).args(args);
+    crate::common::run_cmd(&mut cmd)
+}
+
+/// The value column of one `chage -l` line, counting from 1.
+fn field(dir: &tempfile::TempDir, line: usize) -> String {
+    let out = chage(dir, &["-l", "testuser"]);
+    out.assert_code(0);
+    let Some((_, value)) = out
+        .stdout
+        .lines()
+        .nth(line - 1)
+        .and_then(|l| l.rsplit_once(": "))
+    else {
+        panic!("no line {line} in:\n{}", out.stdout)
+    };
+    value.to_string()
 }
 
 // ---------------------------------------------------------------------------
-// Non-root tests — exercise clap parsing and error paths
+// Argument handling
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_help_exits_zero() {
-    let code = run(&["chage", "--help"]);
-    assert_eq!(code, 0, "--help should exit 0");
+    run("chage", &["--help"])
+        .assert_code(0)
+        .assert_stdout_contains("--lastday");
 }
 
 #[test]
 fn test_missing_login_exits_two() {
-    let code = run(&["chage", "-l"]);
-    assert_eq!(code, 2, "missing LOGIN should exit 2");
+    run("chage", &["-l"])
+        .assert_code(2)
+        .assert_stderr_contains("<login>");
 }
 
+/// `-l` prints; it does not also change things.
 #[test]
-fn test_conflicting_list_and_modification() {
-    let code = run(&["chage", "-l", "-m", "5", "testuser"]);
-    assert_eq!(code, 2, "-l with -m should exit 2");
-}
-
-#[test]
-fn test_conflicting_list_and_maxdays() {
-    let code = run(&["chage", "-l", "-M", "90", "testuser"]);
-    assert_eq!(code, 2, "-l with -M should exit 2");
-}
-
-#[test]
-fn test_conflicting_list_and_lastday() {
-    let code = run(&["chage", "-l", "-d", "0", "testuser"]);
-    assert_eq!(code, 2, "-l with -d should exit 2");
-}
-
-// ---------------------------------------------------------------------------
-// Root-only tests — exercise real operations via SysRoot prefix
-// ---------------------------------------------------------------------------
-//
-// TODO(#integration): These tests directly manipulate shadow-core data
-// structures instead of calling chage::uumain(). Full end-to-end integration
-// via uumain() is not yet feasible because chage only supports --root (which
-// performs a real chroot(2) and requires root), not --prefix (path-prefix
-// without chroot). Once chage gains a --prefix flag, replace these tests with
-// uumain() calls using run(&["chage", "--prefix", ..., "-m", "10", "testuser"])
-// with synthetic files.
-
-#[test]
-fn test_list_output() {
-    if common::skip_unless_root() {
-        return;
+fn test_list_conflicts_with_every_field_option() {
+    for (flag, value) in [
+        ("-m", "5"),
+        ("-M", "90"),
+        ("-d", "0"),
+        ("-W", "7"),
+        ("-I", "3"),
+    ] {
+        run("chage", &["-l", flag, value, "testuser"])
+            .assert_code(2)
+            .assert_stderr_contains("cannot be used with");
     }
-
-    // Create a shadow file and use chage's internal list function.
-    let dir = setup_shadow("testuser:$6$hash:19500:0:99999:7:::\n");
-
-    // We can't easily test -l with --root since chage uses chroot, not prefix.
-    // But we can verify the shadow file was set up correctly.
-    let content = read_shadow(&dir);
-    assert!(
-        content.contains("testuser:$6$hash:19500:0:99999:7:::"),
-        "shadow file should contain expected entry"
-    );
 }
 
-#[test]
-fn test_set_mindays() {
-    if common::skip_unless_root() {
-        return;
-    }
-
-    let dir = setup_shadow("testuser:$6$hash:19500:0:99999:7:::\n");
-
-    // Use shadow-core directly to test mutation logic.
-    let shadow_path = dir.path().join("etc/shadow");
-    let mut entries =
-        shadow_core::shadow::read_shadow_file(&shadow_path).expect("failed to read shadow");
-
-    let entry = entries
-        .iter_mut()
-        .find(|e| e.name == "testuser")
-        .expect("testuser not found");
-    entry.min_age = Some(10);
-
-    let file = std::fs::File::create(&shadow_path).expect("failed to create shadow file");
-    shadow_core::shadow::write_shadow(&entries, file).expect("failed to write shadow");
-
-    let content = read_shadow(&dir);
-    assert!(
-        content.contains(":10:99999:"),
-        "min_age should be 10, got: {content}"
-    );
-}
-
-#[test]
-fn test_set_maxdays() {
-    if common::skip_unless_root() {
-        return;
-    }
-
-    let dir = setup_shadow("testuser:$6$hash:19500:0:99999:7:::\n");
-    let shadow_path = dir.path().join("etc/shadow");
-    let mut entries =
-        shadow_core::shadow::read_shadow_file(&shadow_path).expect("failed to read shadow");
-
-    let entry = entries
-        .iter_mut()
-        .find(|e| e.name == "testuser")
-        .expect("testuser not found");
-    entry.max_age = Some(180);
-
-    let file = std::fs::File::create(&shadow_path).expect("failed to create shadow file");
-    shadow_core::shadow::write_shadow(&entries, file).expect("failed to write shadow");
-
-    let content = read_shadow(&dir);
-    assert!(
-        content.contains(":0:180:7:"),
-        "max_age should be 180, got: {content}"
-    );
-}
-
-#[test]
-fn test_set_warndays() {
-    if common::skip_unless_root() {
-        return;
-    }
-
-    let dir = setup_shadow("testuser:$6$hash:19500:0:99999:7:::\n");
-    let shadow_path = dir.path().join("etc/shadow");
-    let mut entries =
-        shadow_core::shadow::read_shadow_file(&shadow_path).expect("failed to read shadow");
-
-    let entry = entries
-        .iter_mut()
-        .find(|e| e.name == "testuser")
-        .expect("testuser not found");
-    entry.warn_days = Some(14);
-
-    let file = std::fs::File::create(&shadow_path).expect("failed to create shadow file");
-    shadow_core::shadow::write_shadow(&entries, file).expect("failed to write shadow");
-
-    let content = read_shadow(&dir);
-    assert!(
-        content.contains(":99999:14:"),
-        "warn_days should be 14, got: {content}"
-    );
-}
-
-#[test]
-fn test_set_inactive() {
-    if common::skip_unless_root() {
-        return;
-    }
-
-    let dir = setup_shadow("testuser:$6$hash:19500:0:99999:7:::\n");
-    let shadow_path = dir.path().join("etc/shadow");
-    let mut entries =
-        shadow_core::shadow::read_shadow_file(&shadow_path).expect("failed to read shadow");
-
-    let entry = entries
-        .iter_mut()
-        .find(|e| e.name == "testuser")
-        .expect("testuser not found");
-    entry.inactive_days = Some(30);
-
-    let file = std::fs::File::create(&shadow_path).expect("failed to create shadow file");
-    shadow_core::shadow::write_shadow(&entries, file).expect("failed to write shadow");
-
-    let content = read_shadow(&dir);
-    assert!(
-        content.contains(":7:30:"),
-        "inactive_days should be 30, got: {content}"
-    );
-}
-
-#[test]
-fn test_set_expiredate() {
-    if common::skip_unless_root() {
-        return;
-    }
-
-    let dir = setup_shadow("testuser:$6$hash:19500:0:99999:7:::\n");
-    let shadow_path = dir.path().join("etc/shadow");
-    let mut entries =
-        shadow_core::shadow::read_shadow_file(&shadow_path).expect("failed to read shadow");
-
-    let entry = entries
-        .iter_mut()
-        .find(|e| e.name == "testuser")
-        .expect("testuser not found");
-    entry.expire_date = Some(20000);
-
-    let file = std::fs::File::create(&shadow_path).expect("failed to create shadow file");
-    shadow_core::shadow::write_shadow(&entries, file).expect("failed to write shadow");
-
-    let content = read_shadow(&dir);
-    assert!(
-        content.contains("::20000:"),
-        "expire_date should be 20000, got: {content}"
-    );
-}
-
-#[test]
-fn test_set_lastchange() {
-    if common::skip_unless_root() {
-        return;
-    }
-
-    let dir = setup_shadow("testuser:$6$hash:19500:0:99999:7:::\n");
-    let shadow_path = dir.path().join("etc/shadow");
-    let mut entries =
-        shadow_core::shadow::read_shadow_file(&shadow_path).expect("failed to read shadow");
-
-    let entry = entries
-        .iter_mut()
-        .find(|e| e.name == "testuser")
-        .expect("testuser not found");
-    entry.last_change = Some(0);
-
-    let file = std::fs::File::create(&shadow_path).expect("failed to create shadow file");
-    shadow_core::shadow::write_shadow(&entries, file).expect("failed to write shadow");
-
-    let content = read_shadow(&dir);
-    assert!(
-        content.contains("testuser:$6$hash:0:"),
-        "last_change should be 0, got: {content}"
-    );
-}
-
-#[test]
-fn test_remove_expiredate() {
-    if common::skip_unless_root() {
-        return;
-    }
-
-    let dir = setup_shadow("testuser:$6$hash:19500:0:99999:7::20000:\n");
-    let shadow_path = dir.path().join("etc/shadow");
-    let mut entries =
-        shadow_core::shadow::read_shadow_file(&shadow_path).expect("failed to read shadow");
-
-    let entry = entries
-        .iter_mut()
-        .find(|e| e.name == "testuser")
-        .expect("testuser not found");
-    // -1 means remove the field.
-    entry.expire_date = None;
-
-    let file = std::fs::File::create(&shadow_path).expect("failed to create shadow file");
-    shadow_core::shadow::write_shadow(&entries, file).expect("failed to write shadow");
-
-    let content = read_shadow(&dir);
-    assert!(
-        content.contains(":7::"),
-        "expire_date should be empty after removal, got: {content}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Aging-field bounds (chage(1))
-// ---------------------------------------------------------------------------
-
+/// A day count is either non-negative or -1, which clears the field. Anything
+/// else is not a policy a reader can act on.
 #[test]
 fn test_negative_aging_values_are_rejected() {
-    if common::skip_unless_root() {
+    let dir = prefix("testuser:$6$hash:19500:0:99999:7:::\n");
+    let before = shadow_line(&dir);
+    for flag in ["-m", "-M", "-W", "-I"] {
+        chage(&dir, &[flag, "-5", "testuser"]).assert_code(2);
+    }
+    chage(&dir, &["-d", "-5", "testuser"]).assert_code(2);
+    assert_eq!(before, shadow_line(&dir), "a refused value was written");
+}
+
+/// An unknown login is an ordinary failure. chage(1) reserves 15 for "can't
+/// find the shadow password file", and GNU exits 1 here.
+#[test]
+fn test_unknown_login_exits_one() {
+    let dir = prefix("testuser:$6$hash:19500:0:99999:7:::\n");
+    chage(&dir, &["-l", "ghost"]).assert_code(1);
+    chage(&dir, &["-M", "10", "ghost"]).assert_code(1);
+}
+
+// ---------------------------------------------------------------------------
+// Writing the aging fields
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_each_field_option_writes_its_own_field() {
+    if crate::common::skip_unless_root() {
         return;
     }
-
-    // The range check runs before any file is opened, so this touches nothing
-    // even though chage has no prefix option: a day count may only be -1
-    // ("unset") or non-negative.
-    for flag in ["-m", "-M", "-W", "-I"] {
-        assert_eq!(
-            run(&["chage", flag, "-5", "no_such_user_for_chage_test"]),
-            2,
-            "{flag} -5 must be an invalid argument"
-        );
+    // Every case starts from the same line, so the assertion pins the whole
+    // record: a flag that also disturbed a neighbouring field would show.
+    let start = "testuser:$6$hash:19500:0:99999:7:::\n";
+    for (args, expected) in [
+        (vec!["-m", "10"], "testuser:$6$hash:19500:10:99999:7:::"),
+        (vec!["-M", "180"], "testuser:$6$hash:19500:0:180:7:::"),
+        (vec!["-W", "14"], "testuser:$6$hash:19500:0:99999:14:::"),
+        (vec!["-I", "30"], "testuser:$6$hash:19500:0:99999:7:30::"),
+        (vec!["-d", "0"], "testuser:$6$hash:0:0:99999:7:::"),
+        (
+            vec!["-E", "2024-10-04"],
+            "testuser:$6$hash:19500:0:99999:7::20000:",
+        ),
+        (
+            vec!["-E", "20000"],
+            "testuser:$6$hash:19500:0:99999:7::20000:",
+        ),
+    ] {
+        let dir = prefix(start);
+        chage(&dir, &[args.clone(), vec!["testuser"]].concat()).assert_code(0);
+        assert_eq!(shadow_line(&dir), expected, "after chage {args:?}");
     }
+}
+
+/// -1 clears a field rather than storing a negative number.
+#[test]
+fn test_minus_one_clears_a_field() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = prefix("testuser:$6$hash:19500:5:180:14:30:20000:\n");
+    chage(
+        &dir,
+        &[
+            "-m", "-1", "-M", "-1", "-W", "-1", "-I", "-1", "-E", "-1", "testuser",
+        ],
+    )
+    .assert_code(0);
+    assert_eq!(shadow_line(&dir), "testuser:$6$hash:19500::::::");
+}
+
+/// A date that does not exist is refused, not rolled over into the next month.
+#[test]
+fn test_impossible_dates_are_rejected() {
+    let dir = prefix("testuser:$6$hash:19500:0:99999:7:::\n");
+    let before = shadow_line(&dir);
+    for date in ["2025-02-29", "2025-04-31", "2025-13-01", "not-a-date"] {
+        chage(&dir, &["-E", date, "testuser"]).assert_code(2);
+    }
+    assert_eq!(before, shadow_line(&dir));
+}
+
+// ---------------------------------------------------------------------------
+// The -l output
+//
+// The expected text is GNU shadow 4.17's. Scripts parse these lines, so the
+// wording and the thresholds are part of the contract.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_list_prints_the_gnu_labels() {
+    let dir = prefix("testuser:$6$hash:19500:0:99999:7:::\n");
+    let out = chage(&dir, &["-l", "testuser"]);
+    out.assert_code(0);
+    for label in [
+        "Last password change",
+        "Password expires",
+        "Password inactive",
+        "Account expires",
+        "Minimum number of days between password change",
+        "Maximum number of days between password change",
+        "Number of days of warning before password expires",
+    ] {
+        out.assert_stdout_contains(label);
+    }
+}
+
+/// A last change of 0 is `passwd -e`'s "must change at next login" marker, not
+/// a date, and it makes the two dates derived from it meaningless as well.
+#[test]
+fn test_last_change_zero_reports_must_be_changed() {
+    let dir = prefix("testuser:$6$hash:0:0:90:7:30:0:\n");
+    assert_eq!(field(&dir, 1), "password must be changed");
+    assert_eq!(field(&dir, 2), "password must be changed");
+    assert_eq!(field(&dir, 3), "password must be changed");
+    // The account expiry is a separate field and keeps its own date.
+    assert_eq!(field(&dir, 4), "Jan 01, 1970");
+}
+
+/// Expiry is disabled at a maximum age of 10000 days, not 99999.
+#[test]
+fn test_never_threshold_is_ten_thousand_days() {
+    let dir = prefix("testuser:$6$hash:20454:0:9999:7:::\n");
+    assert_eq!(field(&dir, 2), "May 18, 2053");
+
+    let dir = prefix("testuser:$6$hash:20454:0:10000:7:::\n");
+    assert_eq!(field(&dir, 2), "never");
+}
+
+#[test]
+fn test_unset_fields_report_never_and_minus_one() {
+    let dir = prefix("testuser:$6$hash:::::::\n");
+    assert_eq!(field(&dir, 1), "never");
+    assert_eq!(field(&dir, 2), "never");
+    assert_eq!(field(&dir, 3), "never");
+    assert_eq!(field(&dir, 4), "never");
+    assert_eq!(field(&dir, 5), "-1");
+    assert_eq!(field(&dir, 6), "-1");
+    assert_eq!(field(&dir, 7), "-1");
+}
+
+/// Anyone who can write /etc/shadow can put a value in it that overflows the
+/// `lastchg + max + inactive` sums. That must read as `never` rather than wrap
+/// into a plausible-looking date.
+#[test]
+fn test_absurd_field_values_report_never() {
+    let dir = prefix("testuser:$6$hash:9223372036854775807:0:90:7:9223372036854775807::\n");
+    assert_eq!(field(&dir, 1), "never");
+    assert_eq!(field(&dir, 2), "never");
+    assert_eq!(field(&dir, 3), "never");
+}
+
+/// The two derived dates are sums of three separate fields.
+#[test]
+fn test_derived_dates_are_the_sums_of_their_fields() {
+    let dir = prefix("testuser:$6$hash:20454:0:90:7:30::\n");
+    assert_eq!(field(&dir, 1), "Jan 01, 2026");
+    assert_eq!(field(&dir, 2), "Apr 01, 2026");
+    assert_eq!(field(&dir, 3), "May 01, 2026");
 }

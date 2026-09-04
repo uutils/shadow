@@ -6,14 +6,11 @@
 
 //! Integration tests for the `groupdel` utility.
 //!
-//! Tests that require root are guarded by `common::skip_unless_root()` and run inside
+//! Tests that require root are guarded by `crate::common::skip_unless_root()` and run inside
 //! Docker CI containers. Non-root tests exercise clap parsing and error paths
 //! that do not need privilege.
 
 use std::ffi::OsString;
-
-#[path = "../common/mod.rs"]
-mod common;
 
 /// Run `uumain` with the given args, returning the exit code.
 fn run(args: &[&str]) -> i32 {
@@ -74,7 +71,7 @@ fn test_missing_group_name_exits_error() {
 
 #[test]
 fn test_delete_group_basic() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -97,7 +94,7 @@ fn test_delete_group_basic() {
 
 #[test]
 fn test_delete_nonexistent_group_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -117,7 +114,7 @@ fn test_delete_nonexistent_group_fails() {
 
 #[test]
 fn test_delete_group_preserves_others() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -149,7 +146,7 @@ fn test_delete_group_preserves_others() {
 
 #[test]
 fn test_delete_primary_group_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -176,7 +173,7 @@ fn test_delete_primary_group_fails() {
 
 #[test]
 fn test_delete_group_removes_gshadow() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -207,7 +204,7 @@ fn test_delete_group_removes_gshadow() {
 
 #[test]
 fn test_delete_with_root_flag() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -230,7 +227,7 @@ fn test_delete_with_root_flag() {
 
 #[test]
 fn test_delete_group_with_members() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -254,7 +251,7 @@ fn test_delete_group_with_members() {
 
 #[test]
 fn test_force_and_sole_gshadow_entry() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 

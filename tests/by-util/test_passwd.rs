@@ -6,14 +6,11 @@
 
 //! Integration tests for the `passwd` utility.
 //!
-//! Tests that require root are guarded by `common::skip_unless_root()` and run inside
+//! Tests that require root are guarded by `crate::common::skip_unless_root()` and run inside
 //! Docker CI containers. Non-root tests exercise clap parsing and error paths
 //! that do not need privilege.
 
 use std::ffi::OsString;
-
-#[path = "../common/mod.rs"]
-mod common;
 
 /// Run `uumain` with the given args, returning the exit code.
 fn run(args: &[&str]) -> i32 {
@@ -72,7 +69,7 @@ fn test_conflicting_flags_exits_two() {
 
 #[test]
 fn test_status_output_format() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     // Verify the status line matches the expected GNU format:
@@ -84,7 +81,7 @@ fn test_status_output_format() {
 
 #[test]
 fn test_lock_unlock_cycle() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
@@ -124,7 +121,7 @@ fn test_lock_unlock_cycle() {
 
 #[test]
 fn test_expire_sets_epoch() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
@@ -141,7 +138,7 @@ fn test_expire_sets_epoch() {
 
 #[test]
 fn test_aging_all_fields() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
@@ -160,7 +157,7 @@ fn test_aging_all_fields() {
 
 #[test]
 fn test_nonexistent_user_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
@@ -172,7 +169,7 @@ fn test_nonexistent_user_fails() {
 
 #[test]
 fn test_missing_shadow_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let dir = tempfile::tempdir().expect("failed to create temp dir");
@@ -185,7 +182,7 @@ fn test_missing_shadow_fails() {
 
 #[test]
 fn test_quiet_no_action_message() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     // -q suppresses the informational action message on stderr.
@@ -203,7 +200,7 @@ fn test_quiet_no_action_message() {
 
 #[test]
 fn test_lock_and_aging_combined() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     // Mutation flag + aging flags must all apply in a single operation.
@@ -225,7 +222,7 @@ fn test_lock_and_aging_combined() {
 
 #[test]
 fn test_multiple_users_only_target_modified() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let shadow = "\
@@ -254,7 +251,7 @@ charlie:$6$charlie:19500:0:99999:7:::\n";
 
 #[test]
 fn test_delete_password() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
@@ -270,7 +267,7 @@ fn test_delete_password() {
 
 #[test]
 fn test_unlock_only_bang_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     // Password "!" cannot be unlocked (would leave empty).
@@ -281,7 +278,7 @@ fn test_unlock_only_bang_fails() {
 
 #[test]
 fn test_full_lifecycle() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
@@ -321,64 +318,71 @@ fn test_full_lifecycle() {
 // Concurrency tests — verify lock file prevents corruption
 // ---------------------------------------------------------------------------
 
-/// Test that two concurrent lock/unlock operations don't corrupt the shadow file.
+/// Concurrent lock/unlock runs must not corrupt the shadow file.
 ///
-/// Spawns two threads that each try to lock then unlock testuser.
-/// After both complete, the shadow file should still be valid and parseable.
+/// These are separate *processes*, not threads. The lock is a hard link keyed
+/// on the process id, so two threads of one process do not exclude each other
+/// at all: the old version of this test raced four threads through `uumain`
+/// and could never have observed the exclusion it claimed to test. It also
+/// discarded all eight return codes, so a run in which every call failed
+/// looked exactly like a run in which every call worked.
 #[test]
 fn test_concurrent_lock_operations() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
     let dir =
         setup_prefix("testuser:$6$hash:19500:0:99999:7:::\nother:$6$hash2:19500:0:99999:7:::\n");
-    let prefix = dir.path().to_str().expect("valid utf-8 path").to_string();
 
-    let handles: Vec<_> = (0..4)
-        .map(|_| {
-            let p = prefix.clone();
-            std::thread::spawn(move || {
-                // Lock
-                let args: Vec<std::ffi::OsString> = vec![
-                    "passwd".into(),
-                    "-q".into(),
-                    "-l".into(),
-                    "-P".into(),
-                    p.clone().into(),
-                    "testuser".into(),
-                ];
-                let _ = passwd::uumain(args.into_iter());
-                // Unlock
-                let args: Vec<std::ffi::OsString> = vec![
-                    "passwd".into(),
-                    "-q".into(),
-                    "-u".into(),
-                    "-P".into(),
-                    p.into(),
-                    "testuser".into(),
-                ];
-                let _ = passwd::uumain(args.into_iter());
-            })
-        })
-        .collect();
-
-    for h in handles {
-        h.join().expect("thread panicked");
+    // Eight concurrent locks. Locking is idempotent, so any ordering is
+    // legitimate and the only interesting question is whether the file
+    // survives being written by several processes at once. Mixing unlocks in
+    // would conflate that with `passwd -u`'s own guard, which refuses to
+    // unlock an account that is not locked.
+    let mut children = Vec::new();
+    for _ in 0..8 {
+        let mut cmd = crate::common::tool("passwd");
+        cmd.args(["-q", "-l", "-P"])
+            .arg(dir.path())
+            .arg("testuser")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        children.push(cmd.spawn().expect("cannot spawn passwd"));
     }
 
-    // Verify shadow file is still valid — parseable and has both users.
-    let content = std::fs::read_to_string(dir.path().join("etc/shadow")).expect("read shadow");
-    assert!(content.contains("testuser:"), "testuser entry should exist");
-    assert!(
-        content.contains("other:"),
-        "other entry should not be corrupted"
-    );
+    for child in children {
+        let out = child.wait_with_output().expect("passwd did not finish");
+        let code = out.status.code().unwrap_or(1);
+        // 0 is success and 5 is "the file is locked by someone else", which is
+        // the correct answer under contention. Anything else is a real failure.
+        assert!(
+            code == 0 || code == 5,
+            "concurrent passwd exited {code}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 
-    // Verify it's parseable
+    // The file survived: still parseable, still both accounts, nothing
+    // duplicated or truncated.
     let entries = shadow_core::shadow::read_shadow_file(&dir.path().join("etc/shadow"))
         .expect("shadow file should still be valid after concurrent access");
-    assert_eq!(entries.len(), 2);
+    let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["testuser", "other"]);
+
+    // `other` was never a target and must be byte-for-byte what it was.
+    let content = read_shadow(&dir);
+    assert!(
+        content.contains("other:$6$hash2:19500:0:99999:7:::"),
+        "an untargeted account changed: {content}"
+    );
+
+    // Locking is idempotent: whatever the interleaving, the account ends
+    // locked exactly once, not with a row of accumulated markers.
+    assert!(
+        content.contains("testuser:!$6$hash:"),
+        "the account is not cleanly locked: {content}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -391,7 +395,7 @@ fn test_concurrent_lock_operations() {
 /// verifies the output format is identical.
 #[test]
 fn test_gnu_compat_status_output() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -441,7 +445,7 @@ fn test_gnu_compat_status_output() {
 /// Compare lock/unlock cycle results with GNU passwd.
 #[test]
 fn test_gnu_compat_lock_unlock() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -476,7 +480,7 @@ fn test_gnu_compat_lock_unlock() {
 
 #[test]
 fn test_maxdays_minus_one_clears_the_field() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -494,7 +498,7 @@ fn test_maxdays_minus_one_clears_the_field() {
 
 #[test]
 fn test_negative_aging_values_are_rejected() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 

@@ -6,14 +6,11 @@
 
 //! Integration tests for the `groupmod` utility.
 //!
-//! Tests that require root are guarded by `common::skip_unless_root()` and run inside
+//! Tests that require root are guarded by `crate::common::skip_unless_root()` and run inside
 //! Docker CI containers. Non-root tests exercise clap parsing and error paths
 //! that do not need privilege.
 
 use std::ffi::OsString;
-
-#[path = "../common/mod.rs"]
-mod common;
 
 /// Run `uumain` with the given args, returning the exit code.
 fn run(args: &[&str]) -> i32 {
@@ -79,7 +76,7 @@ fn test_missing_group_name_exits_error() {
 
 #[test]
 fn test_change_gid() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -104,7 +101,7 @@ fn test_change_gid() {
 // it is, so they are not left pointing at a GID that no longer names a group.
 #[test]
 fn test_change_gid_updates_primary_group_members_in_passwd() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -135,7 +132,7 @@ fn test_change_gid_updates_primary_group_members_in_passwd() {
 
 #[test]
 fn test_gid_minus_one_sentinel_is_rejected() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -152,7 +149,7 @@ fn test_gid_minus_one_sentinel_is_rejected() {
 
 #[test]
 fn test_change_name() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -179,7 +176,7 @@ fn test_change_name() {
 
 #[test]
 fn test_non_unique_gid() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -211,7 +208,7 @@ fn test_non_unique_gid() {
 
 #[test]
 fn test_nonexistent_group_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -231,7 +228,7 @@ fn test_nonexistent_group_fails() {
 
 #[test]
 fn test_rename_preserves_members() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -258,7 +255,7 @@ fn test_rename_preserves_members() {
 
 #[test]
 fn test_rename_updates_gshadow() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -285,7 +282,7 @@ fn test_rename_updates_gshadow() {
 
 #[test]
 fn test_name_collision_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -305,7 +302,7 @@ fn test_name_collision_fails() {
 
 #[test]
 fn test_change_gid_and_name_together() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 

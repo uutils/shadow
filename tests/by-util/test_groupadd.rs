@@ -6,14 +6,11 @@
 
 //! Integration tests for the `groupadd` utility.
 //!
-//! Tests that require root are guarded by `common::skip_unless_root()` and run inside
+//! Tests that require root are guarded by `crate::common::skip_unless_root()` and run inside
 //! Docker CI containers. Non-root tests exercise clap parsing and error paths
 //! that do not need privilege.
 
 use std::ffi::OsString;
-
-#[path = "../common/mod.rs"]
-mod common;
 
 /// Run `uumain` with the given args, returning the exit code.
 fn run(args: &[&str]) -> i32 {
@@ -75,7 +72,7 @@ fn test_missing_group_name_exits_error() {
 
 #[test]
 fn test_create_group_basic() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -99,7 +96,7 @@ fn test_create_group_basic() {
 
 #[test]
 fn test_create_group_with_gid() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -117,7 +114,7 @@ fn test_create_group_with_gid() {
 
 #[test]
 fn test_create_group_system() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -147,7 +144,7 @@ fn test_create_group_system() {
 
 #[test]
 fn test_create_group_non_unique() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -166,7 +163,7 @@ fn test_create_group_non_unique() {
 
 #[test]
 fn test_duplicate_group_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -181,7 +178,7 @@ fn test_duplicate_group_fails() {
 
 #[test]
 fn test_duplicate_gid_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -194,7 +191,7 @@ fn test_duplicate_gid_fails() {
 
 #[test]
 fn test_force_on_existing_succeeds() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -207,7 +204,7 @@ fn test_force_on_existing_succeeds() {
 
 #[test]
 fn test_other_entries_preserved() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -238,7 +235,7 @@ fn test_other_entries_preserved() {
 
 #[test]
 fn test_key_override_wins_over_login_defs() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     // login.defs says 5000-5999; -K must take precedence for this run.
@@ -257,7 +254,7 @@ fn test_key_override_wins_over_login_defs() {
 
 #[test]
 fn test_key_sys_range_override_for_system_group() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let dir = setup_prefix("root:x:0:\n", "SYS_GID_MIN 100\nSYS_GID_MAX 999\n");
@@ -282,7 +279,7 @@ fn test_key_sys_range_override_for_system_group() {
 
 #[test]
 fn test_key_missing_equals_exits_bad_argument() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let dir = setup_prefix("root:x:0:\n", "");
@@ -296,7 +293,7 @@ fn test_key_missing_equals_exits_bad_argument() {
 
 #[test]
 fn test_users_flag_sets_members() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 

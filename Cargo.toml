@@ -103,6 +103,13 @@ pam = ["passwd?/pam", "chfn?/pam", "chsh?/pam"]
 # Shell completions generator
 completions = ["dep:clap_complete"]
 
+# One test binary for the whole suite. Fourteen separate targets each linked
+# all fourteen tool crates, so the suite was compiled and linked fourteen
+# times over.
+[[test]]
+name = "tests"
+path = "tests/tests.rs"
+
 [[bin]]
 name = "shadow-rs"
 path = "src/bin/shadow-rs.rs"
@@ -111,62 +118,6 @@ path = "src/bin/shadow-rs.rs"
 name = "shadow-rs-completions"
 path = "src/bin/completions.rs"
 required-features = ["completions"]
-
-[[test]]
-name = "test_chage"
-path = "tests/by-util/test_chage.rs"
-
-[[test]]
-name = "test_chpasswd"
-path = "tests/by-util/test_chpasswd.rs"
-
-[[test]]
-name = "test_passwd"
-path = "tests/by-util/test_passwd.rs"
-
-[[test]]
-name = "test_chfn"
-path = "tests/by-util/test_chfn.rs"
-
-[[test]]
-name = "test_chsh"
-path = "tests/by-util/test_chsh.rs"
-
-[[test]]
-name = "test_newgrp"
-path = "tests/by-util/test_newgrp.rs"
-
-[[test]]
-name = "test_groupdel"
-path = "tests/by-util/test_groupdel.rs"
-
-[[test]]
-name = "test_groupmod"
-path = "tests/by-util/test_groupmod.rs"
-
-[[test]]
-name = "test_useradd"
-path = "tests/by-util/test_useradd.rs"
-
-[[test]]
-name = "test_userdel"
-path = "tests/by-util/test_userdel.rs"
-
-[[test]]
-name = "test_pwck"
-path = "tests/by-util/test_pwck.rs"
-
-[[test]]
-name = "test_grpck"
-path = "tests/by-util/test_grpck.rs"
-
-[[test]]
-name = "test_usermod"
-path = "tests/by-util/test_usermod.rs"
-
-[[test]]
-name = "test_groupadd"
-path = "tests/by-util/test_groupadd.rs"
 
 [dev-dependencies]
 chage = { version = "0.2.2", package = "uu_chage", path = "src/uu/chage" }

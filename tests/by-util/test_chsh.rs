@@ -10,9 +10,6 @@
 
 use std::ffi::OsString;
 
-#[path = "../common/mod.rs"]
-mod common;
-
 /// Run `uumain` with the given args, returning the exit code.
 fn run(args: &[&str]) -> i32 {
     let os_args: Vec<OsString> = args.iter().map(|s| (*s).into()).collect();
@@ -51,7 +48,7 @@ fn test_unknown_user_exits_error_without_prompting() {
 
 #[test]
 fn test_list_shells() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     // -l should list shells and exit 0 (assuming /etc/shells exists on the system)
@@ -62,7 +59,7 @@ fn test_list_shells() {
 
 #[test]
 fn test_invalid_shell_path() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     // Relative path should be rejected

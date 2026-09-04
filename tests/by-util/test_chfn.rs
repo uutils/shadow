@@ -11,9 +11,6 @@
 
 use std::ffi::OsString;
 
-#[path = "../common/mod.rs"]
-mod common;
-
 /// Run `uumain` with the given args, returning the exit code.
 fn run(args: &[&str]) -> i32 {
     let os_args: Vec<OsString> = args.iter().map(|s| (*s).into()).collect();
@@ -51,7 +48,7 @@ fn test_unknown_flag_exits_one() {
 
 #[test]
 fn test_change_full_name() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let dir = setup_prefix("testuser:x:1000:1000:Old Name,,,:/home/testuser:/bin/bash\n");
@@ -74,7 +71,7 @@ fn test_change_full_name() {
 
 #[test]
 fn test_no_flags_exits_error() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     // No flags specified — should error

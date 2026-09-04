@@ -6,14 +6,11 @@
 
 //! Integration tests for the `useradd` utility.
 //!
-//! Tests that require root are guarded by `common::skip_unless_root()` and run inside
+//! Tests that require root are guarded by `crate::common::skip_unless_root()` and run inside
 //! Docker CI containers. Non-root tests exercise clap parsing and error paths
 //! that do not need privilege.
 
 use std::ffi::OsString;
-
-#[path = "../common/mod.rs"]
-mod common;
 
 /// Run `uumain` with the given args, returning the exit code.
 fn run(args: &[&str]) -> i32 {
@@ -119,7 +116,7 @@ fn test_defaults_flag() {
 
 #[test]
 fn test_defaults_flag_honors_key_overrides() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -133,7 +130,7 @@ fn test_defaults_flag_honors_key_overrides() {
 
 #[test]
 fn test_defaults_flag_invalid_key_exits_error() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -163,7 +160,7 @@ fn test_conflicting_user_group_no_user_group() {
 // unreadable for every tool. Both must be refused before anything is written.
 #[test]
 fn test_comment_with_newline_or_colon_is_rejected() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -181,7 +178,7 @@ fn test_comment_with_newline_or_colon_is_rejected() {
 
 #[test]
 fn test_shell_and_password_fields_are_validated() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -196,7 +193,7 @@ fn test_shell_and_password_fields_are_validated() {
 // they must be absolute and must not climb.
 #[test]
 fn test_home_and_skel_must_be_absolute_without_parent_dirs() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -219,7 +216,7 @@ fn test_home_and_skel_must_be_absolute_without_parent_dirs() {
 
 #[test]
 fn test_create_user_basic() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -242,7 +239,7 @@ fn test_create_user_basic() {
 
 #[test]
 fn test_create_user_with_home() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -274,7 +271,7 @@ fn test_create_user_with_home() {
 
 #[test]
 fn test_create_user_with_uid() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -291,7 +288,7 @@ fn test_create_user_with_uid() {
 
 #[test]
 fn test_create_user_with_shell() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -308,7 +305,7 @@ fn test_create_user_with_shell() {
 
 #[test]
 fn test_create_user_system() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -332,7 +329,7 @@ fn test_create_user_system() {
 
 #[test]
 fn test_create_user_with_group() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -363,7 +360,7 @@ fn test_create_user_with_group() {
 
 #[test]
 fn test_duplicate_user_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -380,7 +377,7 @@ fn test_duplicate_user_fails() {
 
 #[test]
 fn test_create_user_with_comment() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -397,7 +394,7 @@ fn test_create_user_with_comment() {
 
 #[test]
 fn test_create_user_creates_user_group() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -415,7 +412,7 @@ fn test_create_user_creates_user_group() {
 
 #[test]
 fn test_create_user_preserves_existing_entries() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -442,7 +439,7 @@ fn test_create_user_preserves_existing_entries() {
 
 #[test]
 fn test_create_user_with_home_dir_flag() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -459,7 +456,7 @@ fn test_create_user_with_home_dir_flag() {
 
 #[test]
 fn test_create_user_with_key_uid_range() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -487,7 +484,7 @@ fn test_create_user_with_key_uid_range() {
 
 #[test]
 fn test_create_user_with_key_long_option() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -515,7 +512,7 @@ fn test_create_user_with_key_long_option() {
 
 #[test]
 fn test_create_system_user_with_key_sys_uid_range() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -544,7 +541,7 @@ fn test_create_system_user_with_key_sys_uid_range() {
 
 #[test]
 fn test_create_user_with_key_gid_range_for_user_group() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -582,7 +579,7 @@ fn test_create_user_with_key_gid_range_for_user_group() {
 
 #[test]
 fn test_create_user_with_key_pass_max_days() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -609,7 +606,7 @@ fn test_create_user_with_key_pass_max_days() {
 
 #[test]
 fn test_key_missing_equals_exits_error() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -624,7 +621,7 @@ fn test_key_missing_equals_exits_error() {
 
 #[test]
 fn test_comments_and_compat_lines_survive_useradd() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -664,7 +661,7 @@ fn test_comments_and_compat_lines_survive_useradd() {
 
 #[test]
 fn test_primary_group_must_exist() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -679,7 +676,7 @@ fn test_primary_group_must_exist() {
 
 #[test]
 fn test_system_account_has_no_home_and_no_aging() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -714,7 +711,7 @@ fn test_system_account_has_no_home_and_no_aging() {
 
 #[test]
 fn test_defaults_are_persisted_and_reused() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -755,7 +752,7 @@ fn test_defaults_are_persisted_and_reused() {
 
 #[test]
 fn test_base_dir_flag_and_uid_sentinel() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 

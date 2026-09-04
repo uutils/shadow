@@ -6,14 +6,11 @@
 
 //! Integration tests for the `userdel` utility.
 //!
-//! Tests that require root are guarded by `common::skip_unless_root()` and run inside
+//! Tests that require root are guarded by `crate::common::skip_unless_root()` and run inside
 //! Docker CI containers. Non-root tests exercise clap parsing and error paths
 //! that do not need privilege.
 
 use std::ffi::OsString;
-
-#[path = "../common/mod.rs"]
-mod common;
 
 /// Run `uumain` with the given args, returning the exit code.
 fn run(args: &[&str]) -> i32 {
@@ -112,7 +109,7 @@ fn test_missing_login_exits_error() {
 
 #[test]
 fn test_delete_user_basic() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -135,7 +132,7 @@ fn test_delete_user_basic() {
 
 #[test]
 fn test_delete_user_remove_home() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -180,7 +177,7 @@ otheruser:x:1001:1001:Other User:/home/otheruser:/bin/bash\n"
 
 #[test]
 fn test_delete_nonexistent_user_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -191,7 +188,7 @@ fn test_delete_nonexistent_user_fails() {
 
 #[test]
 fn test_delete_user_preserves_others() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -226,7 +223,7 @@ fn test_delete_user_preserves_others() {
 
 #[test]
 fn test_delete_user_removes_group_membership() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -250,7 +247,7 @@ fn test_delete_user_removes_group_membership() {
 
 #[test]
 fn test_delete_user_shadow_entry_removed() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -271,7 +268,7 @@ fn test_delete_user_shadow_entry_removed() {
 
 #[test]
 fn test_delete_user_force_flag_accepted() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -289,7 +286,7 @@ fn test_delete_user_force_flag_accepted() {
 
 #[test]
 fn test_delete_multiple_users_sequentially() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -345,7 +342,7 @@ fn setup_private_group_dir() -> tempfile::TempDir {
 
 #[test]
 fn test_missing_user_exits_6() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let dir = setup_root_dir();
@@ -360,7 +357,7 @@ fn test_missing_user_exits_6() {
 
 #[test]
 fn test_private_group_is_removed() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let dir = setup_private_group_dir();
@@ -385,7 +382,7 @@ fn test_private_group_is_removed() {
 
 #[test]
 fn test_private_group_kept_when_it_has_other_members() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let dir = setup_private_group_dir();
@@ -405,7 +402,7 @@ fn test_private_group_kept_when_it_has_other_members() {
 
 #[test]
 fn test_remove_home_refuses_foreign_owner_without_force() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let dir = setup_private_group_dir();
@@ -439,7 +436,7 @@ fn test_remove_home_refuses_foreign_owner_without_force() {
 
 #[test]
 fn test_remove_home_refuses_shared_home_without_force() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();

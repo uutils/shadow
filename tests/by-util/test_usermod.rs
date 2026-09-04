@@ -6,14 +6,11 @@
 
 //! Integration tests for the `usermod` utility.
 //!
-//! Tests that require root are guarded by `common::skip_unless_root()` and run inside
+//! Tests that require root are guarded by `crate::common::skip_unless_root()` and run inside
 //! Docker CI containers. Non-root tests exercise clap parsing and error paths
 //! that do not need privilege.
 
 use std::ffi::OsString;
-
-#[path = "../common/mod.rs"]
-mod common;
 
 /// Run `uumain` with the given args, returning the exit code.
 fn run(args: &[&str]) -> i32 {
@@ -97,7 +94,7 @@ fn test_lock_unlock_conflict() {
 
 #[test]
 fn test_change_shell() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -124,7 +121,7 @@ fn test_change_shell() {
 
 #[test]
 fn test_change_comment() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -148,7 +145,7 @@ fn test_change_comment() {
 // the file is locked, so the entry is left exactly as it was.
 #[test]
 fn test_fields_with_colon_or_newline_are_rejected_before_write() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -170,7 +167,7 @@ fn test_fields_with_colon_or_newline_are_rejected_before_write() {
 
 #[test]
 fn test_change_home() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -192,7 +189,7 @@ fn test_change_home() {
 
 #[test]
 fn test_change_uid() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -214,7 +211,7 @@ fn test_change_uid() {
 
 #[test]
 fn test_add_to_groups() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -240,7 +237,7 @@ fn test_add_to_groups() {
 
 #[test]
 fn test_lock_user() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -262,7 +259,7 @@ fn test_lock_user() {
 
 #[test]
 fn test_unlock_user() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -284,7 +281,7 @@ fn test_unlock_user() {
 
 #[test]
 fn test_nonexistent_user_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -300,7 +297,7 @@ fn test_nonexistent_user_fails() {
 
 #[test]
 fn test_multiple_modifications_combined() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -341,7 +338,7 @@ fn test_multiple_modifications_combined() {
 
 #[test]
 fn test_other_users_unchanged() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -375,7 +372,7 @@ fn test_other_users_unchanged() {
 
 #[test]
 fn test_uid_collision_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -394,7 +391,7 @@ fn test_uid_collision_fails() {
 
 #[test]
 fn test_set_password() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -422,7 +419,7 @@ fn test_set_password() {
 
 #[test]
 fn test_set_password_long_flag() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -445,7 +442,7 @@ fn test_set_password_long_flag() {
 
 #[test]
 fn test_set_password_preserves_other_fields() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -485,7 +482,7 @@ fn test_set_password_preserves_other_fields() {
 
 #[test]
 fn test_rename_to_existing_login_is_rejected() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -510,7 +507,7 @@ fn test_rename_to_existing_login_is_rejected() {
 
 #[test]
 fn test_expiredate_accepts_iso_date() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -532,7 +529,7 @@ fn test_expiredate_accepts_iso_date() {
 
 #[test]
 fn test_bad_expiredate_changes_nothing() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -554,7 +551,7 @@ fn test_bad_expiredate_changes_nothing() {
 
 #[test]
 fn test_primary_group_by_name_and_existence() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -582,7 +579,7 @@ fn test_primary_group_by_name_and_existence() {
 
 #[test]
 fn test_empty_group_list_clears_memberships() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -603,7 +600,7 @@ fn test_empty_group_list_clears_memberships() {
 
 #[test]
 fn test_rename_with_groups_uses_the_new_login() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
