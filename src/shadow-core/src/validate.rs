@@ -13,23 +13,23 @@ use crate::error::ShadowError;
 /// Maximum username length on Linux.
 const MAX_USERNAME_LEN: usize = 32;
 
-/// Validate a username according to Linux conventions.
+/// Validate a username or group name.
 ///
-/// Rules (from man 8 useradd, POSIX):
-/// - Must not be empty
-/// - Must not exceed 32 characters
-/// - First character must be a lowercase letter or underscore
-/// - Remaining characters: lowercase letters, digits, underscores, hyphens, periods
-/// - Must not end with a period (historically problematic)
-/// - Must not consist of only dots
+/// Rules, from the CAVEATS of useradd(8) and groupadd(8):
+/// - must not be empty, and at most 32 characters
+/// - first character is a letter or underscore
+/// - the rest are letters, digits, underscores, hyphens or periods
+/// - a single trailing `$` is allowed, which is how Samba names machine
+///   accounts (`MACHINE$`)
+/// - must not end with a period, and must not consist only of periods
 ///
-/// **Deviation from GNU shadow-utils**: GNU allows `$` as the final
-/// character (used by Samba machine accounts, e.g., `MACHINE$`). This
-/// implementation intentionally rejects `$` for stricter validation.
+/// Upper case is accepted: `useradd Alice` succeeds on GNU shadow-utils
+/// (verified), and rejecting it made us refuse accounts that already exist on
+/// real systems. Lower case remains the recommendation, not a rule.
 ///
 /// # Errors
 ///
-/// Returns `ShadowError::Validation` if the username violates any rule.
+/// Returns `ShadowError::Validation` if the name violates any rule.
 pub fn validate_username(name: &str) -> Result<(), ShadowError> {
     if name.len() > MAX_USERNAME_LEN {
         return Err(ShadowError::Validation(
@@ -38,33 +38,36 @@ pub fn validate_username(name: &str) -> Result<(), ShadowError> {
         ));
     }
 
-    let mut chars = name.chars();
+    // A single trailing '$' is part of the name but not of the character set.
+    let body = name.strip_suffix('$').unwrap_or(name);
+
+    let mut chars = body.chars();
     // Reject empty names by requiring a first character here.
     let Some(first) = chars.next() else {
         return Err(ShadowError::Validation("username must not be empty".into()));
     };
 
-    if !first.is_ascii_lowercase() && first != '_' {
+    if !first.is_ascii_alphabetic() && first != '_' {
         return Err(ShadowError::Validation(
-            format!("username '{name}' must start with a lowercase letter or underscore").into(),
+            format!("username '{name}' must start with a letter or underscore").into(),
         ));
     }
 
     for ch in chars {
-        if !ch.is_ascii_lowercase() && !ch.is_ascii_digit() && ch != '_' && ch != '-' && ch != '.' {
+        if !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-' && ch != '.' {
             return Err(ShadowError::Validation(
                 format!("username '{name}' contains invalid character '{ch}'").into(),
             ));
         }
     }
 
-    if name.ends_with('.') {
+    if body.ends_with('.') {
         return Err(ShadowError::Validation(
             format!("username '{name}' must not end with a period").into(),
         ));
     }
 
-    if name.chars().all(|c| c == '.') {
+    if body.chars().all(|c| c == '.') {
         return Err(ShadowError::Validation(
             format!("username '{name}' must not consist only of periods").into(),
         ));
@@ -150,7 +153,6 @@ mod tests {
         assert!(validate_username("1user").is_err());
         assert!(validate_username("-user").is_err());
         assert!(validate_username(".user").is_err());
-        assert!(validate_username("User").is_err());
     }
 
     #[test]
@@ -202,9 +204,16 @@ mod tests {
         assert!(validate_username("-user").is_err());
     }
 
+    // GNU shadow-utils accepts these (verified against useradd(8)); refusing
+    // them made us reject accounts that exist on real systems.
     #[test]
-    fn test_uppercase_rejected() {
-        assert!(validate_username("Root").is_err());
+    fn test_uppercase_and_machine_accounts_accepted() {
+        assert!(validate_username("Alice").is_ok());
+        assert!(validate_username("DevOps").is_ok());
+        assert!(validate_username("MACHINE$").is_ok());
+        // The '$' is only meaningful as the last character.
+        assert!(validate_username("ma$chine").is_err());
+        assert!(validate_username("$").is_err());
     }
 
     // -------------------------------------------------------------------

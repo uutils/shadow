@@ -31,8 +31,7 @@ use crate::passwd::PasswdEntry;
 /// Returns `ShadowError::Other` if every UID in the range is taken.
 pub fn next_uid(existing: &[PasswdEntry], min: u32, max: u32) -> Result<u32, ShadowError> {
     let used: HashSet<u32> = existing.iter().map(|e| e.uid).collect();
-    (min..=max)
-        .find(|uid| !used.contains(uid))
+    next_free(&used, min, max)
         .ok_or_else(|| ShadowError::Other(format!("no available UID in range {min}-{max}").into()))
 }
 
@@ -46,9 +45,30 @@ pub fn next_uid(existing: &[PasswdEntry], min: u32, max: u32) -> Result<u32, Sha
 /// Returns `ShadowError::Other` if every GID in the range is taken.
 pub fn next_gid(existing: &[GroupEntry], min: u32, max: u32) -> Result<u32, ShadowError> {
     let used: HashSet<u32> = existing.iter().map(|e| e.gid).collect();
-    (min..=max)
-        .find(|gid| !used.contains(gid))
+    next_free(&used, min, max)
         .ok_or_else(|| ShadowError::Other(format!("no available GID in range {min}-{max}").into()))
+}
+
+/// The ID to hand out next: one past the highest already in use within the
+/// range, and only once the range is exhausted that way, the lowest free ID.
+///
+/// Handing out the lowest free ID would reuse the ID of a deleted account, so
+/// the new user would inherit any files the old one left behind. Verified
+/// against shadow-utils: creating a, then b, deleting a, then creating c gives
+/// c the ID after b's, not a's.
+fn next_free(used: &HashSet<u32>, min: u32, max: u32) -> Option<u32> {
+    let highest = used
+        .iter()
+        .copied()
+        .filter(|id| (min..=max).contains(id))
+        .max();
+    if let Some(highest) = highest
+        && let Some(next) = highest.checked_add(1)
+        && next <= max
+    {
+        return Some(next);
+    }
+    (min..=max).find(|id| !used.contains(id))
 }
 
 /// Read a `login.defs` key as `u32`, ignoring negative or overflowing values.
@@ -130,10 +150,26 @@ mod tests {
         assert_eq!(next_uid(&entries, 1000, 1005).unwrap(), 1000);
     }
 
+    // Not the gap at 1002: reusing a deleted account's UID would hand the new
+    // user its leftover files. shadow-utils allocates past the highest in use.
     #[test]
-    fn test_next_uid_finds_first_gap() {
+    fn test_next_uid_goes_past_the_highest_in_use() {
         let entries = make_passwd_entries(&[1000, 1001, 1003]);
+        assert_eq!(next_uid(&entries, 1000, 1005).unwrap(), 1004);
+    }
+
+    // Only once the top of the range is taken does it fall back to a gap.
+    #[test]
+    fn test_next_uid_falls_back_to_a_gap_when_the_range_top_is_used() {
+        let entries = make_passwd_entries(&[1000, 1001, 1003, 1004, 1005]);
         assert_eq!(next_uid(&entries, 1000, 1005).unwrap(), 1002);
+    }
+
+    // IDs outside the range must not push the allocation past the maximum.
+    #[test]
+    fn test_next_uid_ignores_ids_outside_the_range() {
+        let entries = make_passwd_entries(&[0, 65534, 1000]);
+        assert_eq!(next_uid(&entries, 1000, 1005).unwrap(), 1001);
     }
 
     #[test]
@@ -170,8 +206,14 @@ mod tests {
     }
 
     #[test]
-    fn test_next_gid_finds_first_gap() {
+    fn test_next_gid_goes_past_the_highest_in_use() {
         let entries = make_group_entries(&[1000, 1002]);
+        assert_eq!(next_gid(&entries, 1000, 1005).unwrap(), 1003);
+    }
+
+    #[test]
+    fn test_next_gid_falls_back_to_a_gap_when_the_range_top_is_used() {
+        let entries = make_group_entries(&[1000, 1002, 1003, 1004, 1005]);
         assert_eq!(next_gid(&entries, 1000, 1005).unwrap(), 1001);
     }
 
