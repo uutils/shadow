@@ -20,7 +20,7 @@ path = "src/main.rs"
 [dependencies]
 clap = { workspace = true }
 rustix = { workspace = true }
-shadow-core = { workspace = true, features = ["shadow"] }
+shadow-core = { workspace = true }
 uucore = { workspace = true }
 
 [dev-dependencies]

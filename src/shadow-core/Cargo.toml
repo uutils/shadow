@@ -20,7 +20,7 @@ rustix = { workspace = true }
 thiserror = { workspace = true }
 uucore = { workspace = true }
 zeroize = { workspace = true }
-subtle = { workspace = true }
+subtle = { workspace = true, optional = true }
 landlock = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -29,13 +29,13 @@ tempfile = { workspace = true }
 
 [features]
 default = []
-crypt = []
+
+# Only the features that change what is linked are features. The record
+# parsers pull in no dependencies, so gating them bought nothing and cost
+# real confusion: `cargo test -p shadow-core` compiled a fraction of the
+# crate and reported a pass for it.
+crypt = ["dep:subtle"]
 pam = []
-shadow = []
-group = []
-gshadow = []
-login-defs = []
-subid = []
 landlock = ["dep:landlock"]
 
 [lints]

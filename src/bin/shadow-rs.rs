@@ -32,6 +32,9 @@ const SETUID_APPLETS: [&str; 4] = ["passwd", "chfn", "chsh", "newgrp"];
 // `#[cfg]` is not accepted on the elements of a `vec![]` literal, so the
 // table is assembled push by push.
 #[allow(clippy::vec_init_then_push)]
+// A build that selects no applet at all -- `--no-default-features` -- pushes
+// nothing, and the binding is then not mutated.
+#[allow(unused_mut)]
 fn applets() -> Vec<(&'static str, Applet)> {
     let mut table: Vec<(&'static str, Applet)> = Vec::with_capacity(14);
     #[cfg(feature = "chage")]

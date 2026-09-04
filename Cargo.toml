@@ -95,31 +95,10 @@ newgrp = { optional = true, version = "0.2.2", package = "uu_newgrp", path = "sr
 default = ["passwd", "pwck", "useradd", "userdel", "usermod", "chpasswd", "chage",
            "groupadd", "groupdel", "groupmod", "grpck", "chfn", "chsh", "newgrp"]
 
-# Individual tools
-feat_passwd = ["passwd"]
-feat_pwck = ["pwck"]
-feat_useradd = ["useradd"]
-feat_userdel = ["userdel"]
-feat_usermod = ["usermod"]
-feat_chpasswd = ["chpasswd"]
-feat_chage = ["chage"]
-feat_groupadd = ["groupadd"]
-feat_groupdel = ["groupdel"]
-feat_groupmod = ["groupmod"]
-feat_grpck = ["grpck"]
-feat_chfn = ["chfn"]
-feat_chsh = ["chsh"]
-feat_newgrp = ["newgrp"]
-
-# Grouped features
-feat_phase1 = ["feat_passwd", "feat_pwck"]
-feat_phase2 = ["feat_useradd", "feat_userdel", "feat_usermod", "feat_chpasswd", "feat_chage"]
-feat_phase3 = ["feat_groupadd", "feat_groupdel", "feat_groupmod", "feat_grpck", "feat_chfn", "feat_chsh", "feat_newgrp"]
-feat_common = ["feat_phase1", "feat_phase2"]
-feat_common_core = ["feat_phase1", "feat_phase2", "feat_phase3"]
-
-# PAM authentication (requires libpam-dev)
-pam = ["passwd/pam", "chfn/pam", "chsh/pam"]
+# PAM authentication (requires libpam-dev). The `?` matters: without it,
+# asking for PAM would drag in the three applets that can use it even when the
+# build deliberately left them out.
+pam = ["passwd?/pam", "chfn?/pam", "chsh?/pam"]
 
 # Shell completions generator
 completions = ["dep:clap_complete"]
@@ -204,7 +183,7 @@ userdel = { version = "0.2.2", package = "uu_userdel", path = "src/uu/userdel" }
 usermod = { version = "0.2.2", package = "uu_usermod", path = "src/uu/usermod" }
 pwck = { version = "0.2.2", package = "uu_pwck", path = "src/uu/pwck" }
 grpck = { version = "0.2.2", package = "uu_grpck", path = "src/uu/grpck" }
-shadow-core = { path = "src/shadow-core", version = "0.2.2", features = ["shadow"] }
+shadow-core = { path = "src/shadow-core", version = "0.2.2" }
 rustix = { workspace = true }
 tempfile = { workspace = true }
 
