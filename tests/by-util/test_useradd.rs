@@ -711,3 +711,70 @@ fn test_system_account_has_no_home_and_no_aging() {
         "a system account carries no aging information, got: {line}"
     );
 }
+
+#[test]
+fn test_defaults_are_persisted_and_reused() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    // useradd(8): with -D, a value-carrying option changes the default and
+    // saves it in /etc/default/useradd. It used to print and exit 0 without
+    // changing anything.
+    let dir = setup_root_dir();
+    std::fs::create_dir_all(dir.path().join("etc/default")).unwrap();
+    let prefix = dir.path().to_str().unwrap();
+
+    assert_eq!(
+        run(&[
+            "useradd",
+            "-P",
+            prefix,
+            "-D",
+            "-s",
+            "/bin/zsh",
+            "-b",
+            "/srv/home"
+        ]),
+        0
+    );
+    let saved = std::fs::read_to_string(dir.path().join("etc/default/useradd")).unwrap();
+    assert!(
+        saved.contains("SHELL=/bin/zsh") && saved.contains("HOME=/srv/home"),
+        "the defaults must be saved, got: {saved}"
+    );
+
+    // A new account picks them up.
+    assert_eq!(run(&["useradd", "-P", prefix, "-M", "picker"]), 0);
+    let passwd = read_passwd(&dir);
+    assert!(
+        passwd.contains("picker:x:") && passwd.contains(":/srv/home/picker:/bin/zsh"),
+        "the saved defaults must apply, got: {passwd}"
+    );
+}
+
+#[test]
+fn test_base_dir_flag_and_uid_sentinel() {
+    if common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    let prefix = dir.path().to_str().unwrap();
+
+    assert_eq!(
+        run(&["useradd", "-P", prefix, "-M", "-b", "/opt/people", "b1"]),
+        0
+    );
+    assert!(
+        read_passwd(&dir).contains(":/opt/people/b1:"),
+        "-b sets the home base"
+    );
+
+    // u32::MAX is (uid_t)-1, the "no change" sentinel of chown/setresuid.
+    assert_eq!(
+        run(&["useradd", "-P", prefix, "-M", "-u", "4294967295", "bad"]),
+        3
+    );
+    assert!(!read_passwd(&dir).contains("bad:"), "nothing written");
+}

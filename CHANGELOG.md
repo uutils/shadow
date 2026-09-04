@@ -59,6 +59,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `useradd` changes the ownership of a new home directory through a descriptor
+  opened with `O_NOFOLLOW` rather than by path. Between the `mkdir` and the
+  `chown`, anyone able to write the parent — a home under `/tmp`, or a shared
+  base directory — could swap the directory for a symlink and be given its
+  target (#244)
 - `chpasswd` refuses an empty plaintext password. `alice:` on stdin hashed the
   empty string into a perfectly valid hash, so the account then logged in with
   a bare Enter; only `-e`, which takes a pre-computed field, may carry an
@@ -118,6 +123,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `useradd` reads `/etc/default/useradd`, and `useradd -D` with a value now
+  saves it there instead of printing the defaults and changing nothing.
+  `HOME`, `SHELL` and `SKEL` from that file take precedence over login.defs,
+  so a site's configured shell is finally used (#244)
+- `useradd` gains `-b/--base-dir` and `-P/--prefix`, and rejects UID
+  `4294967295` (`(uid_t)-1`) (#244)
 - `useradd -r` now matches `useradd(8)`: a system account gets no home
   directory (regardless of `CREATE_HOME`), no aging information in
   `/etc/shadow`, and no subordinate UID/GID ranges (#244)

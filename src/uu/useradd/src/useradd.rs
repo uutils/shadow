@@ -60,6 +60,8 @@ mod options {
     pub const UID: &str = "uid";
     pub const USER_GROUP: &str = "user-group";
     pub const DEFAULTS: &str = "defaults";
+    pub const BASE_DIR: &str = "base-dir";
+    pub const PREFIX: &str = "prefix";
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +165,8 @@ struct UseraddOptions {
     expire_date: Option<i64>,
     create_user_group: bool,
     login_defs_overrides: Vec<(String, String)>,
+    /// `-b`: base directory the home is created under.
+    base_dir: Option<String>,
     root: SysRoot,
 }
 
@@ -223,28 +227,127 @@ fn cmd_defaults(matches: &clap::ArgMatches) -> UResult<()> {
     write_defaults(matches, &mut std::io::stdout().lock())
 }
 
+/// One key from `/etc/default/useradd`, the file `useradd -D` maintains.
+///
+/// It takes precedence over `login.defs` for the keys it holds (`GROUP`,
+/// `HOME`, `INACTIVE`, `EXPIRE`, `SHELL`, `SKEL`, `CREATE_MAIL_SPOOL`), which
+/// login.defs does not define. An unreadable file yields no value.
+fn useradd_default(root: &SysRoot, key: &str) -> Option<String> {
+    login_defs::read_useradd_defaults(&root.useradd_defaults_path())
+        .ok()?
+        .into_iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v)
+        .filter(|v| !v.is_empty())
+}
+
 /// Load login.defs under `-R`, apply `-K` overrides, and write the `useradd -D` report.
 fn write_defaults(matches: &clap::ArgMatches, out: &mut dyn std::io::Write) -> UResult<()> {
-    let root_dir = matches.get_one::<String>(options::ROOT);
+    let root_dir = matches
+        .get_one::<String>(options::PREFIX)
+        .or_else(|| matches.get_one::<String>(options::ROOT));
     let root = SysRoot::new(root_dir.map(Path::new));
     let mut defs = LoginDefs::load(&root.login_defs_path())
         .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
     apply_login_defs_overrides(&mut defs, &parse_login_defs_overrides(matches)?);
 
-    let default_home = defs.get("HOME").unwrap_or("/home");
-    let default_inactive = defs.get("INACTIVE").unwrap_or("-1");
-    let default_expire = defs.get("EXPIRE").unwrap_or("");
-    let default_shell = defs.get("SHELL").unwrap_or("");
-    let default_skel = defs.get("SKEL").unwrap_or("/etc/skel");
-    let default_create_mail = defs.get("CREATE_MAIL_SPOOL").unwrap_or("no");
+    let stored = login_defs::read_useradd_defaults(&root.useradd_defaults_path())
+        .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
+    let stored_value = |key: &str| -> Option<String> {
+        stored
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+            .filter(|v| !v.is_empty())
+    };
 
-    let _ = writeln!(out, "GROUP=100");
-    let _ = writeln!(out, "HOME={default_home}");
-    let _ = writeln!(out, "INACTIVE={default_inactive}");
-    let _ = writeln!(out, "EXPIRE={default_expire}");
-    let _ = writeln!(out, "SHELL={default_shell}");
-    let _ = writeln!(out, "SKEL={default_skel}");
-    let _ = writeln!(out, "CREATE_MAIL_SPOOL={default_create_mail}");
+    // useradd(8): with -D, a value-carrying option *changes* the default and
+    // saves it; with no such option, the current defaults are printed.
+    // /etc/default/useradd holds these keys; login.defs is the fallback.
+    let mut values: Vec<(String, String)> = vec![
+        (
+            "GROUP".into(),
+            matches
+                .get_one::<String>(options::GID)
+                .cloned()
+                .or_else(|| stored_value("GROUP"))
+                .unwrap_or_else(|| "100".into()),
+        ),
+        (
+            "HOME".into(),
+            matches
+                .get_one::<String>(options::BASE_DIR)
+                .cloned()
+                .or_else(|| stored_value("HOME"))
+                .or_else(|| defs.get("HOME").map(ToOwned::to_owned))
+                .unwrap_or_else(|| "/home".into()),
+        ),
+        (
+            "INACTIVE".into(),
+            matches
+                .get_one::<String>(options::INACTIVE)
+                .cloned()
+                .or_else(|| stored_value("INACTIVE"))
+                .or_else(|| defs.get("INACTIVE").map(ToOwned::to_owned))
+                .unwrap_or_else(|| "-1".into()),
+        ),
+        (
+            "EXPIRE".into(),
+            matches
+                .get_one::<String>(options::EXPIRE_DATE)
+                .cloned()
+                .or_else(|| stored_value("EXPIRE"))
+                .or_else(|| defs.get("EXPIRE").map(ToOwned::to_owned))
+                .unwrap_or_default(),
+        ),
+        (
+            "SHELL".into(),
+            matches
+                .get_one::<String>(options::SHELL)
+                .cloned()
+                .or_else(|| stored_value("SHELL"))
+                .or_else(|| defs.get("SHELL").map(ToOwned::to_owned))
+                .unwrap_or_default(),
+        ),
+        (
+            "SKEL".into(),
+            matches
+                .get_one::<String>(options::SKEL)
+                .cloned()
+                .or_else(|| stored_value("SKEL"))
+                .or_else(|| defs.get("SKEL").map(ToOwned::to_owned))
+                .unwrap_or_else(|| "/etc/skel".into()),
+        ),
+        (
+            "CREATE_MAIL_SPOOL".into(),
+            stored_value("CREATE_MAIL_SPOOL")
+                .or_else(|| defs.get("CREATE_MAIL_SPOOL").map(ToOwned::to_owned))
+                .unwrap_or_else(|| "no".into()),
+        ),
+    ];
+    values.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // A setter was given: persist instead of printing.
+    let setting = [
+        options::GID,
+        options::BASE_DIR,
+        options::INACTIVE,
+        options::EXPIRE_DATE,
+        options::SHELL,
+        options::SKEL,
+    ]
+    .iter()
+    .any(|opt| matches.contains_id(opt) && matches.get_one::<String>(opt).is_some());
+
+    if setting {
+        login_defs::write_useradd_defaults(&root.useradd_defaults_path(), &values)
+            .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
+        return Ok(());
+    }
+
+    for (key, value) in &values {
+        let _ = writeln!(out, "{key}={value}");
+    }
 
     Ok(())
 }
@@ -281,7 +384,9 @@ fn parse_options(matches: &clap::ArgMatches) -> Result<UseraddOptions, UseraddEr
         .ok_or_else(|| UseraddError::BadSyntax("login name required".into()))?
         .clone();
 
-    let root_dir = matches.get_one::<String>(options::ROOT);
+    let root_dir = matches
+        .get_one::<String>(options::PREFIX)
+        .or_else(|| matches.get_one::<String>(options::ROOT));
     let root = SysRoot::new(root_dir.map(Path::new));
 
     let comment = matches
@@ -290,6 +395,7 @@ fn parse_options(matches: &clap::ArgMatches) -> Result<UseraddOptions, UseraddEr
         .unwrap_or_default();
 
     let home_dir = matches.get_one::<String>(options::HOME_DIR).cloned();
+    let base_dir = matches.get_one::<String>(options::BASE_DIR).cloned();
 
     // Apply -K overrides before reading defaults so CREATE_HOME, SKEL, etc.
     // match the overridden values when flags are not given.
@@ -301,13 +407,20 @@ fn parse_options(matches: &clap::ArgMatches) -> Result<UseraddOptions, UseraddEr
     let shell = matches
         .get_one::<String>(options::SHELL)
         .cloned()
-        .unwrap_or_else(|| defs.get("SHELL").unwrap_or("/bin/sh").to_string());
+        .or_else(|| useradd_default(&root, "SHELL"))
+        .or_else(|| defs.get("SHELL").map(ToOwned::to_owned))
+        .unwrap_or_else(|| "/bin/sh".to_string());
 
     let uid = match matches.get_one::<String>(options::UID) {
         Some(s) => {
             let val = s
                 .parse::<u32>()
                 .map_err(|_| UseraddError::BadArgument(format!("invalid UID '{s}'")))?;
+            // u32::MAX is (uid_t)-1, the "no change" sentinel of chown and
+            // setresuid; an account must never hold it.
+            if val == u32::MAX {
+                return Err(UseraddError::BadArgument(format!("invalid UID '{s}'")));
+            }
             Some(val)
         }
         None => None,
@@ -343,7 +456,9 @@ fn parse_options(matches: &clap::ArgMatches) -> Result<UseraddOptions, UseraddEr
     let skel_dir = matches
         .get_one::<String>(options::SKEL)
         .cloned()
-        .unwrap_or_else(|| defs.get("SKEL").unwrap_or("/etc/skel").to_string());
+        .or_else(|| useradd_default(&root, "SKEL"))
+        .or_else(|| defs.get("SKEL").map(ToOwned::to_owned))
+        .unwrap_or_else(|| "/etc/skel".to_string());
 
     let non_unique = matches.get_flag(options::NON_UNIQUE);
 
@@ -415,6 +530,7 @@ fn parse_options(matches: &clap::ArgMatches) -> Result<UseraddOptions, UseraddEr
         expire_date,
         create_user_group,
         login_defs_overrides,
+        base_dir,
         root,
     })
 }
@@ -500,7 +616,14 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
 
     // Step 10: Determine home directory path.
     let home_dir = opts.home_dir.clone().unwrap_or_else(|| {
-        let home_base = defs.get("HOME").unwrap_or("/home");
+        // useradd(8): -b overrides the HOME default, which itself comes from
+        // /etc/default/useradd before login.defs.
+        let home_base = opts
+            .base_dir
+            .clone()
+            .or_else(|| useradd_default(&opts.root, "HOME"))
+            .or_else(|| defs.get("HOME").map(ToOwned::to_owned))
+            .unwrap_or_else(|| "/home".to_string());
         format!("{home_base}/{}", opts.login)
     });
 
@@ -1027,14 +1150,32 @@ fn create_home_directory(
         }
     }
 
-    // The directory is 0o700 owned by root at this point — only root can
-    // traverse it, so the chown that follows transfers a private dir.
-    std::os::unix::fs::chown(home_path, Some(uid), Some(gid)).map_err(|e| {
-        UseraddError::CannotCreateHome(format!(
-            "cannot set ownership on '{}': {e}",
-            home_path.display()
-        ))
-    })?;
+    // Change ownership through a descriptor opened with O_NOFOLLOW rather
+    // than by path: between the mkdir above and this call, anyone able to
+    // write the parent (a home under /tmp or a shared base directory) could
+    // swap the directory for a symlink and have us hand them the target.
+    {
+        use rustix::fs::{Mode, OFlags};
+        let dir = rustix::fs::open(
+            home_path,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )
+        .map_err(|e| {
+            UseraddError::CannotCreateHome(format!("cannot open '{}': {e}", home_path.display()))
+        })?;
+        rustix::fs::fchown(
+            &dir,
+            Some(rustix::fs::Uid::from_raw(uid)),
+            Some(rustix::fs::Gid::from_raw(gid)),
+        )
+        .map_err(|e| {
+            UseraddError::CannotCreateHome(format!(
+                "cannot set ownership on '{}': {e}",
+                home_path.display()
+            ))
+        })?;
+    }
 
     // Copy skeleton directory contents.
     skel::copy_skel(skel_path, home_path, uid, gid).map_err(|e| {
@@ -1168,6 +1309,20 @@ pub fn uu_app() -> Command {
                 .long("system")
                 .action(ArgAction::SetTrue)
                 .help("Allocate from the system UID range"),
+        )
+        .arg(
+            Arg::new(options::BASE_DIR)
+                .short('b')
+                .long("base-dir")
+                .value_name("BASE_DIR")
+                .help("Base directory for the new account's home directory"),
+        )
+        .arg(
+            Arg::new(options::PREFIX)
+                .short('P')
+                .long("prefix")
+                .value_name("PREFIX_DIR")
+                .help("Locate the system files under PREFIX_DIR instead of /"),
         )
         .arg(
             Arg::new(options::ROOT)
@@ -1882,6 +2037,7 @@ mod tests {
             expire_date: None,
             create_user_group: false,
             login_defs_overrides: Vec::new(),
+            base_dir: None,
             root: root.clone(),
         };
 
@@ -2026,6 +2182,7 @@ mod tests {
             expire_date: None,
             create_user_group: false,
             login_defs_overrides: Vec::new(),
+            base_dir: None,
             root: SysRoot::default(),
         };
 
@@ -2061,6 +2218,7 @@ mod tests {
             expire_date: None,
             create_user_group: true,
             login_defs_overrides: Vec::new(),
+            base_dir: None,
             root: SysRoot::default(),
         };
 
@@ -2100,6 +2258,7 @@ mod tests {
             expire_date: None,
             create_user_group: true,
             login_defs_overrides: Vec::new(),
+            base_dir: None,
             root: SysRoot::default(),
         };
 
@@ -2129,6 +2288,7 @@ mod tests {
             expire_date: None,
             create_user_group: false,
             login_defs_overrides: Vec::new(),
+            base_dir: None,
             root: SysRoot::default(),
         };
 
@@ -2164,6 +2324,7 @@ mod tests {
             expire_date: None,
             create_user_group: false,
             login_defs_overrides: Vec::new(),
+            base_dir: None,
             root: SysRoot::default(),
         };
 
@@ -2201,6 +2362,7 @@ mod tests {
             expire_date: None,
             create_user_group: false,
             login_defs_overrides: Vec::new(),
+            base_dir: None,
             root: SysRoot::default(),
         };
 
@@ -2238,6 +2400,7 @@ mod tests {
             expire_date: None,
             create_user_group: false,
             login_defs_overrides: Vec::new(),
+            base_dir: None,
             root: SysRoot::default(),
         };
 
@@ -2271,6 +2434,7 @@ mod tests {
             expire_date: None,
             create_user_group: false,
             login_defs_overrides: Vec::new(),
+            base_dir: None,
             root: SysRoot::default(),
         }
     }
@@ -2446,6 +2610,7 @@ mod tests {
             expire_date: None,
             create_user_group: true,
             login_defs_overrides: Vec::new(),
+            base_dir: None,
             root: SysRoot::default(),
         };
         let (gid, new_group) = determine_gid(&opts, 9200, &groups, &defs).expect("gid");
