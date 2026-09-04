@@ -298,12 +298,8 @@ extern "C" fn conversation(
         let result = match message.msg_style {
             msg_style::PAM_PROMPT_ECHO_OFF => prompt_for_input(message, false, conv_data.mode),
             msg_style::PAM_PROMPT_ECHO_ON => prompt_for_input(message, true, conv_data.mode),
-            msg_style::PAM_ERROR_MSG => {
-                display_message(message, true);
-                Ok(ptr::null_mut())
-            }
-            msg_style::PAM_TEXT_INFO => {
-                display_message(message, false);
+            msg_style::PAM_ERROR_MSG | msg_style::PAM_TEXT_INFO => {
+                display_message(message);
                 Ok(ptr::null_mut())
             }
             _ => {
@@ -336,10 +332,9 @@ extern "C" fn conversation(
 
 /// Display a PAM message to stderr.
 ///
-/// Both error and informational messages go to stderr (matching traditional
-/// PAM conversation behavior). The `_is_error` parameter is retained for
-/// future differentiation (e.g., prefixing error messages).
-fn display_message(message: &PamMessage, _is_error: bool) {
+/// Both error and informational messages go to stderr, which is what a
+/// traditional PAM conversation does; the two styles are not distinguished.
+fn display_message(message: &PamMessage) {
     if message.msg.is_null() {
         return;
     }
@@ -424,25 +419,6 @@ fn alloc_c_response(s: &str) -> Result<*mut libc::c_char, ()> {
     }
 
     Ok(buf)
-}
-
-/// The name of the controlling terminal, as PAM records it in `PAM_TTY`.
-///
-/// stdin, stdout and stderr are tried in turn: a tool invoked with its input
-/// redirected can still be attached to a terminal on one of the other two.
-/// `None` when none of them is a terminal.
-fn controlling_tty() -> Option<String> {
-    use std::os::fd::AsFd;
-
-    let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
-    let stderr = std::io::stderr();
-    for fd in [stdin.as_fd(), stdout.as_fd(), stderr.as_fd()] {
-        if let Ok(name) = rustix::termios::ttyname(fd, Vec::new()) {
-            return name.into_string().ok();
-        }
-    }
-    None
 }
 
 /// Free partially-filled PAM responses on error.
@@ -580,7 +556,7 @@ impl PamContext {
     /// terminal (a cron job, a `su -c`) still has to be able to authenticate,
     /// so a failure here is not a failure to start.
     fn set_default_items(&mut self) {
-        if let Some(tty) = controlling_tty() {
+        if let Some(tty) = crate::tty::name() {
             let _ = self.set_item_str(item_type::PAM_TTY, &tty);
         }
         if let Ok(user) = crate::hardening::current_username() {

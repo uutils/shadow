@@ -11,9 +11,6 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-/// Result type alias used across all shadow-rs utilities.
-pub type ShadowResult<T> = Result<T, ShadowError>;
-
 /// Top-level error type for shadow-rs operations.
 #[derive(Debug, Error)]
 pub enum ShadowError {
@@ -35,9 +32,6 @@ pub enum ShadowError {
     /// Authentication error (PAM failure, wrong password, etc.).
     #[error("authentication error: {0}")]
     Auth(Cow<'static, str>),
-    /// Permission denied.
-    #[error("permission denied: {0}")]
-    Permission(Cow<'static, str>),
     /// Generic error with message.
     #[error("{0}")]
     Other(Cow<'static, str>),

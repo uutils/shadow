@@ -41,20 +41,10 @@ pub fn prompt_line(prompt: &str) -> io::Result<String> {
 /// Returns the underlying I/O error if neither the terminal nor stdin can be
 /// read.
 pub fn read_password(prompt: &str) -> io::Result<Zeroizing<String>> {
-    let _signals = crate::process::block_critical_signals()
-        .map(SignalRestore)
-        .ok();
-    let line = read_line(prompt, false)?;
-    Ok(line)
-}
-
-/// Restores the signal mask saved before a password read.
-struct SignalRestore(crate::process::SavedSigSet);
-
-impl Drop for SignalRestore {
-    fn drop(&mut self) {
-        let _ = crate::process::restore_signals(&self.0);
-    }
+    // Best effort: a process that cannot change its signal mask must still be
+    // able to read a password.
+    let _signals = crate::hardening::SignalBlocker::block_critical().ok();
+    read_line(prompt, false)
 }
 
 /// Read one line from stdin with no prompt, for non-interactive input.
@@ -165,4 +155,25 @@ impl Drop for EchoGuard<'_> {
             &self.original,
         );
     }
+}
+
+/// The name of the controlling terminal, for the records that want one.
+///
+/// stdin, stdout and stderr are tried in turn: a tool with its input
+/// redirected can still be attached to a terminal on one of the other two.
+/// `None` when none of them is a terminal, which is the normal answer under
+/// `cron` or a systemd unit.
+#[must_use]
+pub fn name() -> Option<String> {
+    use std::os::fd::AsFd;
+
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let stderr = io::stderr();
+    for fd in [stdin.as_fd(), stdout.as_fd(), stderr.as_fd()] {
+        if let Ok(name) = rustix::termios::ttyname(fd, Vec::new()) {
+            return name.into_string().ok();
+        }
+    }
+    None
 }

@@ -118,12 +118,17 @@ pub fn apply_landlock(
 
 /// Run all standard hardening steps for a setuid-root tool.
 ///
-/// Call at the top of `uumain` before any argument parsing.
-/// Returns the sanitized environment for use with child process spawning.
-pub fn harden_process() -> Vec<(String, String)> {
+/// Call at the top of `uumain`, before any argument parsing.
+///
+/// This does **not** touch the process's own environment, and the name should
+/// not be read as promising that: the in-process PAM and NSS modules still see
+/// what the caller set. It used to return a sanitized environment that every
+/// one of its thirteen callers threw away, which read as though the
+/// environment had been dealt with. Children are given a clean environment
+/// where they are spawned, by [`sanitized_env`].
+pub fn harden_process() {
     suppress_core_dumps();
     raise_file_size_limit();
-    sanitized_env()
 }
 
 // ---------------------------------------------------------------------------
@@ -146,19 +151,8 @@ pub fn current_username() -> Result<String, crate::error::ShadowError> {
 }
 
 /// Look up a username by UID via NSS (`getpwuid_r`).
-///
-/// Uses the system name-service switch, so it works with LDAP, SSSD,
-/// systemd-homed, and other backends — not just `/etc/passwd`.
 pub fn lookup_username_by_uid(uid: u32) -> Result<String, crate::error::ShadowError> {
-    match crate::process::lookup_username(uid) {
-        Ok(Some(name)) => Ok(name),
-        Ok(None) => Err(crate::error::ShadowError::Other(
-            format!("cannot determine username for uid {uid}").into(),
-        )),
-        Err(e) => Err(crate::error::ShadowError::Other(
-            format!("NSS lookup failed for uid {uid}: {e}").into(),
-        )),
-    }
+    lookup_passwd_entry_by_uid(uid).map(|e| e.name)
 }
 
 /// Look up a passwd entry by UID via NSS (`getpwuid_r`).
@@ -169,15 +163,7 @@ pub fn lookup_passwd_entry_by_uid(
     uid: u32,
 ) -> Result<crate::passwd::PasswdEntry, crate::error::ShadowError> {
     match crate::process::getpwuid(uid) {
-        Ok(Some(pw)) => Ok(crate::passwd::PasswdEntry {
-            name: pw.name,
-            passwd: pw.passwd,
-            uid: pw.uid,
-            gid: pw.gid,
-            gecos: pw.gecos,
-            home: pw.home,
-            shell: pw.shell,
-        }),
+        Ok(Some(entry)) => Ok(entry),
         Ok(None) => Err(crate::error::ShadowError::Other(
             format!("no passwd entry for uid {uid}").into(),
         )),

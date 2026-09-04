@@ -2,7 +2,7 @@
 //
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
-// spell-checker:ignore setuid seteuid setgid initgroups sigprocmask getpwuid
+// spell-checker:ignore setuid seteuid setgid initgroups sigprocmask getpwuid getgrgid
 
 //! Process-level POSIX wrappers for setuid-root tools.
 //!
@@ -194,33 +194,18 @@ pub fn restore_signals(saved: &SavedSigSet) -> io::Result<()> {
 // NSS user lookup (getpwuid_r)
 // ---------------------------------------------------------------------------
 
-/// Result of an NSS user lookup via `getpwuid_r`.
-///
-/// Contains the fields from `struct passwd` that shadow-rs tools need.
-/// Unlike reading `/etc/passwd` directly, this goes through NSS and works
-/// with LDAP, SSSD, systemd-homed, and other name-service backends.
-pub struct PwEntry {
-    /// Login name.
-    pub name: String,
-    /// Encrypted password (usually `x`).
-    pub passwd: String,
-    /// Numeric user ID.
-    pub uid: u32,
-    /// Numeric primary group ID.
-    pub gid: u32,
-    /// GECOS / comment field.
-    pub gecos: String,
-    /// Home directory.
-    pub home: String,
-    /// Login shell.
-    pub shell: String,
-}
-
 /// Look up a user by UID via `getpwuid_r` (NSS-backed).
+///
+/// Unlike reading `/etc/passwd` directly, this goes through the name service
+/// switch and so sees LDAP, SSSD and systemd-homed accounts as well.
+///
+/// The result is a [`crate::passwd::PasswdEntry`], the same type the file
+/// parser produces: an NSS entry and a file entry describe the same account,
+/// and a second struct for it only bought a field-by-field copy at every call.
 ///
 /// Returns `None` if no user exists for the given UID.
 /// Returns `Err` on system errors (e.g., I/O failure in NSS backend).
-pub fn getpwuid(uid: u32) -> io::Result<Option<PwEntry>> {
+pub fn getpwuid(uid: u32) -> io::Result<Option<crate::passwd::PasswdEntry>> {
     // Start with a 1 KiB buffer; grow on ERANGE.
     const MAX_BUF: usize = 1024 * 1024;
     let mut buf_size: usize = 1024;
@@ -274,7 +259,7 @@ pub fn getpwuid(uid: u32) -> io::Result<Option<PwEntry>> {
                     CStr::from_ptr(ptr).to_string_lossy().into_owned()
                 }
             };
-            PwEntry {
+            crate::passwd::PasswdEntry {
                 name: str_field(pwd.pw_name),
                 passwd: str_field(pwd.pw_passwd),
                 uid: pwd.pw_uid,
@@ -289,11 +274,47 @@ pub fn getpwuid(uid: u32) -> io::Result<Option<PwEntry>> {
     }
 }
 
-/// Look up a username by UID via NSS (`getpwuid_r`).
+/// Whether NSS knows a group with this GID.
 ///
-/// Convenience wrapper that returns just the login name.
-pub fn lookup_username(uid: u32) -> io::Result<Option<String>> {
-    Ok(getpwuid(uid)?.map(|e| e.name))
+/// The companion to [`getpwuid`] for the allocator: only existence is asked
+/// for, so no entry is built and the caller needs no group type.
+pub fn gid_exists(gid: u32) -> io::Result<bool> {
+    const MAX_BUF: usize = 1024 * 1024;
+    let mut buf_size: usize = 1024;
+
+    loop {
+        let mut grp: libc::group = unsafe { std::mem::zeroed() };
+        let mut buf: Vec<u8> = vec![0u8; buf_size];
+        let mut result: *mut libc::group = std::ptr::null_mut();
+
+        // SAFETY: getgrgid_r is a POSIX thread-safe function. The buffer is
+        // sized by `buf_size` and the group struct is zeroed before the call.
+        let ret = unsafe {
+            libc::getgrgid_r(
+                gid,
+                &raw mut grp,
+                buf.as_mut_ptr().cast::<libc::c_char>(),
+                buf_size,
+                &raw mut result,
+            )
+        };
+
+        if ret == libc::ERANGE {
+            buf_size = buf_size.saturating_mul(2);
+            if buf_size > MAX_BUF {
+                return Err(io::Error::other(
+                    "getgrgid_r: ERANGE persists beyond 1 MiB buffer cap",
+                ));
+            }
+            continue;
+        }
+
+        if ret != 0 {
+            return Err(io::Error::from_raw_os_error(ret));
+        }
+
+        return Ok(!result.is_null());
+    }
 }
 
 // ---------------------------------------------------------------------------
