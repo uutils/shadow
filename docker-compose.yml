@@ -13,6 +13,11 @@
 
 x-common: &common
   working_dir: /workspace
+  environment:
+    # These containers run as root, so every root-only test must actually run.
+    # A skipped test is reported `ok`, so without this a suite that quietly
+    # stopped exercising three quarters of itself would look green.
+    SHADOW_TEST_REQUIRE_ROOT: "1"
   security_opt:
     - seccomp:unconfined
   cap_add:

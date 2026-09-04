@@ -99,6 +99,23 @@ jobs:
           fi
           grep -q "statically linked musl build" check.log
 
+  fuzz:
+    name: Fuzz targets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libcrypt-dev
+      # The fuzz crate is a separate workspace that nothing else builds, so it
+      # rots silently: its manifest asked for shadow-core features that no
+      # longer exist and nobody noticed. A stable `cargo check` catches that
+      # without needing nightly or a fuzzing run.
+      #
+      # The properties the targets assert are also replayed against the tracked
+      # corpus by the main test suite, so a regression a fuzzer once found is
+      # caught on every pull request.
+      - run: cargo check --manifest-path fuzz/Cargo.toml --bins
+
   msrv:
     name: MSRV (1.94.0)
     runs-on: ubuntu-latest
@@ -166,5 +183,15 @@ jobs:
       # Forward the workflow-wide CARGO_NET_RETRY into the container (single
       # source of truth) so cargo retries crate downloads; a real test failure
       # still fails fast (no step-level retry).
+      # Both feature configurations, as root. `pam` changes which code paths
+      # exist -- chfn and chsh refuse every non-root call without it, and
+      # passwd loses its interactive path -- so root and PAM together were
+      # never exercised by any job.
+      #
+      # SHADOW_TEST_REQUIRE_ROOT comes from docker-compose.yml: these
+      # containers run as root, so a root-only test that skips here is a
+      # failure rather than a silent pass.
       - name: Test on ${{ matrix.target }}
         run: docker compose run --rm -e CARGO_NET_RETRY ${{ matrix.target }} cargo test --workspace
+      - name: Test on ${{ matrix.target }} with pam
+        run: docker compose run --rm -e CARGO_NET_RETRY ${{ matrix.target }} cargo test --workspace --features pam
