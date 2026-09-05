@@ -46,11 +46,14 @@ features = ["pam"]
 # versioned symbols of both binaries.
 [dist.github-custom-runners.x86_64-unknown-linux-gnu]
 runner = "ubuntu-24.04"
-container = "buildpack-deps:22.04"
+container = { image = "buildpack-deps:22.04", package-manager = "apt" }
 
+# `host` has to say arm64 here. Left at the default, dist takes the container
+# for an x86-64 one, concludes it is cross-compiling and adds a cargo-zigbuild
+# install that shells out to dnf -- which an apt image has not got.
 [dist.github-custom-runners.aarch64-unknown-linux-gnu]
 runner = "ubuntu-24.04-arm"
-container = "buildpack-deps:22.04"
+container = { image = "buildpack-deps:22.04", host = "aarch64-unknown-linux-musl", package-manager = "apt" }
 
 # The global job only assembles artifacts and runs `make dist-musl`, whose
 # output is static and carries no glibc floor at all.
