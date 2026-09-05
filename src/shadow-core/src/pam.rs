@@ -884,6 +884,12 @@ mod tests {
             .expect("pam_permit must pass account management");
     }
 
+    // There is deliberately no test for an *unconfigured* service. On Debian
+    // /etc/pam.d/other falls through to common-auth, which is pam_unix: it
+    // prompts, so the conversation blocks reading stdin and the test hangs
+    // rather than failing. CI did not notice because its stdin is not a
+    // terminal.
+
     /// The refusal path, which is the one that matters for a setuid tool: it
     /// must fail, and fail with the stack's answer rather than a conversation
     /// error.
@@ -899,26 +905,6 @@ mod tests {
         assert!(
             !message.contains("conversation"),
             "the refusal should come from the stack, not a broken conversation: {message}"
-        );
-    }
-
-    /// A service with no configuration at all: PAM falls through to `other`,
-    /// which on every distribution here denies. A setuid tool must not treat
-    /// that as success.
-    #[test]
-    fn test_unknown_service_does_not_authenticate() {
-        if !test_services_present() {
-            return;
-        }
-        let Ok(mut pam) =
-            PamContext::new("shadow-rs-no-such-service-9f3a", "root", ConvMode::Stdin)
-        else {
-            // Refusing at pam_start is an equally correct answer.
-            return;
-        };
-        assert!(
-            pam.authenticate(0).is_err(),
-            "an unconfigured service must not authenticate"
         );
     }
 }

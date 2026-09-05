@@ -34,9 +34,12 @@ and `pam` must be off for musl (see below), so it is built by `make dist-musl`
 and attached as an extra artifact of the same release. Anyone can reproduce it
 with that one command.
 
-Both glibc archives are built on Ubuntu 24.04 images, so they carry that
-image's glibc floor. A system older than it should use the static musl
-archive, which has no libc dependency at all.
+Both glibc archives are built inside an `ubuntu:22.04` container, so they run
+on any system with **glibc 2.34 or newer** — Debian 12, Ubuntu 22.04, RHEL 9
+and anything later. The runner itself is 24.04, because 22.04 runners are
+being retired; building on it directly raised the floor to 2.39, since Rust's
+`std` links `pidfd_spawnp` when the build host has it. Older systems than that
+should use the static musl archive, which has no libc dependency at all.
 
 ## Test matrix
 

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-05
+
+### Fixed
+
+- The glibc archives run again on Debian 12, Ubuntu 22.04 and RHEL 9. 0.3.0
+  required `GLIBC_2.39` and would not start on any of them, where 0.2.2 did:
+  pinning the release runner to Ubuntu 24.04 let Rust's `std` link
+  `pidfd_spawnp` and `pidfd_getpid`, the only two symbols above 2.34 in the
+  binary. The build now happens inside an `ubuntu:22.04` container on that
+  runner, which puts the floor back at `GLIBC_2.34` -- what 0.2.2 required.
+  The static musl archive was never affected
+
 ## [0.3.0] - 2026-09-05
 
 ### Added

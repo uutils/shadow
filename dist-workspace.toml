@@ -37,10 +37,25 @@ features = ["pam"]
 # The higher runner does raise the glibc floor for the dynamically linked
 # archives. That is what the static musl archive below is for; the gap is
 # documented in docs/PLATFORM-SUPPORT.md.
-[dist.github-custom-runners]
-x86_64-unknown-linux-gnu = "ubuntu-24.04"
-aarch64-unknown-linux-gnu = "ubuntu-24.04-arm"
-global = "ubuntu-24.04"
+# The runner is 24.04 because 22.04 begins deprecation on 2026-09-17, but the
+# *build* happens inside a 22.04 container. Rust's std links pidfd_spawnp and
+# pidfd_getpid when the build host's glibc has them, which on 24.04 raised the
+# archives' floor to GLIBC_2.39: 0.3.0 will not start on Debian 12, Ubuntu
+# 22.04 or RHEL 9, all of which ran 0.2.2. Building in the container puts the
+# floor back at 2.34, which is what 0.2.2 required -- verified by dumping the
+# versioned symbols of both binaries.
+[dist.github-custom-runners.x86_64-unknown-linux-gnu]
+runner = "ubuntu-24.04"
+container = "ubuntu:22.04"
+
+[dist.github-custom-runners.aarch64-unknown-linux-gnu]
+runner = "ubuntu-24.04-arm"
+container = "ubuntu:22.04"
+
+# The global job only assembles artifacts and runs `make dist-musl`, whose
+# output is static and carries no glibc floor at all.
+[dist.github-custom-runners.global]
+runner = "ubuntu-24.04"
 
 # `shadow-core::crypt` links crypt(3), which on Debian/Ubuntu lives in
 # libxcrypt rather than glibc; the `pam` feature above links libpam. Both are
