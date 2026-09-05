@@ -30,6 +30,7 @@ members = [
     "src/uu/newgrp",
     "src/uu/chpasswd",
     "src/uu/chage",
+    "src/uu/gpasswd",
 ]
 
 [workspace.package]
@@ -90,10 +91,11 @@ grpck = { optional = true, version = "0.3.1", package = "uu_grpck", path = "src/
 chfn = { optional = true, version = "0.3.1", package = "uu_chfn", path = "src/uu/chfn" }
 chsh = { optional = true, version = "0.3.1", package = "uu_chsh", path = "src/uu/chsh" }
 newgrp = { optional = true, version = "0.3.1", package = "uu_newgrp", path = "src/uu/newgrp" }
+gpasswd = { optional = true, version = "0.3.1", package = "uu_gpasswd", path = "src/uu/gpasswd" }
 
 [features]
 default = ["passwd", "pwck", "useradd", "userdel", "usermod", "chpasswd", "chage",
-           "groupadd", "groupdel", "groupmod", "grpck", "chfn", "chsh", "newgrp"]
+           "groupadd", "groupdel", "groupmod", "grpck", "chfn", "chsh", "newgrp", "gpasswd"]
 
 # PAM authentication (requires libpam-dev). The `?` matters: without it,
 # asking for PAM would drag in the three applets that can use it even when the
@@ -170,6 +172,14 @@ missing_errors_doc = { level = "allow", priority = 1 }
 must_use_candidate = { level = "allow", priority = 1 }
 module_name_repetitions = { level = "allow", priority = 1 }
 cargo_common_metadata = { level = "allow", priority = 1 }
+
+# The print macros panic when the stream is closed, which a setuid-root tool
+# must not do part way through changing an account file. Every tool uses
+# `writeln!` or `uucore::show_error!` instead; this makes the rule a build
+# failure rather than something a reviewer has to remember. Tests are exempt:
+# a panic there is a failed test, which is the point.
+print_stdout = { level = "deny", priority = 1 }
+print_stderr = { level = "deny", priority = 1 }
 
 [lints]
 workspace = true
