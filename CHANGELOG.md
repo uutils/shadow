@@ -7,8 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-05
+
 ### Added
 
+- `aarch64-unknown-linux-gnu` release archive, published next to the x86-64
+  one. It is built on a native arm64 runner rather than cross-compiled:
+  `shadow-core::crypt` links crypt(3) and the `pam` feature links libpam, so a
+  cross build would need an arm64 sysroot carrying both (#222)
+- `chfn` and `chsh` prompt when no field option is given, showing the current
+  value in brackets, as their man pages describe. Pressing ENTER keeps the
+  value, and an all-ENTER run exits 0 without writing (#247)
+- `chsh -s ''` selects the system default shell. passwd(5) gives the field no
+  meaning of its own and `login` falls back to `/bin/sh`, so an empty field is
+  the default rather than a program that does not exist (#247)
+- `newgrp -` reinitializes the environment as at login, which newgrp(1)
+  documents and which previously looked for a group named `-` (#248)
+- `--prefix` on `chage` and `chpasswd`, so their behaviour can be exercised
+  without touching the live files (#248)
+- `make check` runs everything CI gates on, so the README, CONTRIBUTING, the
+  git hooks and `ci.yml` stop each carrying their own copy of the command
+  list (#250)
 - Static musl release archive,
   `uu_shadow-x86_64-unknown-linux-musl-static.tar.gz`, published next to the
   glibc one. It is a self-contained binary for minimal containers and embedded
@@ -21,6 +40,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--root DIR` performs a real `chroot(2)` in every tool. Five did; the other
+  eight folded it into the same resolver `--prefix` uses, so it only prefixed
+  the files the tool itself opened. `useradd -R /mnt/target -m alice` created
+  the home on the **host**, at `/home/alice`, and copied the skeleton from the
+  host's `/etc/skel`; `userdel -r -R` resolved the home to delete against `/`
+  (#270)
+- `passwd -l` is idempotent. Locking twice left `!!`, and since `passwd -u`
+  refuses to unlock an account that would stay locked, an account locked twice
+  could not be unlocked with the tool at all (#250)
+- `chage -l` prints what chage(1) prints. A last change of 0 is `passwd -e`'s
+  "must change at next login" marker, not a date, so all three password lines
+  read *password must be changed*; and expiry is disabled at a maximum age of
+  10000 days, not 99999 (#248)
+- `chage` and `passwd` exit 1 for an unknown login. chage(1) reserves 15 for
+  "can't find the shadow password file" and 3 is an unexpected failure; a
+  login the caller named that does not exist is neither (#248)
+- `chage` exits 2 for a malformed date, the code for a bad option argument,
+  rather than 3 (#248)
+- `chpasswd` takes its default hashing scheme from `ENCRYPT_METHOD` in
+  login.defs. It was hard-coded SHA-512, so on a distribution that sets
+  YESCRYPT every password set through this tool was weaker than the one the
+  same user would get from `passwd` (#248)
+- `chpasswd` rejects the two flag pairs chpasswd(8) forbids: `-s` without `-c`
+  and `-e` with `-c`. Both were accepted and silently did nothing (#248)
+- `chpasswd` resolves every account in a batch before writing any, so an
+  unknown login in the middle of a list no longer leaves the first half
+  applied (#248)
+- `login.defs` numbers are read in the radices login.defs(5) documents.
+  Parsing decimal only was not a rejection but a misreading: `UID_MIN 01000`
+  means 512 and came back as 1000, so `useradd` allocated from a range the
+  administrator had reserved (#249)
+- The aging arithmetic is checked. `chage -l` sums `lastchg + max + inactive`,
+  three values read from a file anyone who can write `/etc/shadow` chooses;
+  plain addition wraps in release builds and panics in debug ones (#248)
+- Every tool takes the lock before reading the file it is about to rewrite.
+  The order was written out by hand at thirty-odd call sites and `pwck -s` had
+  it wrong, sorting entries read beforehand and so reverting a change another
+  process made in between (#249)
 - Rewriting an account file no longer deletes its comments, blank lines and
   NIS compatibility lines. Every tool dropped them on read, so the first
   `useradd`, `usermod`, `groupadd`… erased every comment in `/etc/passwd` and
@@ -59,6 +116,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `chsh` tests `/etc/shells` membership before existence for a non-root
+  caller. Installed setuid-root, its existence check answers with root's view
+  of the filesystem, so a distinct "does not exist" reply made the tool an
+  oracle for paths the caller cannot stat, one probe at a time. Membership is
+  checked first and discloses nothing, `/etc/shells` being world-readable
+  (#247)
+- `chfn` and `chsh` validate the new value before the PAM conversation, so a
+  refused value no longer costs the caller a password prompt (#247)
+- No tool calls `setuid(0)` before writing. euid 0 is all the lock and the
+  atomic write need; raising the *real* uid made `caller_is_root()` — which is
+  deliberately real-uid based — answer true for every caller for the rest of
+  the process (#247)
+- Ctrl-C at a password prompt no longer leaves the terminal with echo off. The
+  signal terminates without unwinding, so the guard's destructor never ran;
+  the shared reader blocks `SIGINT`, `SIGQUIT` and `SIGTSTP` for the duration,
+  which is what `readpassphrase(3)` does (#248)
+- The copy of the password crypt(3) requires as a C string is owned in a
+  zeroizing buffer. `CString::new` made it on the heap and freed it without
+  zeroing, and the caller's `Zeroizing<String>` never learned about it (#248)
+- The PAM response scrub uses volatile writes. Zeroing with `ptr::write_bytes`
+  immediately before `free()` is a dead store the optimiser may delete,
+  leaving the password in the heap (#248)
+- `PAM_TTY` and `PAM_RUSER` are set on every PAM handle, so `pam_unix` and
+  `pam_faillock` can record which terminal and which caller a failed
+  authentication came from instead of logging `tty=?` (#248)
+- UID and GID allocation asks the name service as well as the file, so an ID
+  belonging to an LDAP, SSSD or systemd-homed account is never handed out
+  locally — two accounts with one ID are indistinguishable to the kernel. A
+  `--prefix` run deliberately does not ask: those files describe another
+  system (#249)
+- GitHub Actions are pinned by commit digest. A tag is a moving pointer, and
+  whoever controls an action's repository can repoint it at any commit that
+  then runs here with write access to the checkout (#250)
 - `useradd` changes the ownership of a new home directory through a descriptor
   opened with `O_NOFOLLOW` rather than by path. Between the `mkdir` and the
   `chown`, anyone able to write the parent — a home under `/tmp`, or a shared
@@ -123,6 +213,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `make install` puts `passwd`, `chage`, `chfn`, `chsh` and `newgrp` in
+  `bin` and the rest in `sbin`, the split the GNU package uses. All fourteen
+  went to `sbin`, which is not on a normal user's PATH, so `passwd` was
+  *command not found* for exactly the people it is setuid for (#250)
+- Only the Cargo features that change linkage remain: `pam`, `crypt` and
+  `landlock`. The five that gated dependency-free parsers made
+  `cargo test -p shadow-core` compile a fraction of the crate and report a
+  pass for it — it runs 181 tests now where it ran 20. Asking for `pam` no
+  longer force-enables the three applets that can use it (#249)
+- Audit records go straight to `/dev/log` instead of forking `/usr/bin/logger`
+  for every event, and carry the terminal they came from (#249)
+- The Docker base images and the GitHub Actions are pinned, so a new toolchain
+  or distro release arrives as a reviewable pull request rather than landing
+  on `main` unannounced (#250)
+- The licence allow list in `deny.toml` is exactly what the dependency graph
+  uses. A list wider than the graph means a crate arriving under a new licence
+  passes silently (#250)
+- The integration suite is one test binary rather than fourteen, and it spawns
+  the real binary instead of calling `uumain` in-process, so it can assert on
+  output and cannot leak process state between tests (#250)
+- The pre-push hook runs the tests once, on Debian, and skips entirely for a
+  push carrying no new commits. Reproducing CI took minutes on every push, so
+  every push used `--no-verify` (#231)
 - `grpck -q` reports errors again: every error print was suppressed along with
   the warnings, so `-q` hid exactly what `grpck(8)` says it keeps. A malformed
   or unreadable `/etc/gshadow` is now an error rather than "nothing to check",
@@ -228,6 +341,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The RPM spec and the `debian/` directory. Neither could build: `debian/` has
+  no changelog at all, so `dpkg-buildpackage` stops before it starts, and the
+  spec pinned an old version, the pre-transfer repository URL and a `%files`
+  layout `make install` does not produce (#250)
+- An unused, unpinned `cargo-nextest` download from every Docker image.
+  Nothing in the repository runs it (#250)
 - `shadow-core`'s `selinux` module and feature flag. Nothing compiled it; the
   atomic writer now preserves the label itself
 

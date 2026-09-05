@@ -534,7 +534,7 @@ dependencies = [
 
 [[package]]
 name = "shadow-core"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "landlock",
@@ -695,7 +695,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uu_chage"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "rustix",
@@ -706,7 +706,7 @@ dependencies = [
 
 [[package]]
 name = "uu_chfn"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "rustix",
@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "uu_chpasswd"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "rustix",
@@ -729,7 +729,7 @@ dependencies = [
 
 [[package]]
 name = "uu_chsh"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "rustix",
@@ -740,7 +740,7 @@ dependencies = [
 
 [[package]]
 name = "uu_groupadd"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "rustix",
@@ -751,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "uu_groupdel"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "rustix",
@@ -762,7 +762,7 @@ dependencies = [
 
 [[package]]
 name = "uu_groupmod"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "rustix",
@@ -773,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "uu_grpck"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "shadow-core",
@@ -783,7 +783,7 @@ dependencies = [
 
 [[package]]
 name = "uu_newgrp"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "rustix",
@@ -795,7 +795,7 @@ dependencies = [
 
 [[package]]
 name = "uu_passwd"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "rustix",
@@ -806,7 +806,7 @@ dependencies = [
 
 [[package]]
 name = "uu_pwck"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "shadow-core",
@@ -816,7 +816,7 @@ dependencies = [
 
 [[package]]
 name = "uu_shadow"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "clap_complete",
@@ -841,7 +841,7 @@ dependencies = [
 
 [[package]]
 name = "uu_useradd"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "rustix",
@@ -852,7 +852,7 @@ dependencies = [
 
 [[package]]
 name = "uu_userdel"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "rustix",
@@ -863,7 +863,7 @@ dependencies = [
 
 [[package]]
 name = "uu_usermod"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "clap",
  "rustix",
