@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pidfd_spawnp` and `pidfd_getpid`, the only two symbols above 2.34 in the
   binary. The build now happens inside an `ubuntu:22.04` container on that
   runner, which puts the floor back at `GLIBC_2.34` -- what 0.2.2 required.
-  The static musl archive was never affected
+  The image is `buildpack-deps:22.04` rather than a bare `ubuntu:22.04`,
+  because the release workflow runs `git` and `curl` before installing
+  anything. The static musl archive was never affected
 
 ## [0.3.0] - 2026-09-05
 

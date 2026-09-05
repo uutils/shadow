@@ -46,11 +46,11 @@ features = ["pam"]
 # versioned symbols of both binaries.
 [dist.github-custom-runners.x86_64-unknown-linux-gnu]
 runner = "ubuntu-24.04"
-container = "ubuntu:22.04"
+container = "buildpack-deps:22.04"
 
 [dist.github-custom-runners.aarch64-unknown-linux-gnu]
 runner = "ubuntu-24.04-arm"
-container = "ubuntu:22.04"
+container = "buildpack-deps:22.04"
 
 # The global job only assembles artifacts and runs `make dist-musl`, whose
 # output is static and carries no glibc floor at all.
