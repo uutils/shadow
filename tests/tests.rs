@@ -11,6 +11,11 @@
 //! uutils uses. The `#[path]` attributes are needed only because the
 //! directory name carries a hyphen, which is not a module name.
 
+// The print macros are denied for the tools, where a panic on a closed stream
+// would abandon a half-written account file. In a test a panic is a failed
+// test, which is what one wants, and printing why a test skipped is useful.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+
 mod common;
 
 #[path = "by-util/test_chage.rs"]

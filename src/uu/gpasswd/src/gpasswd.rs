@@ -15,16 +15,15 @@ use std::path::Path;
 use clap::{Arg, ArgAction, ArgGroup, Command};
 use uucore::error::{UError, UResult};
 
-use shadow_core::atomic;
 use shadow_core::audit;
 use shadow_core::crypt;
-use shadow_core::group::{self, GroupEntry};
+use shadow_core::group::GroupEntry;
 use shadow_core::gshadow::{self, GshadowEntry};
-use shadow_core::lock::FileLock;
 use shadow_core::login_defs::LoginDefs;
 use shadow_core::nscd;
 use shadow_core::passwd;
 use shadow_core::sysroot::SysRoot;
+use shadow_core::transaction::{self, Commit, LockedFile};
 
 mod options {
     pub const GROUP: &str = "GROUP";
@@ -93,15 +92,6 @@ struct Request {
 }
 
 impl Request {
-    fn touches_group_file(&self) -> bool {
-        self.add_user.is_some()
-            || self.del_user.is_some()
-            || self.set_members.is_some()
-            || self.remove_password
-            || self.restrict
-            || self.new_password_hash.is_some()
-    }
-
     fn requires_system_admin(&self) -> bool {
         self.set_admins.is_some() || self.set_members.is_some()
     }
@@ -118,7 +108,7 @@ fn permission_denied() -> UResult<()> {
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let _clean_env = shadow_core::hardening::harden_process();
+    shadow_core::hardening::harden_process();
 
     let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| exit_codes::BAD_SYNTAX)?
     else {
@@ -206,9 +196,6 @@ fn do_gpasswd(matches: &clap::ArgMatches) -> UResult<()> {
         req.new_password_hash = Some(prompt_and_hash_password(&root, &group_name)?);
     }
 
-    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
-        .map_err(|e| GpasswdError::CantUpdate(format!("cannot block signals: {e}")))?;
-
     let group_path = root.group_path();
     let gshadow_path = root.gshadow_path();
     let gshadow_exists = gshadow_path.exists();
@@ -219,24 +206,26 @@ fn do_gpasswd(matches: &clap::ArgMatches) -> UResult<()> {
         );
     }
 
-    let group_lock = FileLock::acquire(&group_path).map_err(|e| {
-        GpasswdError::CantUpdate(format!("cannot lock {}: {e}", group_path.display()))
+    // Each transaction locks, then reads, and blocks signals for its lifetime.
+    // Both are opened before either is written, so a failed gshadow update
+    // cannot leave membership only half applied, and the layout keeps the
+    // comments and NIS compatibility lines the files carry -- reading entries
+    // only and writing them back would erase every comment in /etc/group.
+    let mut group_file = LockedFile::<GroupEntry>::open(&group_path).map_err(|e| {
+        GpasswdError::CantUpdate(format!("cannot open {}: {e}", group_path.display()))
     })?;
 
-    // Hold both locks before writing so a failed gshadow update cannot
-    // leave membership only half-applied.
-    let gs_lock = if gshadow_exists {
-        Some(FileLock::acquire(&gshadow_path).map_err(|e| {
-            GpasswdError::CantUpdate(format!("cannot lock {}: {e}", gshadow_path.display()))
-        })?)
+    let mut gshadow_file = if gshadow_exists {
+        Some(
+            LockedFile::<GshadowEntry>::open(&gshadow_path).map_err(|e| {
+                GpasswdError::CantUpdate(format!("cannot open {}: {e}", gshadow_path.display()))
+            })?,
+        )
     } else {
         None
     };
 
-    let mut group_entries = group::read_group_file(&group_path).map_err(|e| {
-        GpasswdError::CantUpdate(format!("cannot read {}: {e}", group_path.display()))
-    })?;
-
+    let group_entries = group_file.entries_mut();
     let idx = group_entries
         .iter()
         .position(|g| g.name == group_name)
@@ -244,19 +233,11 @@ fn do_gpasswd(matches: &clap::ArgMatches) -> UResult<()> {
             GpasswdError::BadArgument(format!("group '{group_name}' does not exist in /etc/group"))
         })?;
 
-    let mut gs_entries = if gshadow_exists {
-        gshadow::read_gshadow_file(&gshadow_path).map_err(|e| {
-            GpasswdError::CantUpdate(format!("cannot read {}: {e}", gshadow_path.display()))
-        })?
-    } else {
-        Vec::new()
-    };
-
     if !is_root {
         let caller = current_caller_name()?;
-        let is_admin = gs_entries
-            .iter()
-            .find(|g| g.name == group_name)
+        let is_admin = gshadow_file
+            .as_ref()
+            .and_then(|f| f.find(&group_name))
             .is_some_and(|g| is_group_admin(&caller, &g.admins));
         if !is_admin {
             return permission_denied();
@@ -292,57 +273,56 @@ fn do_gpasswd(matches: &clap::ArgMatches) -> UResult<()> {
     if let Some(ref user) = req.del_user
         && !group_entries[idx].members.iter().any(|m| m == user)
     {
-        println!("Removing user {user} from group {group_name}");
+        let _ = writeln!(io::stdout(), "Removing user {user} from group {group_name}");
         return Err(GpasswdError::BadArgument(format!(
             "user '{user}' is not a member of '{group_name}'"
         ))
         .into());
     }
 
-    let old_group_passwd = group_entries[idx].passwd.clone();
-    apply_group_changes(&mut group_entries[idx], &req, gshadow_exists);
-    let modified_gid = group_entries[idx].gid;
-    let members_for_gshadow = group_entries[idx].members.clone();
+    let entries = group_file.entries_mut();
+    let old_group_passwd = entries[idx].passwd.clone();
+    apply_group_changes(&mut entries[idx], &req, gshadow_exists);
+    let modified_gid = entries[idx].gid;
+    let members_for_gshadow = entries[idx].members.clone();
 
-    let mut created_gshadow_line = false;
-    if gshadow_exists {
-        created_gshadow_line = !gs_entries.iter().any(|g| g.name == group_name);
+    if let Some(gshadow_file) = gshadow_file.as_mut() {
+        let created = gshadow_file.find(&group_name).is_none();
         let gs = ensure_gshadow_entry(
-            &mut gs_entries,
+            gshadow_file.entries_mut(),
             &group_name,
             &members_for_gshadow,
             &old_group_passwd,
         );
         apply_gshadow_changes(gs, &req);
-        // Password now lives in gshadow, matching GNU when it creates the line.
-        if created_gshadow_line {
-            group_entries[idx].passwd = "x".to_string();
+        // The password now lives in gshadow, matching GNU when it creates the
+        // line.
+        if created {
+            group_file.entries_mut()[idx].passwd = "x".to_string();
         }
     }
 
-    if req.touches_group_file() || created_gshadow_line {
-        atomic::atomic_write(&group_path, |f| group::write_group(&group_entries, f)).map_err(
-            |e| GpasswdError::CantUpdate(format!("cannot write {}: {e}", group_path.display())),
-        )?;
+    // Both files are validated before either is written, so a value that
+    // would corrupt one cannot leave the pair disagreeing. A commit that
+    // would write the same bytes writes nothing, which is why there is no
+    // longer a "did anything change" guard here.
+    let mut files: Vec<Box<dyn Commit>> = vec![Box::new(group_file)];
+    if let Some(gshadow_file) = gshadow_file {
+        files.push(Box::new(gshadow_file));
     }
-
-    if gshadow_exists {
-        atomic::atomic_write(&gshadow_path, |f| gshadow::write_gshadow(&gs_entries, f)).map_err(
-            |e| GpasswdError::CantUpdate(format!("cannot write {}: {e}", gshadow_path.display())),
-        )?;
-    }
-
-    drop(gs_lock);
-    drop(group_lock);
+    transaction::commit_all(files)
+        .map_err(|e| GpasswdError::CantUpdate(format!("cannot write: {e}")))?;
 
     nscd::invalidate_cache("group");
     audit::log_user_event("MOD_GROUP", &group_name, modified_gid, true);
 
+    // GNU prints these on stdout, so a script capturing it keeps working.
+    let mut out = io::stdout().lock();
     if let Some(ref user) = req.add_user {
-        println!("Adding user {user} to group {group_name}");
+        let _ = writeln!(out, "Adding user {user} to group {group_name}");
     }
     if let Some(ref user) = req.del_user {
-        println!("Removing user {user} from group {group_name}");
+        let _ = writeln!(out, "Removing user {user} from group {group_name}");
     }
 
     Ok(())
@@ -494,18 +474,27 @@ fn crypt_method(defs: &LoginDefs) -> crypt::CryptMethod {
 }
 
 fn prompt_and_hash_password(root: &SysRoot, group_name: &str) -> Result<String, GpasswdError> {
-    eprintln!("Changing the password for group {group_name}");
-    let _ = io::stderr().flush();
+    // Never println!/eprintln!: they panic when the stream is closed, which a
+    // setuid-root tool must not do part way through a change.
+    let _ = writeln!(io::stderr(), "Changing the password for group {group_name}");
+
+    // The shared helper blocks SIGINT, SIGQUIT and SIGTSTP for the read, so
+    // Ctrl-C at the prompt cannot leave the terminal with echo disabled, and
+    // it falls back to stderr and stdin where there is no controlling
+    // terminal.
+    let read = |prompt: &str| {
+        shadow_core::tty::read_password(prompt)
+            .map_err(|e| GpasswdError::Failure(format!("cannot read the password: {e}")))
+    };
 
     let password = loop {
-        let pass1 = read_password("New Password: ")?;
-        let pass2 = read_password("Re-enter new password: ")?;
+        let pass1 = read("New Password: ")?;
+        let pass2 = read("Re-enter new password: ")?;
         if *pass1 == *pass2 {
             break pass1;
         }
         // GNU gpasswd retries instead of exiting on a mismatch.
-        eprintln!("They don't match; try again");
-        let _ = io::stderr().flush();
+        let _ = writeln!(io::stderr(), "They don't match; try again");
     };
 
     let defs = LoginDefs::load(&root.login_defs_path())
@@ -517,90 +506,6 @@ fn prompt_and_hash_password(root: &SysRoot, group_name: &str) -> Result<String, 
     };
     crypt::hash_password(&password, method, rounds)
         .map_err(|e| GpasswdError::CantUpdate(format!("cannot hash password: {e}")))
-}
-
-/// RAII guard that restores terminal echo on drop (same pattern as newgrp).
-struct EchoGuard {
-    tty: std::fs::File,
-    old_termios: rustix::termios::Termios,
-}
-
-impl EchoGuard {
-    /// Disable echo on the given tty file.
-    fn disable(tty: std::fs::File) -> Result<Self, GpasswdError> {
-        use std::os::unix::io::AsFd;
-
-        let old_termios = rustix::termios::tcgetattr(tty.as_fd()).map_err(|e| {
-            GpasswdError::CantUpdate(format!("cannot get terminal attributes: {e}"))
-        })?;
-
-        let mut new_termios = old_termios.clone();
-        new_termios.local_modes &= !rustix::termios::LocalModes::ECHO;
-        rustix::termios::tcsetattr(
-            tty.as_fd(),
-            rustix::termios::OptionalActions::Now,
-            &new_termios,
-        )
-        .map_err(|e| GpasswdError::CantUpdate(format!("cannot disable echo: {e}")))?;
-
-        Ok(Self { tty, old_termios })
-    }
-}
-
-impl Drop for EchoGuard {
-    fn drop(&mut self) {
-        use std::os::unix::io::AsFd;
-        let _ = rustix::termios::tcsetattr(
-            self.tty.as_fd(),
-            rustix::termios::OptionalActions::Now,
-            &self.old_termios,
-        );
-    }
-}
-
-/// Read a password from `/dev/tty` with echo disabled.
-///
-/// The returned password is wrapped in `Zeroizing` so it is scrubbed from
-/// memory when dropped.
-fn read_password(prompt: &str) -> Result<zeroize::Zeroizing<String>, GpasswdError> {
-    use std::io::{BufRead, Write as _};
-
-    let tty = std::fs::File::options()
-        .read(true)
-        .write(true)
-        .open("/dev/tty")
-        .map_err(|_| GpasswdError::Failure("Not a tty".into()))?;
-
-    if !rustix::termios::isatty(&tty) {
-        return Err(GpasswdError::Failure("Not a tty".into()));
-    }
-
-    (&tty)
-        .write_all(prompt.as_bytes())
-        .map_err(|e| GpasswdError::CantUpdate(format!("cannot write prompt: {e}")))?;
-    (&tty)
-        .flush()
-        .map_err(|e| GpasswdError::CantUpdate(format!("cannot flush prompt: {e}")))?;
-
-    // Clone the tty handle: one for the guard (to restore echo), one for reading.
-    let tty_for_guard = tty
-        .try_clone()
-        .map_err(|e| GpasswdError::CantUpdate(format!("cannot clone tty handle: {e}")))?;
-
-    let guard = EchoGuard::disable(tty_for_guard)?;
-
-    let mut buf = zeroize::Zeroizing::new(String::new());
-    let mut reader = std::io::BufReader::new(&tty);
-    reader
-        .read_line(&mut buf)
-        .map_err(|e| GpasswdError::CantUpdate(format!("cannot read password: {e}")))?;
-
-    drop(guard);
-    let _ = (&tty).write_all(b"\n");
-
-    Ok(zeroize::Zeroizing::new(
-        buf.trim_end_matches(['\r', '\n']).to_string(),
-    ))
 }
 
 #[must_use]

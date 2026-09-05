@@ -111,7 +111,17 @@ PROBE=gnucompat_probe
     echo "error: cannot create the probe account" >&2
     exit 1
 }
-cleanup() { /usr/sbin/userdel -r "$PROBE" >/dev/null 2>&1; }
+# A throwaway group for the gpasswd comparisons.
+PROBE_GRP=gnucompat_probegrp
+/usr/sbin/groupdel "$PROBE_GRP" >/dev/null 2>&1
+/usr/sbin/groupadd "$PROBE_GRP" >/dev/null 2>&1 || {
+    echo "error: cannot create the probe group" >&2
+    exit 1
+}
+cleanup() {
+    /usr/sbin/userdel -r "$PROBE" >/dev/null 2>&1
+    /usr/sbin/groupdel "$PROBE_GRP" >/dev/null 2>&1
+}
 trap cleanup EXIT
 
 # ── passwd -S ───────────────────────────────────────────────────────
@@ -173,6 +183,12 @@ compare_exit "groupdel on an unknown group" \
     "$RS/groupdel no_such_group_9f3a" "/usr/sbin/groupdel no_such_group_9f3a"
 compare_exit "userdel on an unknown login" \
     "$RS/userdel no_such_user_9f3a" "/usr/sbin/userdel no_such_user_9f3a"
+compare_exit "gpasswd on an unknown group" \
+    "$RS/gpasswd no_such_group_9f3a </dev/null" "/usr/bin/gpasswd no_such_group_9f3a </dev/null"
+compare_exit "gpasswd -a for an unknown user" \
+    "$RS/gpasswd -a no_such_user_9f3a $PROBE_GRP" "/usr/bin/gpasswd -a no_such_user_9f3a $PROBE_GRP"
+compare_exit "gpasswd -d for a non-member" \
+    "$RS/gpasswd -d $PROBE $PROBE_GRP" "/usr/bin/gpasswd -d $PROBE $PROBE_GRP"
 compare_exit "chpasswd -s without -c" \
     "echo x:y | $RS/chpasswd -s 5000" "echo x:y | /usr/sbin/chpasswd -s 5000"
 compare_exit "chpasswd -e with -c" \
@@ -207,6 +223,7 @@ for pair in \
     "groupdel:/usr/sbin/groupdel" \
     "groupmod:/usr/sbin/groupmod" \
     "chpasswd:/usr/sbin/chpasswd" \
+    "gpasswd:/usr/bin/gpasswd" \
     "pwck:/usr/sbin/pwck" \
     "grpck:/usr/sbin/grpck"; do
     tool="${pair%%:*}"
@@ -216,8 +233,6 @@ done
 
 # ── Results ─────────────────────────────────────────────────────────
 
-echo "=== gpasswd ==="
-compare_exit "gpasswd --help" "$RS/gpasswd --help" "/usr/bin/gpasswd --help"
 
 echo ""
 echo "=== Results ==="

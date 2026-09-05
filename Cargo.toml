@@ -173,5 +173,13 @@ must_use_candidate = { level = "allow", priority = 1 }
 module_name_repetitions = { level = "allow", priority = 1 }
 cargo_common_metadata = { level = "allow", priority = 1 }
 
+# The print macros panic when the stream is closed, which a setuid-root tool
+# must not do part way through changing an account file. Every tool uses
+# `writeln!` or `uucore::show_error!` instead; this makes the rule a build
+# failure rather than something a reviewer has to remember. Tests are exempt:
+# a panic there is a failed test, which is the point.
+print_stdout = { level = "deny", priority = 1 }
+print_stderr = { level = "deny", priority = 1 }
+
 [lints]
 workspace = true

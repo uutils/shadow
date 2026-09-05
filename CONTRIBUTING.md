@@ -164,7 +164,10 @@ development tool.
 
 shadow-rs is distributed under the terms of the [MIT License](LICENSE).
 
-Acceptable dependency licenses: MIT, Apache-2.0, ISC, BSD-2-Clause,
-BSD-3-Clause, CC0-1.0, Unicode-3.0, Zlib, MPL-2.0.
+Acceptable dependency licences are exactly the ones the dependency graph uses
+today: **MIT, Apache-2.0, BSD-3-Clause, Unicode-3.0**. The list is deliberately
+no wider than the graph, so a crate arriving under a new licence is a decision
+someone records in `deny.toml` rather than something that passes silently.
 
-**No GPL or LGPL dependencies, ever.**
+**No GPL or LGPL dependencies, ever**, and no MPL-2.0 either: it is file-level
+copyleft and this project ships MIT only.

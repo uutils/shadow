@@ -6,14 +6,11 @@
 
 //! Integration tests for the `gpasswd` utility.
 //!
-//! Tests that require root are guarded by `common::skip_unless_root()` and run
+//! Tests that require root are guarded by `crate::common::skip_unless_root()` and run
 //! inside Docker CI containers. Non-root tests exercise clap parsing and error
 //! paths that do not need privilege.
 
 use std::ffi::OsString;
-
-#[path = "../common/mod.rs"]
-mod common;
 
 /// Run `uumain` with the given args, returning the exit code.
 fn run(args: &[&str]) -> i32 {
@@ -123,7 +120,7 @@ fn test_add_and_admins_combination_fails() {
 
 #[test]
 fn test_add_user() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -152,7 +149,7 @@ fn test_add_user() {
 
 #[test]
 fn test_add_user_idempotent() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -174,7 +171,7 @@ fn test_add_user_idempotent() {
 
 #[test]
 fn test_delete_non_member_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -190,7 +187,7 @@ fn test_delete_non_member_fails() {
 
 #[test]
 fn test_delete_user() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -208,7 +205,7 @@ fn test_delete_user() {
 
 #[test]
 fn test_delete_does_not_remove_admin() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -240,7 +237,7 @@ fn test_delete_does_not_remove_admin() {
 
 #[test]
 fn test_set_members() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -265,7 +262,7 @@ fn test_set_members() {
 
 #[test]
 fn test_clear_members() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -283,7 +280,7 @@ fn test_clear_members() {
 
 #[test]
 fn test_set_administrators() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -308,7 +305,7 @@ fn test_set_administrators() {
 
 #[test]
 fn test_set_admins_and_members_together() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -330,7 +327,7 @@ fn test_set_admins_and_members_together() {
 
 #[test]
 fn test_administrators_without_gshadow_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -341,7 +338,7 @@ fn test_administrators_without_gshadow_fails() {
 
 #[test]
 fn test_remove_password() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -365,7 +362,7 @@ fn test_remove_password() {
 
 #[test]
 fn test_restrict() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -380,7 +377,7 @@ fn test_restrict() {
 
 #[test]
 fn test_restrict_without_gshadow() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -398,7 +395,7 @@ fn test_restrict_without_gshadow() {
 
 #[test]
 fn test_remove_password_without_gshadow() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -422,7 +419,7 @@ fn test_remove_password_without_gshadow() {
 
 #[test]
 fn test_creates_gshadow_entry() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -445,7 +442,7 @@ fn test_creates_gshadow_entry() {
 
 #[test]
 fn test_nonexistent_group_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -456,7 +453,7 @@ fn test_nonexistent_group_fails() {
 
 #[test]
 fn test_nonexistent_user_fails() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 
@@ -467,7 +464,7 @@ fn test_nonexistent_user_fails() {
 
 #[test]
 fn test_preserves_other_entries() {
-    if common::skip_unless_root() {
+    if crate::common::skip_unless_root() {
         return;
     }
 

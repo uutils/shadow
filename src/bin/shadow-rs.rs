@@ -45,12 +45,12 @@ fn applets() -> Vec<(&'static str, Applet)> {
     table.push(("chpasswd", |a| chpasswd::uumain(a.iter().cloned())));
     #[cfg(feature = "chsh")]
     table.push(("chsh", |a| chsh::uumain(a.iter().cloned())));
+    #[cfg(feature = "gpasswd")]
+    table.push(("gpasswd", |a| gpasswd::uumain(a.iter().cloned())));
     #[cfg(feature = "groupadd")]
     table.push(("groupadd", |a| groupadd::uumain(a.iter().cloned())));
     #[cfg(feature = "groupdel")]
     table.push(("groupdel", |a| groupdel::uumain(a.iter().cloned())));
-    #[cfg(feature = "gpasswd")]
-    table.push(("gpasswd", |a| gpasswd::uumain(a.iter().cloned())));
     #[cfg(feature = "groupmod")]
     table.push(("groupmod", |a| groupmod::uumain(a.iter().cloned())));
     #[cfg(feature = "grpck")]
