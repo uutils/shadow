@@ -100,7 +100,7 @@ hash_password() {
 
 # ── TOOLS list ──────────────────────────────────────────────────────
 
-TOOLS="passwd pwck useradd userdel usermod chpasswd chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp sg"
+TOOLS="passwd pwck useradd userdel usermod chpasswd chgpasswd chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp sg"
 SETUID_TOOLS="passwd chfn chsh newgrp gpasswd sg"
 
 # The tools an unprivileged user runs are installed in bin, the rest in sbin,
@@ -869,6 +869,56 @@ test_gpasswd_group_admin() {
     userdel -r gp_member 2>/dev/null || true
 }
 
+# ── chgpasswd: group passwords in batch ────────────────────────────
+
+test_chgpasswd() {
+    section "chgpasswd — group passwords in batch"
+
+    groupdel cg_one 2>/dev/null || true
+    groupdel cg_two 2>/dev/null || true
+    assert_ok "groupadd cg_one" groupadd cg_one
+    assert_ok "groupadd cg_two" groupadd cg_two
+
+    assert_ok "a batch of two group passwords applies" \
+        bash -c "printf 'cg_one:first\ncg_two:second\n' | chgpasswd"
+    assert_file_contains "cg_one got a hash in gshadow" \
+        /etc/gshadow '^cg_one:\$'
+    assert_file_contains "cg_two got a hash in gshadow" \
+        /etc/gshadow '^cg_two:\$'
+    assert_file_contains "/etc/group keeps the placeholder" \
+        /etc/group '^cg_one:x:'
+
+    # The password has to be the one a non-member is actually checked against,
+    # or the tool has written something decorative.
+    userdel -r cg_outsider 2>/dev/null || true
+    assert_ok "useradd -m cg_outsider" useradd -m cg_outsider
+    assert_contains "sg accepts the password chgpasswd set" "cg_one" \
+        bash -c "echo first | su -s /bin/bash cg_outsider -c \"sg cg_one -c 'id -gn'\""
+    assert_fail "and refuses a wrong one" \
+        bash -c "echo wrong | su -s /bin/bash cg_outsider -c \"sg cg_one -c 'id -gn'\""
+
+    # All or nothing: one unknown group and the whole batch is discarded.
+    # The line is compared through a file: a hash is full of dollar signs, and
+    # carrying one through a shell variable expands them away.
+    grep '^cg_two:' /etc/gshadow > /tmp/cg_two.before
+    assert_fail "a batch naming an unknown group fails" \
+        bash -c "printf 'cg_two:changed\nnosuchgroup:x\n' | chgpasswd"
+    assert_ok "and changed nothing" \
+        bash -c "grep '^cg_two:' /etc/gshadow | diff -q - /tmp/cg_two.before"
+
+    assert_ok "-e stores a field verbatim" \
+        bash -c "printf 'cg_one:\$6\$salt\$hash\n' | chgpasswd -e"
+    assert_file_contains "the verbatim field is in gshadow" \
+        /etc/gshadow '^cg_one:\$6\$salt\$hash:'
+
+    assert_ok "empty input succeeds having done nothing" \
+        bash -c "chgpasswd < /dev/null"
+
+    userdel -r cg_outsider 2>/dev/null || true
+    groupdel cg_one 2>/dev/null || true
+    groupdel cg_two 2>/dev/null || true
+}
+
 # ── sg: running one command in another group ───────────────────────
 
 test_sg_group_switch() {
@@ -1039,6 +1089,7 @@ main() {
     test_self_service
     test_gpasswd_group_admin
     test_sg_group_switch
+    test_chgpasswd
     test_aging_and_input
     test_audit_logging
     test_root_option

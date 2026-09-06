@@ -7,7 +7,7 @@ SBINDIR ?= $(PREFIX)/sbin
 SETUID_TOOLS = passwd chfn chsh newgrp gpasswd sg
 
 # Root-only tools (no setuid; fail at getuid() check for non-root callers).
-ROOT_TOOLS = useradd userdel usermod chpasswd \
+ROOT_TOOLS = useradd userdel usermod chpasswd chgpasswd \
              groupadd groupdel groupmod pwck grpck
 
 # Tools an ordinary user runs, and which therefore go in bin rather than sbin:
@@ -107,7 +107,7 @@ test-arm64: build-arm64
 test-gnu-compat:
 	bash tests/gnu-compat.sh
 
-# Default install: 16 standalone per-tool binaries, with the setuid layout and
+# Default install: 17 standalone per-tool binaries, with the setuid layout and
 # the bin/sbin split GNU shadow-utils uses. Only $(SETUID_TOOLS) are setuid.
 install: build
 	@for tool in $(SETUID_TOOLS); do \

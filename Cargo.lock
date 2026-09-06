@@ -716,6 +716,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_chgpasswd"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "shadow-core",
+ "tempfile",
+ "uucore",
+ "zeroize",
+]
+
+[[package]]
 name = "uu_chpasswd"
 version = "0.4.0"
 dependencies = [
@@ -844,6 +855,7 @@ dependencies = [
  "tempfile",
  "uu_chage",
  "uu_chfn",
+ "uu_chgpasswd",
  "uu_chpasswd",
  "uu_chsh",
  "uu_gpasswd",
