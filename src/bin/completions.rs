@@ -45,6 +45,8 @@ fn get_tool_app(name: &str) -> Option<Command> {
         "grpck" => Some(grpck::uu_app()),
         #[cfg(feature = "newgrp")]
         "newgrp" => Some(newgrp::uu_app()),
+        #[cfg(feature = "newusers")]
+        "newusers" => Some(newusers::uu_app()),
         #[cfg(feature = "passwd")]
         "passwd" => Some(passwd::uu_app()),
         #[cfg(feature = "pwck")]
@@ -86,6 +88,8 @@ fn all_tool_names() -> Vec<&'static str> {
     names.push("grpck");
     #[cfg(feature = "newgrp")]
     names.push("newgrp");
+    #[cfg(feature = "newusers")]
+    names.push("newusers");
     #[cfg(feature = "passwd")]
     names.push("passwd");
     #[cfg(feature = "pwck")]

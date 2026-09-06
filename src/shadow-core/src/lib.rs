@@ -20,6 +20,7 @@ pub mod error;
 pub mod group;
 pub mod gshadow;
 pub mod hardening;
+pub mod home;
 pub mod lock;
 pub mod login_defs;
 pub mod nscd;

@@ -14,7 +14,6 @@
 //! directory and populate it from `/etc/skel`.
 
 use std::fmt;
-use std::os::unix::fs::DirBuilderExt;
 use std::path::Path;
 
 use clap::{Arg, ArgAction, Command};
@@ -26,7 +25,6 @@ use shadow_core::login_defs::{self, LoginDefs};
 use shadow_core::nscd;
 use shadow_core::passwd::PasswdEntry;
 use shadow_core::shadow::ShadowEntry;
-use shadow_core::skel;
 use shadow_core::sysroot::SysRoot;
 use shadow_core::transaction::{self, Commit, LockedFile};
 use shadow_core::uid_alloc;
@@ -998,97 +996,18 @@ fn create_home_directory(
     gid: u32,
     mode: u32,
 ) -> UResult<()> {
-    // The kernel does not reset umask across setuid, so a caller-controlled
-    // inherited umask may still be in effect in our process. A non-zero umask
-    // can mask off requested permission bits, so even mkdir(0o700) is not
-    // guaranteed to result in 0o700 unless we clear it first (e.g., umask
-    // 0o700 would mask the user RWX bits and leave the dir at 0o000).
-    // Forcing umask to 0 makes the requested mode exact, regardless of caller
-    // environment; umask can only make the result less permissive than the
-    // mode we requested, never more. Scoped to the mkdir call only — chown
-    // doesn't need it, and copy_skel manages its own umask internally.
-    // useradd(8) -b: with -m the base directory is created if it is missing,
-    // so a home under a path that does not exist yet works. Ancestors get the
-    // conventional 0755 and stay root-owned; only the home itself takes `mode`
-    // and the user's ownership.
-    if let Some(parent) = home_path.parent()
-        && !parent.as_os_str().is_empty()
-        && !parent.exists()
-    {
-        let _umask = shadow_core::atomic::UmaskGuard::zero();
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o755)
-            .create(parent)
-            .map_err(|e| {
-                UseraddError::CannotCreateHome(format!(
-                    "cannot create directory '{}': {e}",
-                    parent.display()
-                ))
-            })?;
-    }
-
-    let mkdir_result = {
-        let _umask = shadow_core::atomic::UmaskGuard::zero();
-        std::fs::DirBuilder::new().mode(mode).create(home_path)
-    };
-
-    // Use DirBuilder::mode() so mkdir(2) is called with 0o700 atomically.
-    // Use create (not recursive) to avoid TOCTOU between exists() and mkdir().
-    match mkdir_result {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            uucore::show_warning!(
-                "home directory '{}' already exists -- not copying from skel directory",
-                home_path.display()
-            );
-            return Ok(());
-        }
-        Err(e) => {
-            return Err(UseraddError::CannotCreateHome(format!(
-                "cannot create directory '{}': {e}",
-                home_path.display()
-            ))
-            .into());
-        }
-    }
-
-    // Change ownership through a descriptor opened with O_NOFOLLOW rather
-    // than by path: between the mkdir above and this call, anyone able to
-    // write the parent (a home under /tmp or a shared base directory) could
-    // swap the directory for a symlink and have us hand them the target.
-    {
-        use rustix::fs::{Mode, OFlags};
-        let dir = rustix::fs::open(
-            home_path,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW,
-            Mode::empty(),
-        )
-        .map_err(|e| {
-            UseraddError::CannotCreateHome(format!("cannot open '{}': {e}", home_path.display()))
-        })?;
-        rustix::fs::fchown(
-            &dir,
-            Some(rustix::fs::Uid::from_raw(uid)),
-            Some(rustix::fs::Gid::from_raw(gid)),
-        )
-        .map_err(|e| {
-            UseraddError::CannotCreateHome(format!(
-                "cannot set ownership on '{}': {e}",
-                home_path.display()
-            ))
-        })?;
-    }
-
-    // Copy skeleton directory contents.
-    skel::copy_skel(skel_path, home_path, uid, gid).map_err(|e| {
-        UseraddError::CannotCreateHome(format!(
-            "cannot copy skel '{}' to '{}': {e}",
-            skel_path.display(),
+    // The mkdir, the umask handling and the O_NOFOLLOW chown live in
+    // shadow_core::home because newusers(8) has to do exactly the same thing;
+    // a second copy would be a second chance to get the ownership handover
+    // wrong, silently.
+    let outcome = shadow_core::home::create(home_path, skel_path, uid, gid, mode)
+        .map_err(|e| UseraddError::CannotCreateHome(e.to_string()))?;
+    if outcome == shadow_core::home::Outcome::AlreadyExisted {
+        uucore::show_warning!(
+            "home directory '{}' already exists -- not copying from skel directory",
             home_path.display()
-        ))
-    })?;
-
+        );
+    }
     Ok(())
 }
 

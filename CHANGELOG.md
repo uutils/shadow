@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `newusers`, the eighteenth tool: it creates or updates accounts in batch
+  from stdin, writing the passwd record, the hashed shadow record, a group and
+  the home directory for each line. Every line is parsed, every group resolved
+  and every password hashed before anything is written, so a batch with one bad
+  line leaves the system exactly as it was rather than half provisioned. An
+  empty password field is refused before anything is written -- GNU hands it to
+  PAM, which refuses it after creating the account -- and a `pw_gid` naming a
+  group that does not exist is refused rather than silently leaving the account
+  pointing at a GID that is not there
+
 - `chgpasswd`, the seventeenth tool: it sets group passwords in batch from
   stdin, the counterpart of `chpasswd` for groups. Every line is resolved and
   hashed before any file is written, so a batch naming one group that does not
@@ -27,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which is what lets the command's own exit status reach the caller unaltered
 
 ### Changed
+
+- Home directory creation moved to `shadow_core::home`, shared by `useradd`
+  and `newusers`. The care it takes -- forcing the umask so the mode is exact,
+  and handing over ownership through a descriptor opened `O_NOFOLLOW` rather
+  than by path -- is exactly the kind of thing a second copy gets wrong
+  silently
 
 - `make check` also runs the suite as an unprivileged user, through the new
   `make test-unprivileged`. Every container in `docker-compose.yml` runs as
