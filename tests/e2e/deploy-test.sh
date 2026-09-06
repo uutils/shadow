@@ -824,6 +824,51 @@ test_root_option() {
     rm -rf "$tree"
 }
 
+# ── gpasswd as a group administrator ────────────────────────────────
+
+test_gpasswd_group_admin() {
+    section "gpasswd as a group administrator"
+
+    # The reason gpasswd is setuid: someone who is not root, but is named an
+    # administrator of one group, manages that group's membership. Nothing
+    # else in this suite exercises a non-root caller of gpasswd, and the
+    # multicall binary drops privilege for every applet not on its setuid
+    # list -- so leaving gpasswd off that list fails exactly here, and
+    # nowhere else.
+    userdel -r gp_admin 2>/dev/null || true
+    userdel -r gp_member 2>/dev/null || true
+    groupdel gp_team 2>/dev/null || true
+
+    assert_ok "useradd -m gp_admin" useradd -m gp_admin
+    assert_ok "useradd -m gp_member" useradd -m gp_member
+    assert_ok "groupadd gp_team" groupadd gp_team
+    assert_ok "gpasswd -A gp_admin gp_team" gpasswd -A gp_admin gp_team
+    assert_file_contains "gp_admin is recorded as an administrator" \
+        /etc/gshadow '^gp_team:[^:]*:gp_admin:'
+
+    assert_ok "an administrator adds a member without being root" \
+        su -s /bin/bash gp_admin -c "gpasswd -a gp_member gp_team"
+    assert_file_contains "the member is in /etc/group" \
+        /etc/group '^gp_team:.*:gp_member'
+    assert_file_contains "and in /etc/gshadow" \
+        /etc/gshadow '^gp_team:.*:gp_member'
+
+    assert_fail "a plain member may not change the membership" \
+        su -s /bin/bash gp_member -c "gpasswd -a gp_admin gp_team"
+    assert_fail "a plain member may not appoint administrators" \
+        su -s /bin/bash gp_member -c "gpasswd -A gp_member gp_team"
+    assert_fail "a plain member may not use --root" \
+        su -s /bin/bash gp_member -c "gpasswd --root / -a gp_member gp_team"
+
+    # The refusals must change nothing.
+    assert_file_contains "the administrator list is unchanged" \
+        /etc/gshadow '^gp_team:[^:]*:gp_admin:'
+
+    groupdel gp_team 2>/dev/null || true
+    userdel -r gp_admin 2>/dev/null || true
+    userdel -r gp_member 2>/dev/null || true
+}
+
 # ── nscd cache invalidation ────────────────────────────────────────
 
 test_nscd() {
@@ -933,6 +978,7 @@ main() {
     test_individual_tools
     test_pam_auth
     test_self_service
+    test_gpasswd_group_admin
     test_aging_and_input
     test_audit_logging
     test_root_option
