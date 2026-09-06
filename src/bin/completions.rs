@@ -37,6 +37,8 @@ fn get_tool_app(name: &str) -> Option<Command> {
         "groupdel" => Some(groupdel::uu_app()),
         #[cfg(feature = "groupmod")]
         "groupmod" => Some(groupmod::uu_app()),
+        #[cfg(feature = "gpasswd")]
+        "gpasswd" => Some(gpasswd::uu_app()),
         #[cfg(feature = "grpck")]
         "grpck" => Some(grpck::uu_app()),
         #[cfg(feature = "newgrp")]
@@ -72,6 +74,8 @@ fn all_tool_names() -> Vec<&'static str> {
     names.push("groupdel");
     #[cfg(feature = "groupmod")]
     names.push("groupmod");
+    #[cfg(feature = "gpasswd")]
+    names.push("gpasswd");
     #[cfg(feature = "grpck")]
     names.push("grpck");
     #[cfg(feature = "newgrp")]
