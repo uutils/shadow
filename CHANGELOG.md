@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-06
+
 ### Added
 
 - `gpasswd`, the fifteenth tool: it administers `/etc/group` and
@@ -14,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   members and set the group password without being root, which is why the tool
   is installed setuid; the superuser may additionally set the administrator and
   member lists with `-A` and `-M`. Contributed by @jlesage (#282)
+
+### Changed
+
+- `docs/PLATFORM-SUPPORT.md` accounts for `gpasswd` in the three static-musl
+  gaps: like `newgrp` it authenticates against the group password through
+  crypt(3) rather than PAM, so it keeps working for a group administrator
+  there; it resolves the caller through `getpwuid_r`, so it does not see
+  directory users; and it can neither verify nor set a yescrypt group password
 
 ## [0.3.1] - 2026-09-05
 

@@ -96,11 +96,11 @@ layout matching GNU shadow-utils. Only `passwd`, `chfn`, `chsh`, `newgrp`,
 sudo make install PREFIX=/usr/local
 ```
 
-Alternative: single multicall binary with symlinks. Smaller footprint (~14×
+Alternative: single multicall binary with symlinks. Smaller footprint (~15×
 disk savings). The binary is installed setuid-root so that `passwd`, `chfn`,
-`chsh` and `newgrp` can serve unprivileged callers; every other applet drops
-back to the caller's uid before it runs, so the privilege model is the same
-as the per-tool layout. Intended for container/embedded use cases.
+`chsh`, `newgrp` and `gpasswd` can serve unprivileged callers; every other
+applet drops back to the caller's uid before it runs, so the privilege model
+is the same as the per-tool layout. Intended for container/embedded use cases.
 
 ```shell
 sudo make install-multicall PREFIX=/usr/local
