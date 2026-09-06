@@ -86,9 +86,10 @@ Effect, and this is the heaviest of the three gaps:
   than apply an unverified one, so without PAM they refuse every non-root
   invocation outright.
 
-Unaffected: `passwd -S/-l/-u/-d/-e/-n/-x/-w/-i`, `newgrp` (which authenticates
-against the group password through crypt(3), not PAM), and the other eleven
-tools, which are root-only anyway and reach `/etc/shadow` directly.
+Unaffected: `passwd -S/-l/-u/-d/-e/-n/-x/-w/-i`, and `newgrp` and `gpasswd`,
+which authenticate against the group password through crypt(3) rather than
+PAM -- so a group administrator can still use them. The other ten tools are
+root-only anyway and reach the account files directly.
 
 ### 2. No NSS
 
@@ -97,7 +98,7 @@ tools, which are root-only anyway and reach `/etc/shadow` directly.
 
 glibc answers such lookups through its NSS module system, so it sees users from
 LDAP, SSSD, Active Directory or systemd-userdb. musl has no NSS module system
-and reads `/etc/passwd` directly. On a directory-joined host those five tools
+and reads `/etc/passwd` directly. On a directory-joined host those six tools
 do not see network users at all.
 
 ### 3. No yescrypt (`$y$`)
@@ -108,7 +109,8 @@ yescrypt.
 
 This is not a marginal format: **Debian 12+ and Ubuntu 24.04 use yescrypt as
 the default password hash.** A musl build can neither verify nor produce `$y$`
-hashes, so `newgrp` fails against a `$y$` group password and `chpasswd -c
+hashes, so `newgrp` and `gpasswd` fail against a `$y$` group password,
+`gpasswd` cannot set one on a host configured for yescrypt, and `chpasswd -c
 YESCRYPT` is rejected. The prefix guard in `shadow_core::crypt` reports the
 unsupported method explicitly; it never falls back to a weaker hash silently.
 The default method is SHA-512, which is unaffected.
