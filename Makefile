@@ -20,7 +20,7 @@ USER_TOOLS = $(SETUID_TOOLS) chage
 
 ALL_TOOLS = $(SETUID_TOOLS) $(ROOT_TOOLS) chage
 
-.PHONY: all build build-multicall dist-musl check test test-gnu-compat install install-multicall uninstall clean
+.PHONY: all build build-multicall build-arm64 dist-musl check test test-gnu-compat test-arm64 install install-multicall uninstall clean
 
 all: build
 
@@ -77,6 +77,30 @@ check:
 test:
 	cargo test --workspace
 	cargo test --workspace --features pam
+
+ARM64_TARGET = aarch64-unknown-linux-gnu
+ARM64_BIN = target/$(ARM64_TARGET)/release/shadow-rs
+
+# Cross-build for arm64 and check the result actually runs.
+#
+# The release publishes an arm64 archive; nothing used to execute one, so a
+# broken arm64 binary would reach a user before anyone ran it. The toolchain is
+# installed here rather than baked into the image: it is 32 packages, and every
+# other job would carry them for a check that is run occasionally.
+build-arm64:
+	dpkg --add-architecture arm64
+	apt-get update
+	apt-get install -y --no-install-recommends \
+		gcc-aarch64-linux-gnu libpam0g-dev:arm64 libcrypt-dev:arm64 qemu-user-static
+	rustup target add $(ARM64_TARGET)
+	CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+		cargo build --release --locked --target $(ARM64_TARGET) --bin shadow-rs --features pam
+
+# Runs under qemu user-mode emulation, which is enough to catch what actually
+# differs across architectures: integer widths, struct layouts, and the crypt
+# and PAM FFI boundaries.
+test-arm64: build-arm64
+	ARM64_BIN=$(ARM64_BIN) bash tests/arm64-smoke.sh
 
 # Compare our output and exit codes against the GNU tools installed alongside.
 # Needs root and the GNU shadow package, so it belongs in a container.

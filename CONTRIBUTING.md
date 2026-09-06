@@ -74,6 +74,7 @@ container; do not build on the host.
 ```shell
 docker compose run --rm debian make check           # everything CI gates on
 docker compose run --rm debian make test-gnu-compat # compare against GNU
+docker compose run --rm debian make test-arm64      # cross-build arm64 and run it
 
 docker compose run --rm debian cargo build          # build
 docker compose run --rm debian cargo test --workspace  # test on Debian
