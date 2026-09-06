@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `gpasswd`, the fifteenth tool: it administers `/etc/group` and
+  `/etc/gshadow`. A group administrator named in gshadow may add and remove
+  members and set the group password without being root, which is why the tool
+  is installed setuid; the superuser may additionally set the administrator and
+  member lists with `-A` and `-M`. Contributed by @jlesage (#282)
+
 ## [0.3.1] - 2026-09-05
 
 ### Fixed
