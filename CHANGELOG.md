@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `make check` also runs the suite as an unprivileged user, through the new
+  `make test-unprivileged`. Every container in `docker-compose.yml` runs as
+  root, so a test that silently assumed root passed locally and failed only in
+  CI -- and a test asserting a failure exit code passed there for the wrong
+  reason, since "permission denied" is a failure too
+
 - `newgrp` no longer refuses a passwordless group before prompting. It asked
   for a password only when the group had one, so whether a prompt appeared told
   any caller which groups have passwords set — a list of the ones worth

@@ -14,7 +14,7 @@
 use std::io::Write as _;
 use std::process::Stdio;
 
-use crate::common::{Output, tool};
+use crate::common::{Output, skip_unless_root, tool};
 
 /// A prefix tree with a group file and, optionally, a gshadow file.
 ///
@@ -86,6 +86,9 @@ const GSHADOW: &str = "staff:!::alice\nwheel:!::\n";
 /// the hash into a world-readable `/etc/group` instead would publish it.
 #[test]
 fn test_the_hash_goes_to_gshadow() {
+    if skip_unless_root() {
+        return;
+    }
     let dir = prefix(GROUP, Some(GSHADOW), Some("SHA512"));
     chgpasswd(&dir, &[], "staff:secret\n").assert_code(0);
 
@@ -106,6 +109,9 @@ fn test_the_hash_goes_to_gshadow() {
 /// group passwords.
 #[test]
 fn test_without_gshadow_the_hash_goes_to_group() {
+    if skip_unless_root() {
+        return;
+    }
     let dir = prefix(GROUP, None, Some("SHA512"));
     chgpasswd(&dir, &[], "staff:secret\n").assert_code(0);
 
@@ -122,6 +128,9 @@ fn test_without_gshadow_the_hash_goes_to_group() {
 /// Setting a password must not disturb who administers or belongs to a group.
 #[test]
 fn test_membership_and_admins_survive() {
+    if skip_unless_root() {
+        return;
+    }
     let dir = prefix(GROUP, Some("staff:!:bob:alice\n"), Some("SHA512"));
     chgpasswd(&dir, &[], "staff:secret\n").assert_code(0);
 
@@ -142,6 +151,9 @@ fn test_membership_and_admins_survive() {
 /// `-e` stores the field verbatim; nothing is hashed a second time.
 #[test]
 fn test_encrypted_is_stored_verbatim() {
+    if skip_unless_root() {
+        return;
+    }
     let dir = prefix(GROUP, Some(GSHADOW), None);
     chgpasswd(&dir, &["-e"], "staff:$6$salt$alreadyhashed\n").assert_code(0);
     assert_eq!(field(&dir, "gshadow", "staff"), "$6$salt$alreadyhashed");
@@ -150,6 +162,9 @@ fn test_encrypted_is_stored_verbatim() {
 /// `-e` may write an empty field: that is how a group password is cleared.
 #[test]
 fn test_encrypted_accepts_an_empty_field() {
+    if skip_unless_root() {
+        return;
+    }
     let dir = prefix(GROUP, Some(GSHADOW), None);
     chgpasswd(&dir, &["-e"], "staff:\n").assert_code(0);
     assert_eq!(field(&dir, "gshadow", "staff"), "");
@@ -158,6 +173,9 @@ fn test_encrypted_accepts_an_empty_field() {
 /// An empty plaintext password would hash to something a bare Enter matches.
 #[test]
 fn test_empty_plaintext_is_refused() {
+    if skip_unless_root() {
+        return;
+    }
     let dir = prefix(GROUP, Some(GSHADOW), Some("SHA512"));
     chgpasswd(&dir, &[], "staff:\n")
         .assert_code(1)
@@ -168,6 +186,9 @@ fn test_empty_plaintext_is_refused() {
 /// The default scheme is the system's, from login.defs -- not a hard-coded one.
 #[test]
 fn test_default_scheme_comes_from_login_defs() {
+    if skip_unless_root() {
+        return;
+    }
     for (method, prefix_str) in [("SHA512", "$6$"), ("SHA256", "$5$")] {
         let dir = prefix(GROUP, Some(GSHADOW), Some(method));
         chgpasswd(&dir, &[], "staff:secret\n").assert_code(0);
@@ -181,6 +202,9 @@ fn test_default_scheme_comes_from_login_defs() {
 /// `-c` overrides the configured default.
 #[test]
 fn test_explicit_scheme_overrides() {
+    if skip_unless_root() {
+        return;
+    }
     let dir = prefix(GROUP, Some(GSHADOW), Some("SHA512"));
     chgpasswd(&dir, &["-c", "SHA256"], "staff:secret\n").assert_code(0);
     assert!(field(&dir, "gshadow", "staff").starts_with("$5$"));
@@ -191,6 +215,9 @@ fn test_explicit_scheme_overrides() {
 /// the refusal must leave the file alone.
 #[test]
 fn test_none_is_refused() {
+    if skip_unless_root() {
+        return;
+    }
     let dir = prefix(GROUP, Some(GSHADOW), Some("SHA512"));
     chgpasswd(&dir, &["-c", "NONE"], "staff:secret\n")
         .assert_code(1)
@@ -206,6 +233,9 @@ fn test_none_is_refused() {
 /// untouched, including for the groups named on the good lines before it.
 #[test]
 fn test_an_unknown_group_changes_nothing() {
+    if skip_unless_root() {
+        return;
+    }
     let dir = prefix(GROUP, Some(GSHADOW), Some("SHA512"));
     let before = read_file(&dir, "gshadow");
 
@@ -227,6 +257,9 @@ fn test_an_unknown_group_changes_nothing() {
 /// The line number in the message is what makes a long batch debuggable.
 #[test]
 fn test_the_error_names_the_line() {
+    if skip_unless_root() {
+        return;
+    }
     let dir = prefix(GROUP, Some(GSHADOW), Some("SHA512"));
     chgpasswd(&dir, &[], "staff:secret\nnosuchgroup:secret\n")
         .assert_code(1)
@@ -236,6 +269,9 @@ fn test_the_error_names_the_line() {
 /// Several groups in one batch all land.
 #[test]
 fn test_a_whole_batch_applies() {
+    if skip_unless_root() {
+        return;
+    }
     let dir = prefix(GROUP, Some(GSHADOW), Some("SHA512"));
     chgpasswd(&dir, &[], "staff:one\nwheel:two\n").assert_code(0);
     assert!(field(&dir, "gshadow", "staff").starts_with("$6$"));
@@ -255,6 +291,9 @@ fn test_a_whole_batch_applies() {
 /// chgpasswd from a possibly-empty list depends on.
 #[test]
 fn test_empty_input_succeeds() {
+    if skip_unless_root() {
+        return;
+    }
     let dir = prefix(GROUP, Some(GSHADOW), Some("SHA512"));
     let before = read_file(&dir, "gshadow");
     chgpasswd(&dir, &[], "").assert_code(0);
@@ -265,6 +304,9 @@ fn test_empty_input_succeeds() {
 /// blank line in the middle of a batch is a mistake worth reporting.
 #[test]
 fn test_a_line_without_a_password_is_refused() {
+    if skip_unless_root() {
+        return;
+    }
     let dir = prefix(GROUP, Some(GSHADOW), Some("SHA512"));
     for input in ["staff\n", "\n", "staff:secret\n\n"] {
         chgpasswd(&dir, &[], input)
@@ -280,6 +322,9 @@ fn test_a_line_without_a_password_is_refused() {
 /// tool refuses it too, and likewise leaves the file untouched.
 #[test]
 fn test_a_colon_in_the_password_is_refused_without_corrupting_the_file() {
+    if skip_unless_root() {
+        return;
+    }
     let dir = prefix(GROUP, Some(GSHADOW), None);
     let before = read_file(&dir, "gshadow");
     chgpasswd(&dir, &["-e"], "staff:$6$a:b:c\n").assert_code(1);
@@ -312,6 +357,9 @@ fn test_unknown_scheme_is_a_usage_error() {
 /// MD5 is accepted by the GNU tool and refused here, deliberately.
 #[test]
 fn test_md5_is_refused() {
+    if skip_unless_root() {
+        return;
+    }
     let dir = prefix(GROUP, Some(GSHADOW), None);
     chgpasswd(&dir, &["-m"], "staff:secret\n")
         .assert_code(1)
