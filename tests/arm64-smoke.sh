@@ -64,10 +64,10 @@ version=$("${QEMU[@]}" "$BIN" --version 2>&1)
 if [ -n "$version" ]; then ok "runs: $version"; else bad "would not run"; exit 1; fi
 
 applets=$("${QEMU[@]}" "$BIN" --list 2>/dev/null | tail -n +2 | wc -l)
-if [ "$applets" -ge 15 ]; then
+if [ "$applets" -ge 16 ]; then
     ok "carries $applets applets"
 else
-    bad "expected at least 15 applets, found $applets"
+    bad "expected at least 16 applets, found $applets"
 fi
 
 # ── A prefix tree, so nothing here touches the container's own accounts ──
@@ -117,6 +117,12 @@ if grep -q '^ada:' "$T/etc/passwd"; then
 else
     ok "the account is gone from passwd"
 fi
+
+# sg cannot be driven against a prefix tree -- it switches the running
+# process's groups and execs -- so this only checks that the applet links and
+# starts under emulation. It is the only caller of getgroups/setgroups, and a
+# wrong struct width there would show up as a failure to run at all.
+check "sg starts" "${QEMU[@]}" "$BIN" sg --help
 
 # pwck exits 2 for warnings, which a synthetic tree produces (no real shells),
 # so anything up to 2 means it read and checked the files rather than failing.

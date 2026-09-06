@@ -47,6 +47,8 @@ fn get_tool_app(name: &str) -> Option<Command> {
         "passwd" => Some(passwd::uu_app()),
         #[cfg(feature = "pwck")]
         "pwck" => Some(pwck::uu_app()),
+        #[cfg(feature = "sg")]
+        "sg" => Some(sg::uu_app()),
         #[cfg(feature = "useradd")]
         "useradd" => Some(useradd::uu_app()),
         #[cfg(feature = "userdel")]
@@ -84,6 +86,8 @@ fn all_tool_names() -> Vec<&'static str> {
     names.push("passwd");
     #[cfg(feature = "pwck")]
     names.push("pwck");
+    #[cfg(feature = "sg")]
+    names.push("sg");
     #[cfg(feature = "useradd")]
     names.push("useradd");
     #[cfg(feature = "userdel")]

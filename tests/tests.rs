@@ -46,6 +46,8 @@ mod test_newgrp;
 mod test_passwd;
 #[path = "by-util/test_pwck.rs"]
 mod test_pwck;
+#[path = "by-util/test_sg.rs"]
+mod test_sg;
 #[path = "by-util/test_useradd.rs"]
 mod test_useradd;
 #[path = "by-util/test_userdel.rs"]

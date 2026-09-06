@@ -100,8 +100,8 @@ hash_password() {
 
 # ── TOOLS list ──────────────────────────────────────────────────────
 
-TOOLS="passwd pwck useradd userdel usermod chpasswd chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp"
-SETUID_TOOLS="passwd chfn chsh newgrp gpasswd"
+TOOLS="passwd pwck useradd userdel usermod chpasswd chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp sg"
+SETUID_TOOLS="passwd chfn chsh newgrp gpasswd sg"
 
 # The tools an unprivileged user runs are installed in bin, the rest in sbin,
 # which is the split the GNU package uses: sbin is not on a normal user's
@@ -869,6 +869,65 @@ test_gpasswd_group_admin() {
     userdel -r gp_member 2>/dev/null || true
 }
 
+# ── sg: running one command in another group ───────────────────────
+
+test_sg_group_switch() {
+    section "sg — running one command in another group"
+
+    # sg is setuid for the same reason newgrp is: a caller who is not a member
+    # of the target group has to be checked against the group password in
+    # /etc/gshadow, which is root-only. Nothing else in this suite runs sg as
+    # an unprivileged user, so dropping sg from the setuid list fails here and
+    # nowhere else.
+    userdel -r sg_member 2>/dev/null || true
+    userdel -r sg_outsider 2>/dev/null || true
+    groupdel sg_team 2>/dev/null || true
+    groupdel sg_locked 2>/dev/null || true
+
+    assert_ok "useradd -m sg_member" useradd -m sg_member
+    assert_ok "useradd -m sg_outsider" useradd -m sg_outsider
+    assert_ok "groupadd sg_team" groupadd sg_team
+    assert_ok "groupadd sg_locked" groupadd sg_locked
+    assert_ok "gpasswd -a sg_member sg_team" gpasswd -a sg_member sg_team
+
+    assert_contains "a member runs a command in the group" "sg_team" \
+        su -s /bin/bash sg_member -c "sg sg_team -c 'id -gn'"
+    assert_contains "-c is optional" "sg_team" \
+        su -s /bin/bash sg_member -c "sg sg_team 'id -gn'"
+
+    # sg changes the group, not the user: anything else would make it su.
+    assert_contains "the caller keeps their own identity" "sg_member" \
+        su -s /bin/bash sg_member -c "sg sg_team -c 'id -un'"
+
+    # The group the caller started in must still be reachable afterwards, or
+    # the switch would cost them access to their own files.
+    assert_contains "the original primary group survives the switch" "sg_member" \
+        su -s /bin/bash sg_member -c "sg sg_team -c 'id -Gn'"
+
+    # sg execs the command, so its status is the caller's status.
+    assert_ok "the command's exit status reaches the caller" \
+        bash -c "su -s /bin/bash sg_member -c \"sg sg_team -c 'exit 7'\"; test \$? -eq 7"
+
+    # The setuid path: a non-member authenticating against the group password.
+    printf 'teampw\nteampw\n' | gpasswd sg_team >/dev/null 2>&1
+    assert_contains "a non-member with the group password gets in" "sg_team" \
+        bash -c "echo teampw | su -s /bin/bash sg_outsider -c \"sg sg_team -c 'id -gn'\""
+    assert_fail "a wrong group password is refused" \
+        bash -c "echo wrong | su -s /bin/bash sg_outsider -c \"sg sg_team -c 'id -gn'\""
+
+    # A group with no password admits nobody who is not already a member.
+    assert_fail "a non-member is refused a group with no password" \
+        bash -c "echo anything | su -s /bin/bash sg_outsider -c \"sg sg_locked -c 'id -gn'\""
+
+    assert_fail "an unknown group is refused" \
+        su -s /bin/bash sg_member -c "sg no_such_group_at_all -c true"
+
+    groupdel sg_team 2>/dev/null || true
+    groupdel sg_locked 2>/dev/null || true
+    userdel -r sg_member 2>/dev/null || true
+    userdel -r sg_outsider 2>/dev/null || true
+}
+
 # ── nscd cache invalidation ────────────────────────────────────────
 
 test_nscd() {
@@ -979,6 +1038,7 @@ main() {
     test_pam_auth
     test_self_service
     test_gpasswd_group_admin
+    test_sg_group_switch
     test_aging_and_input
     test_audit_logging
     test_root_option

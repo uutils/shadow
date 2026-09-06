@@ -20,8 +20,11 @@ With no *group*, the shell is started with the user's own primary group from
 The shell comes from the user's /etc/passwd record, never from **$SHELL**:
 **newgrp** is installed setuid-root, and an environment variable is the
 caller's to choose. Privileges are dropped to the caller's own user before the
-shell is started, and the supplementary group list is rebuilt from scratch so
-no membership leaks across the change.
+shell is started.
+
+The supplementary group list is rebuilt from the caller's own memberships, with
+the group they started in added to it. Keeping that group is what stops the
+switch from costing them access to their own files.
 
 **newgrp** replaces the current shell rather than nesting one inside it. Leave
 the new group by exiting that shell.
@@ -50,8 +53,13 @@ A user may enter a group without a password if it is their primary group in
 
 Otherwise the group's password from /etc/gshadow is required, and the user is
 prompted for it. A group whose password field is empty, `!`, `!!` or `*` has no
-usable password, so a non-member is refused outright: those values mean "no
-password access", not "no password needed".
+usable password, and a non-member is refused: those values mean "no password
+access", not "no password needed".
+
+The prompt appears either way. Refusing such a group without asking would be
+quicker, but the presence or absence of a prompt would then tell any caller
+which groups have passwords set, and that is a list of the ones worth
+attacking.
 
 Membership is read from /etc/group and the password from /etc/gshadow. The
 member list in /etc/gshadow does not by itself grant access, matching the

@@ -800,9 +800,7 @@ dependencies = [
  "clap",
  "rustix",
  "shadow-core",
- "tempfile",
  "uucore",
- "zeroize",
 ]
 
 [[package]]
@@ -827,6 +825,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_sg"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "shadow-core",
+ "uucore",
+]
+
+[[package]]
 name = "uu_shadow"
 version = "0.4.0"
 dependencies = [
@@ -847,6 +854,7 @@ dependencies = [
  "uu_newgrp",
  "uu_passwd",
  "uu_pwck",
+ "uu_sg",
  "uu_useradd",
  "uu_userdel",
  "uu_usermod",

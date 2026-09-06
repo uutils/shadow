@@ -15,9 +15,7 @@ use std::path::Path;
 
 use clap::{Arg, Command};
 
-use shadow_core::crypt;
-use shadow_core::group;
-use shadow_core::gshadow;
+use shadow_core::group_switch::{self, Session};
 use shadow_core::sysroot::SysRoot;
 
 use uucore::error::{UError, UResult};
@@ -92,85 +90,10 @@ impl UError for NewgrpError {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Security hardening
-// ---------------------------------------------------------------------------
-
-// Hardening functions are now centralized in shadow_core::hardening.
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Get the current user's primary GID from the real UID.
-fn get_current_gid() -> Result<u32, NewgrpError> {
-    let uid = rustix::process::getuid().as_raw();
-    match shadow_core::hardening::lookup_passwd_entry_by_uid(uid) {
-        Ok(entry) => Ok(entry.gid),
-        Err(e) => Err(NewgrpError::Error(format!(
-            "cannot determine current user for uid {uid}: {e}"
-        ))),
+impl From<shadow_core::error::ShadowError> for NewgrpError {
+    fn from(e: shadow_core::error::ShadowError) -> Self {
+        Self::Error(e.to_string())
     }
-}
-
-/// Determine the shell to exec from the user's passwd entry.
-///
-/// Reads the shell field from `/etc/passwd` for the given UID rather
-/// than trusting `$SHELL`, which is attacker-controlled in a
-/// setuid-root context.
-fn get_shell(uid: u32) -> String {
-    match shadow_core::hardening::lookup_passwd_entry_by_uid(uid) {
-        Ok(entry) => {
-            if entry.shell.is_empty() {
-                "/bin/sh".to_string()
-            } else {
-                entry.shell
-            }
-        }
-        _ => "/bin/sh".to_string(),
-    }
-}
-
-/// Check if the user is a member of the group (either as primary GID
-/// in /etc/passwd or in the group's member list in /etc/group).
-fn is_member(username: &str, user_gid: u32, target_gid: u32, group_members: &[String]) -> bool {
-    if user_gid == target_gid {
-        return true;
-    }
-    group_members.iter().any(|m| m == username)
-}
-
-/// Check if the group has a usable password in /etc/gshadow.
-/// A password of `!`, `*`, `!!`, or empty means no password access.
-fn group_has_password(gshadow_path: &Path, group_name: &str) -> Option<String> {
-    let entries = gshadow::read_gshadow_file(gshadow_path).ok()?;
-    let entry = entries.iter().find(|e| e.name == group_name)?;
-
-    if entry.passwd.is_empty() || entry.passwd == "!" || entry.passwd == "*" || entry.passwd == "!!"
-    {
-        return None;
-    }
-
-    Some(entry.passwd.clone())
-}
-
-/// Read the group password, with echo off and interrupts blocked.
-///
-/// The shared helper is what keeps Ctrl-C at this prompt from leaving the
-/// terminal with echo disabled, and it falls back to stderr/stdin where there
-/// is no controlling terminal.
-fn read_password(prompt: &str) -> Result<zeroize::Zeroizing<String>, NewgrpError> {
-    shadow_core::tty::read_password(prompt)
-        .map_err(|e| NewgrpError::Error(format!("cannot read the password: {e}")))
-}
-
-/// Verify a password against a crypt(3) hash.
-///
-/// Delegates to `shadow_core::crypt::verify_password` which wraps
-/// the POSIX `crypt(3)` function.
-fn verify_password(password: &str, hash: &str) -> Result<bool, NewgrpError> {
-    crypt::verify_password(password, hash)
-        .map_err(|e| NewgrpError::Error(format!("password verification failed: {e}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -190,11 +113,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         return Ok(());
     };
 
-    let root = SysRoot::default();
-    let username = shadow_core::hardening::current_username()
-        .map_err(|e| NewgrpError::Error(e.to_string()))?;
-    let user_gid = get_current_gid()?;
-
     let operands: Vec<String> = matches
         .get_many::<String>(options::OPERANDS)
         .map(|v| v.cloned().collect())
@@ -204,74 +122,12 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         group: group_name,
     } = parse_operands(&operands)?;
 
-    // Resolve the target GID.
-    let target_gid = if let Some(gname) = group_name {
-        let gname = &gname.to_string();
-        // Look up the group in /etc/group.
-        let group_path = root.group_path();
-        let groups = group::read_group_file(&group_path).map_err(|e| {
-            NewgrpError::Error(format!("cannot read {}: {e}", group_path.display()))
-        })?;
+    let session =
+        group_switch::enter(&SysRoot::default(), group_name).map_err(NewgrpError::from)?;
 
-        let Some(group_entry) = groups.iter().find(|g| g.name == *gname) else {
-            return Err(NewgrpError::Error(format!("group '{gname}' does not exist")).into());
-        };
-
-        let gid = group_entry.gid;
-
-        // Check membership: if the user is not a member, they need the
-        // group password. Root always gets in.
-        if !shadow_core::hardening::caller_is_root()
-            && !is_member(&username, user_gid, gid, &group_entry.members)
-        {
-            // Check if the group has a password in /etc/gshadow.
-            let gshadow_path = root.gshadow_path();
-            match group_has_password(&gshadow_path, gname) {
-                Some(hash) => {
-                    let password = read_password("Password: ")?;
-                    if !verify_password(&password, &hash)? {
-                        return Err(NewgrpError::Error("incorrect password".into()).into());
-                    }
-                }
-                None => {
-                    return Err(NewgrpError::Error(format!(
-                        "permission denied for group '{gname}'"
-                    ))
-                    .into());
-                }
-            }
-        }
-
-        gid
-    } else {
-        // No group specified — change to user's primary group.
-        user_gid
-    };
-
-    // Set the new GID.
-    shadow_core::process::setgid(target_gid)
-        .map_err(|e| NewgrpError::Error(format!("cannot set group ID to {target_gid}: {e}")))?;
-
-    // Reset supplementary groups. POSIX requires newgrp to reinitialize
-    // the group list. Without this, the new shell inherits stale groups.
-    let username_cstr = std::ffi::CString::new(username.as_str())
-        .map_err(|_| NewgrpError::Error("invalid username".into()))?;
-    shadow_core::process::initgroups(&username_cstr, target_gid)
-        .map_err(|e| NewgrpError::Error(format!("cannot initialize groups: {e}")))?;
-
-    // Drop back to the real UID (in case we are setuid-root).
-    let real_uid = rustix::process::getuid().as_raw();
-    if rustix::process::geteuid().as_raw() != real_uid {
-        shadow_core::process::setuid(real_uid)
-            .map_err(|e| NewgrpError::Error(format!("cannot drop privileges: {e}")))?;
-    }
-
-    // Exec the user's shell (from passwd entry, not $SHELL).
-    let shell = get_shell(real_uid);
-    let shell_cstr = CString::new(shell.as_str())
+    let shell_cstr = CString::new(session.shell.as_str())
         .map_err(|_| NewgrpError::Error("invalid shell path".into()))?;
-
-    let basename = Path::new(&shell)
+    let basename = Path::new(&session.shell)
         .file_name()
         .map_or_else(|| "sh".to_string(), |n| n.to_string_lossy().to_string());
 
@@ -283,7 +139,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         let argv0 = CString::new(basename.as_str())
             .map_err(|_| NewgrpError::Error("invalid shell name".into()))?;
         let err = shadow_core::process::execv(&shell_cstr, &[&argv0]);
-        return Err(NewgrpError::Error(format!("cannot exec {shell}: {err}")).into());
+        return Err(NewgrpError::Error(format!("cannot exec {}: {err}", session.shell)).into());
     }
 
     // newgrp(1) with `-`: "the user's environment will be reinitialized as
@@ -293,15 +149,12 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let argv0 = CString::new(format!("-{basename}"))
         .map_err(|_| NewgrpError::Error("invalid shell name".into()))?;
 
-    let home = shadow_core::hardening::lookup_passwd_entry_by_uid(real_uid)
-        .map(|e| e.home)
-        .unwrap_or_default();
-    if !home.is_empty() {
+    if !session.home.is_empty() {
         // A missing or unreadable home is not fatal; login(1) falls back to /.
-        let _ = rustix::process::chdir(Path::new(&home));
+        let _ = rustix::process::chdir(Path::new(&session.home));
     }
 
-    let env = login_environment(&username, &home, &shell);
+    let env = login_environment(&session);
     let env_cstrings: Vec<CString> = env
         .into_iter()
         .map(|kv| CString::new(kv).map_err(|_| NewgrpError::Error("invalid environment".into())))
@@ -309,7 +162,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let env_refs: Vec<&std::ffi::CStr> = env_cstrings.iter().map(CString::as_c_str).collect();
 
     let err = shadow_core::process::execve(&shell_cstr, &[&argv0], &env_refs);
-    Err(NewgrpError::Error(format!("cannot exec {shell}: {err}")).into())
+    Err(NewgrpError::Error(format!("cannot exec {}: {err}", session.shell)).into())
 }
 
 /// The environment a login shell is entitled to expect.
@@ -317,12 +170,17 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 /// Everything else the caller was carrying is dropped, which is the whole
 /// point of `newgrp -`. `TERM` and the locale variables are kept because a
 /// login session inherits them from the terminal, not from the profile.
-fn login_environment(user: &str, home: &str, shell: &str) -> Vec<String> {
+fn login_environment(session: &Session) -> Vec<String> {
+    let Session {
+        username,
+        shell,
+        home,
+    } = session;
     let mut env = vec![
         format!("HOME={home}"),
         format!("SHELL={shell}"),
-        format!("USER={user}"),
-        format!("LOGNAME={user}"),
+        format!("USER={username}"),
+        format!("LOGNAME={username}"),
         "PATH=/usr/local/bin:/usr/bin:/bin".to_string(),
     ];
     for (k, v) in std::env::vars() {
@@ -359,80 +217,6 @@ mod tests {
     #[test]
     fn test_app_builds() {
         uu_app().debug_assert();
-    }
-
-    // -----------------------------------------------------------------------
-    // Membership tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_is_member_by_primary_gid() {
-        assert!(is_member("alice", 1000, 1000, &[]));
-    }
-
-    #[test]
-    fn test_is_member_by_group_list() {
-        let members = vec!["alice".to_string(), "bob".to_string()];
-        assert!(is_member("alice", 1000, 27, &members));
-    }
-
-    #[test]
-    fn test_is_not_member() {
-        let members = vec!["bob".to_string()];
-        assert!(!is_member("alice", 1000, 27, &members));
-    }
-
-    // -----------------------------------------------------------------------
-    // Group password tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_group_has_password_locked() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("gshadow");
-        std::fs::write(&path, "testgroup:!::\n").expect("write");
-        assert!(group_has_password(&path, "testgroup").is_none());
-    }
-
-    #[test]
-    fn test_group_has_password_star() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("gshadow");
-        std::fs::write(&path, "testgroup:*::\n").expect("write");
-        assert!(group_has_password(&path, "testgroup").is_none());
-    }
-
-    #[test]
-    fn test_group_has_password_empty() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("gshadow");
-        std::fs::write(&path, "testgroup:::\n").expect("write");
-        assert!(group_has_password(&path, "testgroup").is_none());
-    }
-
-    #[test]
-    fn test_group_has_password_with_hash() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("gshadow");
-        std::fs::write(&path, "testgroup:$6$saltsalt$hashhere::\n").expect("write");
-        let pw = group_has_password(&path, "testgroup");
-        assert!(pw.is_some());
-        assert_eq!(pw.expect("should have password"), "$6$saltsalt$hashhere");
-    }
-
-    #[test]
-    fn test_group_has_password_nonexistent_group() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("gshadow");
-        std::fs::write(&path, "other:!::\n").expect("write");
-        assert!(group_has_password(&path, "testgroup").is_none());
-    }
-
-    #[test]
-    fn test_group_has_password_missing_file() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("nonexistent");
-        assert!(group_has_password(&path, "testgroup").is_none());
     }
 
     // -----------------------------------------------------------------------
@@ -514,7 +298,11 @@ mod tests {
     /// carrying.
     #[test]
     fn test_login_environment_is_a_login_session() {
-        let env = login_environment("alice", "/home/alice", "/bin/bash");
+        let env = login_environment(&Session {
+            username: "alice".to_string(),
+            shell: "/bin/bash".to_string(),
+            home: "/home/alice".to_string(),
+        });
         for expected in [
             "HOME=/home/alice",
             "SHELL=/bin/bash",
@@ -531,17 +319,5 @@ mod tests {
             !env.iter().any(|e| e.starts_with("LD_PRELOAD=")),
             "the caller's environment must not be carried over"
         );
-    }
-
-    // -----------------------------------------------------------------------
-    // get_shell tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_get_shell_default() {
-        // This test is environment-dependent but should at least not panic.
-        let uid = rustix::process::getuid().as_raw();
-        let shell = get_shell(uid);
-        assert!(!shell.is_empty());
     }
 }
