@@ -8,7 +8,8 @@ SETUID_TOOLS = passwd chfn chsh newgrp gpasswd sg
 
 # Root-only tools (no setuid; fail at getuid() check for non-root callers).
 ROOT_TOOLS = useradd userdel usermod chpasswd chgpasswd newusers \
-             groupadd groupdel groupmod pwck grpck vipw vigr
+             groupadd groupdel groupmod pwck grpck vipw vigr \
+             pwconv pwunconv grpconv grpunconv
 
 # Tools an ordinary user runs, and which therefore go in bin rather than sbin:
 # sbin is not on a normal user's PATH, so `passwd` there is `command not
@@ -133,7 +134,7 @@ test-unprivileged:
 test-gnu-compat:
 	bash tests/gnu-compat.sh
 
-# Default install: 20 standalone per-tool binaries, with the setuid layout and
+# Default install: 24 standalone per-tool binaries, with the setuid layout and
 # the bin/sbin split GNU shadow-utils uses. Only $(SETUID_TOOLS) are setuid.
 install: build
 	@for tool in $(SETUID_TOOLS); do \

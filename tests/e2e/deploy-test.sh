@@ -100,7 +100,7 @@ hash_password() {
 
 # ── TOOLS list ──────────────────────────────────────────────────────
 
-TOOLS="passwd pwck useradd userdel usermod chpasswd chgpasswd newusers chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp sg vipw vigr"
+TOOLS="passwd pwck useradd userdel usermod chpasswd chgpasswd newusers chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp sg vipw vigr pwconv pwunconv grpconv grpunconv"
 SETUID_TOOLS="passwd chfn chsh newgrp gpasswd sg"
 
 # The tools an unprivileged user runs are installed in bin, the rest in sbin,
@@ -869,6 +869,60 @@ test_gpasswd_group_admin() {
     userdel -r gp_member 2>/dev/null || true
 }
 
+# ── pwconv family: shadow round trips ──────────────────────────────
+
+test_pwconv_family() {
+    section "pwconv / pwunconv / grpconv / grpunconv — shadow round trips"
+
+    userdel -r pc_alice 2>/dev/null || true
+    userdel -r pc_outsider 2>/dev/null || true
+    groupdel pc_team 2>/dev/null || true
+    assert_ok "useradd -m pc_alice" useradd -m pc_alice
+    assert_ok "useradd -m pc_outsider" useradd -m pc_outsider
+    assert_ok "groupadd pc_team" groupadd pc_team
+    assert_ok "set a group password" bash -c "printf 'pc_team:teampw\n' | chgpasswd"
+    assert_ok "set a user password" bash -c "printf 'pc_alice:userpw\n' | chpasswd"
+
+    grep '^pc_alice:' /etc/shadow | cut -d: -f2 > /tmp/pc_hash.before
+    cp -p /etc/shadow /tmp/pc_shadow.before
+
+    assert_ok "pwunconv" pwunconv
+    assert_ok "the shadow file is gone" bash -c "! test -e /etc/shadow"
+    assert_ok "the hash moved into /etc/passwd" \
+        bash -c "grep '^pc_alice:' /etc/passwd | cut -d: -f2 | diff -q - /tmp/pc_hash.before"
+
+    assert_ok "pwconv" pwconv
+    assert_file_contains "/etc/passwd holds x again" /etc/passwd '^pc_alice:x:'
+    assert_ok "the hash is back in /etc/shadow, byte for byte" \
+        bash -c "grep '^pc_alice:' /etc/shadow | cut -d: -f2 | diff -q - /tmp/pc_hash.before"
+    assert_ok "the recreated shadow file is 0640 root:shadow" \
+        bash -c "test \"\$(stat -c '%a %U %G' /etc/shadow)\" = '640 root shadow'"
+    # The cross-tool proof: passwd still reads the account's state, and the
+    # aging that pwconv set from login.defs is what chage reports.
+    assert_contains "passwd -S still sees a set password" " P " passwd -S pc_alice
+    assert_ok "pwconv on a consistent system changes nothing" \
+        bash -c "cp -p /etc/shadow /tmp/pc_s1 && pwconv && cmp -s /etc/shadow /tmp/pc_s1"
+
+    # And the group side, with sg as the witness: a non-member must still be
+    # able to enter the group with the password after the round trip.
+    assert_ok "grpunconv" grpunconv
+    assert_ok "the gshadow file is gone" bash -c "! test -e /etc/gshadow"
+    assert_ok "grpconv" grpconv
+    assert_ok "the recreated gshadow file is 0640 root:shadow" \
+        bash -c "test \"\$(stat -c '%a %U %G' /etc/gshadow)\" = '640 root shadow'"
+    assert_contains "sg accepts the group password after the round trip" "pc_team" \
+        bash -c "echo teampw | su -s /bin/bash pc_outsider -c \"sg pc_team -c 'id -gn'\""
+    assert_fail "and still refuses a wrong one" \
+        bash -c "echo wrong | su -s /bin/bash pc_outsider -c \"sg pc_team -c 'id -gn'\""
+
+    assert_fail "an operand is a usage error" pwconv extra
+
+    userdel -r pc_alice 2>/dev/null || true
+    userdel -r pc_outsider 2>/dev/null || true
+    groupdel pc_team 2>/dev/null || true
+    rm -f /tmp/pc_hash.before /tmp/pc_shadow.before /tmp/pc_s1
+}
+
 # ── vipw / vigr: hand edits under the lock ─────────────────────────
 
 test_vipw() {
@@ -1224,6 +1278,7 @@ main() {
     test_chgpasswd
     test_newusers
     test_vipw
+    test_pwconv_family
     test_aging_and_input
     test_audit_logging
     test_root_option

@@ -50,6 +50,8 @@ mod test_newusers;
 mod test_passwd;
 #[path = "by-util/test_pwck.rs"]
 mod test_pwck;
+#[path = "by-util/test_pwconv.rs"]
+mod test_pwconv;
 #[path = "by-util/test_sg.rs"]
 mod test_sg;
 #[path = "by-util/test_useradd.rs"]

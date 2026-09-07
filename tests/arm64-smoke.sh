@@ -64,10 +64,10 @@ version=$("${QEMU[@]}" "$BIN" --version 2>&1)
 if [ -n "$version" ]; then ok "runs: $version"; else bad "would not run"; exit 1; fi
 
 applets=$("${QEMU[@]}" "$BIN" --list 2>/dev/null | tail -n +2 | wc -l)
-if [ "$applets" -ge 20 ]; then
+if [ "$applets" -ge 24 ]; then
     ok "carries $applets applets"
 else
-    bad "expected at least 20 applets, found $applets"
+    bad "expected at least 24 applets, found $applets"
 fi
 
 # ── A prefix tree, so nothing here touches the container's own accounts ──
@@ -133,7 +133,25 @@ printf 'batched:a long passphrase:2500:2500:Batched::/bin/sh\n' \
     | "${QEMU[@]}" "$BIN" newusers -P "$T" >/dev/null 2>&1
 contains "newusers created the account" "$T/etc/passwd" '^batched:x:2500:2500:'
 contains "with a SHA-512 hash" "$T/etc/shadow" '^batched:\$6\$'
-contains "and a group of its own" "$T/etc/group" '^batched:x:2500:' 
+contains "and a group of its own" "$T/etc/group" '^batched:x:2500:'
+
+# The conversion tools rewrite two files each and create or remove one, so a
+# round trip against the prefix tree exercises the transaction layer under
+# emulation. `batched`, created just above, carries the hash; it must come back
+# byte for byte.
+before=$(grep '^batched:' "$T/etc/shadow" | cut -d: -f2)
+check "pwunconv merges the hashes back" "${QEMU[@]}" "$BIN" pwunconv -P "$T"
+check "and removes the shadow file" test ! -e "$T/etc/shadow"
+check "pwconv recreates it" "${QEMU[@]}" "$BIN" pwconv -P "$T"
+after=$(grep '^batched:' "$T/etc/shadow" | cut -d: -f2)
+if [ -n "$before" ] && [ "$before" = "$after" ]; then
+    ok "the hash survived the round trip unchanged"
+else
+    bad "the hash changed across pwunconv/pwconv: '$before' -> '$after'"
+fi
+check "grpunconv removes gshadow" "${QEMU[@]}" "$BIN" grpunconv -P "$T"
+check "grpconv recreates it" "${QEMU[@]}" "$BIN" grpconv -P "$T"
+contains "and the group is back in gshadow" "$T/etc/gshadow" '^batched:'
 
 # pwck exits 2 for warnings, which a synthetic tree produces (no real shells),
 # so anything up to 2 means it read and checked the files rather than failing.

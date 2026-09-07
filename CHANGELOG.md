@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `pwconv`, `pwunconv`, `grpconv` and `grpunconv`, tools twenty-one to
+  twenty-four, which complete the set both Debian and Fedora ship. `pwconv`
+  moves password hashes out of the world-readable `/etc/passwd` into
+  `/etc/shadow`, creating it `0640 root:shadow` when it does not exist, and
+  reconciles the two: a passwd line with no shadow line gets one dated today
+  with the aging from login.defs, a shadow line with no passwd line is
+  dropped, and a hash found in passwd beside an existing shadow line replaces
+  it as the newer of the two. The shadow file is written before passwd, so a
+  failure between the two writes leaves the hashes where they were rather than
+  nowhere; `pwunconv` writes passwd before it removes shadow for the same
+  reason. `grpconv` and `grpunconv` do the same for the group files, with a
+  new gshadow line inheriting the membership `/etc/group` records. All four are
+  one engine; the other three crates name which tool they are
+
 - `vipw` and `vigr`, the nineteenth and twentieth tools: they hand
   `/etc/passwd`, `/etc/shadow`, `/etc/group` or `/etc/gshadow` to the
   administrator's editor under the same lock every other tool takes, so a hand

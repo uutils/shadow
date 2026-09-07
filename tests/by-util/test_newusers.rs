@@ -11,7 +11,6 @@
 //! Checking only `/etc/passwd` would miss the half of the job that makes the
 //! account usable.
 
-use std::io::Write as _;
 use std::process::Stdio;
 
 use crate::common::{Output, skip_unless_root, tool};
@@ -59,22 +58,25 @@ fn has_entry(dir: &tempfile::TempDir, file: &str, name: &str) -> bool {
 
 /// Run `newusers --prefix <dir> <args...>` with `input` on stdin.
 fn newusers(dir: &tempfile::TempDir, args: &[&str], input: &str) -> Output {
+    // stdin is a file, not a pipe. The tools exit as soon as a line is bad,
+    // and a pipe whose reader has gone raises SIGPIPE in the writer. Rust
+    // ignores that signal at startup, but every `uumain` run in-process by
+    // another test puts it back to its default -- uucore does so for GNU
+    // pipeline compatibility -- after which the write kills the whole test
+    // binary. A file has no reader to lose.
+    let stdin_path = dir.path().join("stdin.newusers");
+    std::fs::write(&stdin_path, input).expect("write stdin file");
+    let stdin = std::fs::File::open(&stdin_path).expect("open stdin file");
+
     let mut cmd = tool("newusers");
     cmd.arg("--prefix")
         .arg(dir.path())
         .args(args)
-        .stdin(Stdio::piped())
+        .stdin(Stdio::from(stdin))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().expect("cannot spawn newusers");
-    child
-        .stdin
-        .as_mut()
-        .expect("stdin")
-        .write_all(input.as_bytes())
-        .expect("cannot write to newusers");
-    let out = child.wait_with_output().expect("newusers did not finish");
+    let out = cmd.output().expect("newusers did not finish");
     Output {
         code: out.status.code().unwrap_or(1),
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),

@@ -39,7 +39,7 @@ const SETUID_APPLETS: [&str; 6] = ["passwd", "chfn", "chsh", "newgrp", "gpasswd"
 // nothing, and the binding is then not mutated.
 #[allow(unused_mut)]
 fn applets() -> Vec<(&'static str, Applet)> {
-    let mut table: Vec<(&'static str, Applet)> = Vec::with_capacity(20);
+    let mut table: Vec<(&'static str, Applet)> = Vec::with_capacity(24);
     #[cfg(feature = "chage")]
     table.push(("chage", |a| chage::uumain(a.iter().cloned())));
     #[cfg(feature = "chfn")]
@@ -60,6 +60,10 @@ fn applets() -> Vec<(&'static str, Applet)> {
     table.push(("groupmod", |a| groupmod::uumain(a.iter().cloned())));
     #[cfg(feature = "grpck")]
     table.push(("grpck", |a| grpck::uumain(a.iter().cloned())));
+    #[cfg(feature = "grpconv")]
+    table.push(("grpconv", |a| grpconv::uumain(a.iter().cloned())));
+    #[cfg(feature = "grpunconv")]
+    table.push(("grpunconv", |a| grpunconv::uumain(a.iter().cloned())));
     #[cfg(feature = "newgrp")]
     table.push(("newgrp", |a| newgrp::uumain(a.iter().cloned())));
     #[cfg(feature = "newusers")]
@@ -68,6 +72,10 @@ fn applets() -> Vec<(&'static str, Applet)> {
     table.push(("passwd", |a| passwd::uumain(a.iter().cloned())));
     #[cfg(feature = "pwck")]
     table.push(("pwck", |a| pwck::uumain(a.iter().cloned())));
+    #[cfg(feature = "pwconv")]
+    table.push(("pwconv", |a| pwconv::uumain(a.iter().cloned())));
+    #[cfg(feature = "pwunconv")]
+    table.push(("pwunconv", |a| pwunconv::uumain(a.iter().cloned())));
     #[cfg(feature = "sg")]
     table.push(("sg", |a| sg::uumain(a.iter().cloned())));
     #[cfg(feature = "useradd")]
@@ -238,7 +246,7 @@ fn print_available_utils() {
 mod tests {
     use super::*;
 
-    const ALL_TOOLS: [&str; 20] = [
+    const ALL_TOOLS: [&str; 24] = [
         "chage",
         "chfn",
         "chgpasswd",
@@ -249,10 +257,14 @@ mod tests {
         "groupdel",
         "groupmod",
         "grpck",
+        "grpconv",
+        "grpunconv",
         "newgrp",
         "newusers",
         "passwd",
         "pwck",
+        "pwconv",
+        "pwunconv",
         "sg",
         "useradd",
         "userdel",
