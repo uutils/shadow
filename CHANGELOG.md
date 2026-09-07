@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `make verify-release TAG=<version>` runs the three published archives of a
+  release the way a user will: digests checked, then each archive in a
+  container of its own kind -- Debian 12 for the glibc build, Alpine for the
+  static musl one, qemu for arm64 -- installed setuid root and called by an
+  unprivileged user through a symlink, with a spoofed `argv[0]` still refused.
+  The static archives of 0.2.2 to 0.4.0 all failed exactly there and nothing
+  ran them that way; run against 0.4.0, this reports it
+
 ## [0.5.0] - 2026-09-07
 
 ### Added
