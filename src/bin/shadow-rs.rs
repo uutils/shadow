@@ -11,7 +11,8 @@
 //! # Privileges
 //!
 //! The per-tool install makes only `passwd`, `chfn`, `chsh`, `newgrp`,
-//! `gpasswd`, `sg`, `newuidmap` and `newgidmap` setuid-root.
+//! `gpasswd`, `sg`, `newuidmap` and `newgidmap` setuid-root, and `expiry`
+//! setgid `shadow`.
 //! A multicall install has to make the one binary setuid, which
 //! would hand euid 0 to every applet — an unprivileged `pwck -s` rewriting
 //! `/etc/passwd`. So before an applet outside that set runs, the binary drops
@@ -30,8 +31,11 @@ type Applet = fn(&[OsString]) -> i32;
 /// it has to read `/etc/gshadow` to check a group password, and the GNU suite
 /// ships it as a symlink to the setuid `newgrp` for exactly that. The two id
 /// mappers are here because writing a namespace's map beyond the caller's
-/// own id needs `CAP_SETUID`/`CAP_SETGID` in the parent namespace.
-const SETUID_APPLETS: [&str; 8] = [
+/// own id needs `CAP_SETUID`/`CAP_SETGID` in the parent namespace. `expiry`
+/// is setgid `shadow` in the per-tool install, which is only enough to read
+/// `/etc/shadow`; a single setuid binary has nothing that narrow to offer, so
+/// it keeps euid 0 here and reads the one line it needs.
+const SETUID_APPLETS: [&str; 9] = [
     "passwd",
     "chfn",
     "chsh",
@@ -40,6 +44,7 @@ const SETUID_APPLETS: [&str; 8] = [
     "sg",
     "newuidmap",
     "newgidmap",
+    "expiry",
 ];
 
 /// Every applet compiled into this binary, by name, in `--list` order.
@@ -50,7 +55,7 @@ const SETUID_APPLETS: [&str; 8] = [
 // nothing, and the binding is then not mutated.
 #[allow(unused_mut)]
 fn applets() -> Vec<(&'static str, Applet)> {
-    let mut table: Vec<(&'static str, Applet)> = Vec::with_capacity(27);
+    let mut table: Vec<(&'static str, Applet)> = Vec::with_capacity(28);
     #[cfg(feature = "chage")]
     table.push(("chage", |a| chage::uumain(a.iter().cloned())));
     #[cfg(feature = "chfn")]
@@ -61,6 +66,8 @@ fn applets() -> Vec<(&'static str, Applet)> {
     table.push(("chpasswd", |a| chpasswd::uumain(a.iter().cloned())));
     #[cfg(feature = "chsh")]
     table.push(("chsh", |a| chsh::uumain(a.iter().cloned())));
+    #[cfg(feature = "expiry")]
+    table.push(("expiry", |a| expiry::uumain(a.iter().cloned())));
     #[cfg(feature = "gpasswd")]
     table.push(("gpasswd", |a| gpasswd::uumain(a.iter().cloned())));
     #[cfg(feature = "groupadd")]
@@ -263,12 +270,13 @@ fn print_available_utils() {
 mod tests {
     use super::*;
 
-    const ALL_TOOLS: [&str; 27] = [
+    const ALL_TOOLS: [&str; 28] = [
         "chage",
         "chfn",
         "chgpasswd",
         "chpasswd",
         "chsh",
+        "expiry",
         "gpasswd",
         "groupadd",
         "groupdel",
@@ -322,6 +330,7 @@ mod tests {
                         | "sg"
                         | "newuidmap"
                         | "newgidmap"
+                        | "expiry"
                 ),
                 "{tool}"
             );

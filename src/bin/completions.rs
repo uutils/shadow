@@ -33,6 +33,8 @@ fn get_tool_app(name: &str) -> Option<Command> {
         "chpasswd" => Some(chpasswd::uu_app()),
         #[cfg(feature = "chsh")]
         "chsh" => Some(chsh::uu_app()),
+        #[cfg(feature = "expiry")]
+        "expiry" => Some(expiry::uu_app()),
         #[cfg(feature = "groupadd")]
         "groupadd" => Some(groupadd::uu_app()),
         #[cfg(feature = "groupdel")]
@@ -94,6 +96,8 @@ fn all_tool_names() -> Vec<&'static str> {
     names.push("chpasswd");
     #[cfg(feature = "chsh")]
     names.push("chsh");
+    #[cfg(feature = "expiry")]
+    names.push("expiry");
     #[cfg(feature = "groupadd")]
     names.push("groupadd");
     #[cfg(feature = "groupdel")]

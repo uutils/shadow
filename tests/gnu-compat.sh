@@ -233,6 +233,7 @@ for pair in \
     "grpconv:/usr/sbin/grpconv" \
     "grpunconv:/usr/sbin/grpunconv" \
     "login:/usr/bin/login" \
+    "expiry:/usr/bin/expiry" \
     "gpasswd:/usr/bin/gpasswd" \
     "pwck:/usr/sbin/pwck" \
     "grpck:/usr/sbin/grpck"; do
@@ -249,6 +250,7 @@ compare_exit "newuidmap with no operands" "$RS/newuidmap" "/usr/bin/newuidmap"
 compare_exit "newgidmap with no operands" "$RS/newgidmap" "/usr/bin/newgidmap"
 compare_exit "newuidmap with an incomplete triple" "$RS/newuidmap 1 0 100000" "/usr/bin/newuidmap 1 0 100000"
 compare_exit "newgidmap with a zero count" "$RS/newgidmap 1 0 100000 0" "/usr/bin/newgidmap 1 0 100000 0"
+compare_exit "usermod with an invalid subuid range" "$RS/usermod -v 9-1 root" "/usr/sbin/usermod -v 9-1 root"
 compare_exit "newuidmap on a process that is not there" "$RS/newuidmap 4194304 0 0 1" "/usr/bin/newuidmap 4194304 0 0 1"
 
 # ── Results ─────────────────────────────────────────────────────────
