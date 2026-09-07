@@ -78,6 +78,53 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
 | `grpconv` | **Implemented.** `pwconv` for group and gshadow. |
 | `grpunconv` | **Implemented.** `pwunconv` for group and gshadow. |
 
+## Scope
+
+The target is the set of binaries the upstream shadow suite ships, as the
+distributions package it. That set was established from package metadata and
+man pages, never from the upstream source: this project is a clean-room
+reimplementation and reads no GPL code.
+
+Debian and Fedora do not ship the same set. The 22 tools they agree on are all
+implemented. Of the rest:
+
+| tool | status |
+|---|---|
+| `login` | in scope, not yet shipped. Debian 13 and Ubuntu 25.10 take `login` from util-linux, but every release in service today — Ubuntu 20.04, 22.04 and 24.04, Debian 12 — ships shadow's, and `uutils/login` was archived pointing here. The target is the option set the two implementations share |
+| `expiry`, `groupmems` | Debian's tail; in scope, not yet shipped. `faillog` and `lastlog` left the Debian package with 13 and are not planned |
+| `newuidmap`, `newgidmap` | Fedora's pair, the basis of rootless containers; in scope, not yet shipped |
+| `shadowconfig`, `cpgr`, `cppw`, `adduser` | Debian packaging scripts and a Fedora symlink, not upstream tools; out of scope |
+
+Three tools that the GNU suite ships are provided by other projects in this
+organisation, and are deliberately not duplicated here — the same rule
+`uutils/procps` and `uutils/util-linux` apply between themselves:
+
+- `nologin` is in [`uutils/util-linux`](https://github.com/uutils/util-linux). Debian has taken it from util-linux for years; shadow's copy is not shipped.
+- `su` is in [`sudo-rs`](https://github.com/trifectatechfoundation/sudo-rs).
+- `login` is here, per the table above: on the installed base it is shadow's tool, whatever the newest releases do.
+
+### Where this differs from GNU shadow
+
+Differences with the GNU tools are treated as bugs, with one class of
+exceptions: a behaviour that quietly weakens the system is refused rather than
+reproduced. Each refusal is loud, names the alternative, and is documented in
+the tool's man page under *Differences from GNU shadow*. The pattern so far:
+
+- Insecure hashing schemes (`-m`, `-c MD5`, `-c DES`) and unhashed storage
+  (`-c NONE`) are refused by `chpasswd`, `chgpasswd` and `newusers`.
+- An empty password in plaintext mode is refused: hashing `""` yields a hash a
+  bare Enter matches, which is an account anyone can enter, not one with no
+  password.
+- `vipw` and `vigr` parse the edited file before installing it — GNU installs
+  whatever the editor saved — and keep the edit when they refuse it.
+- `newusers` refuses a group name that does not exist rather than leaving the
+  account pointing at a GID that is not there.
+- `newgrp` and `sg` prompt for a password whether or not the group has one, so
+  the presence of a prompt no longer reveals which groups are worth attacking.
+
+Nothing falls back silently. Where the GNU tool and this one disagree on a
+result, the exit code says so.
+
 ## Building
 
 ### Requirements
