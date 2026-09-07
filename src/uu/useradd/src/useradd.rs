@@ -576,6 +576,14 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     } else {
         None
     };
+    // The shadow file is locked here with the others, not after they are
+    // written. It used to be opened on its own after the passwd commit, and a
+    // lock that timed out at that point -- which a busy system produces --
+    // left a passwd line with no shadow line: an account half made, that a
+    // second useradd then reported as already existing.
+    let shadow_path = opts.root.shadow_path();
+    let mut shadow_file = LockedFile::<ShadowEntry>::open_or_empty(&shadow_path)
+        .map_err(|e| UseraddError::CannotUpdatePasswd(format!("cannot open shadow: {e}")))?;
 
     // Step 3: Check the username is not already in use.
     if passwd_file.find(&opts.login).is_some() {
@@ -655,14 +663,6 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
         shell: opts.shell.clone(),
     });
 
-    let mut files: Vec<Box<dyn Commit>> = vec![Box::new(passwd_file), Box::new(group_file)];
-    if let Some(gshadow_file) = gshadow_file {
-        files.push(Box::new(gshadow_file));
-    }
-    transaction::commit_all(files).map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
-
-    // Step 13: Write /etc/shadow entry (passwd+group locks still held).
-    let shadow_path = opts.root.shadow_path();
     // useradd(8): a system account is "created with no aging information in
     // /etc/shadow" -- verified against shadow-utils, which writes
     // `svc:!:20700::::::` for -r and the full policy for a regular account.
@@ -691,7 +691,19 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
             reserved: String::new(),
         }
     };
-    write_shadow_entry(&shadow_path, &shadow_entry)?;
+    shadow_file.entries_mut().push(shadow_entry);
+
+    // Step 12/13: every file is validated, then written -- shadow first, so a
+    // failure between the writes leaves no passwd line whose hash is nowhere.
+    let mut files: Vec<Box<dyn Commit>> = vec![
+        Box::new(shadow_file),
+        Box::new(passwd_file),
+        Box::new(group_file),
+    ];
+    if let Some(gshadow_file) = gshadow_file {
+        files.push(Box::new(gshadow_file));
+    }
+    transaction::commit_all(files).map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
 
     // The transactions above released their locks when they committed.
     // Subsequent steps (subid, supplementary groups, home creation) are
@@ -881,6 +893,7 @@ fn resolve_group(gid_arg: &str, group_entries: &[GroupEntry]) -> Result<u32, Use
 ///
 /// A shadow file that does not exist yet is created: a fresh `--prefix` tree
 /// carries none.
+#[cfg(test)]
 fn write_shadow_entry(shadow_path: &Path, new_entry: &ShadowEntry) -> UResult<()> {
     let mut shadow = LockedFile::<ShadowEntry>::open_or_empty(shadow_path)
         .map_err(|e| UseraddError::CannotUpdatePasswd(format!("{e}")))?;
