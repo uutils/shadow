@@ -77,6 +77,7 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
 | `pwunconv` | **Implemented.** Merges hashes back into passwd and removes shadow. |
 | `grpconv` | **Implemented.** `pwconv` for group and gshadow. |
 | `grpunconv` | **Implemented.** `pwunconv` for group and gshadow. |
+| `login` | **Implemented.** What getty runs: prompts, PAM authentication and session, utmp/wtmp, terminal handover, a login shell. Needs the `pam` feature. |
 
 ## Scope
 
@@ -90,7 +91,7 @@ implemented. Of the rest:
 
 | tool | status |
 |---|---|
-| `login` | in scope, not yet shipped. Debian 13 and Ubuntu 25.10 take `login` from util-linux, but every release in service today — Ubuntu 20.04, 22.04 and 24.04, Debian 12 — ships shadow's, and `uutils/login` was archived pointing here. The target is the option set the two implementations share |
+| `login` | shipped. Debian 13 and Ubuntu 25.10 take `login` from util-linux, but every release in service today — Ubuntu 20.04, 22.04 and 24.04, Debian 12 — ships shadow's, and `uutils/login` was archived pointing here. It implements the option set the two share, plus util-linux's `-H` |
 | `expiry`, `groupmems` | Debian's tail; in scope, not yet shipped. `faillog` and `lastlog` left the Debian package with 13 and are not planned |
 | `newuidmap`, `newgidmap` | Fedora's pair, the basis of rootless containers; in scope, not yet shipped |
 | `shadowconfig`, `cpgr`, `cppw`, `adduser` | Debian packaging scripts and a Fedora symlink, not upstream tools; out of scope |
@@ -101,7 +102,7 @@ organisation, and are deliberately not duplicated here — the same rule
 
 - `nologin` is in [`uutils/util-linux`](https://github.com/uutils/util-linux). Debian has taken it from util-linux for years; shadow's copy is not shipped.
 - `su` is in [`sudo-rs`](https://github.com/trifectatechfoundation/sudo-rs).
-- `login` is here, per the table above: on the installed base it is shadow's tool, whatever the newest releases do.
+- `login` is here: on the installed base it is shadow's tool, whatever the newest releases do.
 
 ### Where this differs from GNU shadow
 
@@ -144,9 +145,9 @@ docker compose run --rm debian cargo build --release
 
 ### Install
 
-Default install: 24 standalone per-tool binaries with least-privilege setuid
+Default install: 25 standalone per-tool binaries with least-privilege setuid
 layout matching GNU shadow-utils. Only `passwd`, `chfn`, `chsh`, `newgrp`,
-`gpasswd` and `sg` are installed setuid-root; the other 18 are plain `0755`.
+`gpasswd` and `sg` are installed setuid-root; the other 19 are plain `0755`.
 
 ```shell
 sudo make install PREFIX=/usr/local
@@ -199,7 +200,7 @@ sudo install -o root -g root -m 4755 \
     uu_shadow-*/shadow-rs /usr/local/bin/shadow-rs
 for tool in passwd chfn chsh newgrp gpasswd sg chage chpasswd chgpasswd newusers \
             groupadd groupdel groupmod grpck pwck useradd userdel usermod vipw vigr \
-            pwconv pwunconv grpconv grpunconv; do
+            pwconv pwunconv grpconv grpunconv login; do
     sudo ln -sf shadow-rs "/usr/local/bin/$tool"
 done
 ```

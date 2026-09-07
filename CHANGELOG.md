@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `login`, the twenty-fifth tool and the one `uutils/login` was archived
+  towards: what getty runs on a terminal. It prompts for a name and, through
+  the `login` PAM service, a password; refuses after `LOGIN_RETRIES` failures
+  or `LOGIN_TIMEOUT` seconds, answering a wrong password and an unknown name
+  with the same words; opens the PAM session and takes its environment;
+  records the login in utmp and wtmp; hands the terminal to the user
+  (`TTYGROUP`, `TTYPERM`); and runs the login shell as the user, in the home
+  or in `/` with a notice when `DEFAULT_HOME` allows. When the shell exits it
+  closes the session and records the logout. `-p`, `-f`, `-h` are shadow's;
+  `-H` and `--help` are util-linux's, which Debian 13 and Ubuntu 25.10 ship.
+  `-r`, the rlogin protocol, is refused. Needs the `pam` feature; without it
+  the applet says so and exits, since a login that cannot authenticate is not
+  a login. The shell runs as a child, not in place, so the session can be
+  closed afterwards; it gets a clean signal mask and login keeps its own
+
 - `pwconv`, `pwunconv`, `grpconv` and `grpunconv`, tools twenty-one to
   twenty-four, which complete the set both Debian and Fedora ship. `pwconv`
   moves password hashes out of the world-readable `/etc/passwd` into
@@ -71,6 +86,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `uutils/util-linux`'s, `su` is `sudo-rs`'s. It also lists every place this
   project deliberately departs from GNU shadow, with the rule behind them
 
+- `shadow_core::pam::PamContext` gained `setcred`, `open_session`,
+  `close_session`, `user` and `environment`; `shadow_core::process` gained
+  utmp/wtmp recording, `getpwnam`, a getty-style `spawn_with_controlling_tty`,
+  a `spawn_as_user` that drops groups, gid and uid in that order, and a
+  watchdog `exit_after` -- everything `login` needs and nothing else had
+
 - `shadow_core::process::spawn_with_signals_unblocked` starts a child with a
   clean signal mask. A tool that blocks `SIGINT` while it holds a lock passes
   that mask to every child, and an editor started under it could not be
@@ -94,6 +115,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attacking. Both tools now prompt either way
 
 ### Fixed
+
+- Two tools working on different account files at the same time could
+  deadlock until both timed out. `FileLock` took the per-file `.lock` first
+  and `/etc/.pwd.lock` second, so a tool holding `passwd.lock` and waiting for
+  `.pwd.lock` could meet one holding `shadow.lock` and waiting for the first to
+  let go -- fifteen seconds of nothing, then two failures, on a system that was
+  merely busy. `.pwd.lock` now comes first, the order lckpwdf(3) and the GNU
+  tools use; whoever holds it never waits for anyone who is waiting for it.
+  Found by running the whole suite under load
+
+- `useradd` could leave an account half made. It wrote `/etc/passwd` and the
+  group files in one transaction, then opened `/etc/shadow` on its own; a
+  shadow lock that timed out at that point left a passwd line with no shadow
+  line, which a second `useradd` reported as already existing. The shadow file
+  is now locked with the others before anything is written, and written first,
+  so a failure between the writes leaves no passwd line whose hash is nowhere
 
 - `newgrp` dropped the caller's original primary group when it rebuilt the
   supplementary group list. `initgroups()` builds that list from the member

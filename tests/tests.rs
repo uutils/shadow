@@ -40,6 +40,8 @@ mod test_groupdel;
 mod test_groupmod;
 #[path = "by-util/test_grpck.rs"]
 mod test_grpck;
+#[path = "by-util/test_login.rs"]
+mod test_login;
 #[path = "by-util/test_multicall.rs"]
 mod test_multicall;
 #[path = "by-util/test_newgrp.rs"]

@@ -17,9 +17,12 @@ ROOT_TOOLS = useradd userdel usermod chpasswd chgpasswd newusers \
 # package, which ships passwd, chage, chfn, chsh and newgrp in /usr/bin and
 # everything else in /usr/sbin. chage is here for `chage -l`, the one mode a
 # user may run on their own account.
-USER_TOOLS = $(SETUID_TOOLS) chage
+# login lives in bin too, and is root-only without being setuid: getty runs
+# it as root, and it refuses to run as anyone else.
+USER_BIN_TOOLS = chage login
+USER_TOOLS = $(SETUID_TOOLS) $(USER_BIN_TOOLS)
 
-ALL_TOOLS = $(SETUID_TOOLS) $(ROOT_TOOLS) chage
+ALL_TOOLS = $(SETUID_TOOLS) $(ROOT_TOOLS) $(USER_BIN_TOOLS)
 
 .PHONY: all build build-multicall build-arm64 dist-musl check test test-gnu-compat test-unprivileged test-arm64 install install-multicall uninstall clean
 
@@ -31,7 +34,7 @@ all: build
 # build requirement in the README.
 build:
 	cargo build --release --workspace --bins --exclude uu_shadow \
-		--features uu_passwd/pam,uu_chfn/pam,uu_chsh/pam
+		--features uu_passwd/pam,uu_chfn/pam,uu_chsh/pam,uu_login/pam
 
 build-multicall:
 	cargo build --release --bin shadow-rs --features pam
@@ -134,19 +137,21 @@ test-unprivileged:
 test-gnu-compat:
 	bash tests/gnu-compat.sh
 
-# Default install: 24 standalone per-tool binaries, with the setuid layout and
+# Default install: 25 standalone per-tool binaries, with the setuid layout and
 # the bin/sbin split GNU shadow-utils uses. Only $(SETUID_TOOLS) are setuid.
 install: build
 	@for tool in $(SETUID_TOOLS); do \
 		install -Dm4755 target/release/$$tool $(DESTDIR)$(BINDIR)/$$tool || exit 1; \
 	done
-	@install -Dm0755 target/release/chage $(DESTDIR)$(BINDIR)/chage
+	@for tool in $(USER_BIN_TOOLS); do \
+		install -Dm0755 target/release/$$tool $(DESTDIR)$(BINDIR)/$$tool || exit 1; \
+	done
 	@for tool in $(ROOT_TOOLS); do \
 		install -Dm0755 target/release/$$tool $(DESTDIR)$(SBINDIR)/$$tool || exit 1; \
 	done
 	@echo "Installed $(words $(ALL_TOOLS)) standalone binaries"
 	@echo "  $(DESTDIR)$(BINDIR)/  setuid (4755): $(SETUID_TOOLS)"
-	@echo "  $(DESTDIR)$(BINDIR)/  user (0755):   chage"
+	@echo "  $(DESTDIR)$(BINDIR)/  user (0755):   $(USER_BIN_TOOLS)"
 	@echo "  $(DESTDIR)$(SBINDIR)/ root (0755):   $(ROOT_TOOLS)"
 
 # Opt-in install: single multicall binary with symlinks. Smaller footprint.

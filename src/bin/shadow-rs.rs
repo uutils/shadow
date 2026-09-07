@@ -39,7 +39,7 @@ const SETUID_APPLETS: [&str; 6] = ["passwd", "chfn", "chsh", "newgrp", "gpasswd"
 // nothing, and the binding is then not mutated.
 #[allow(unused_mut)]
 fn applets() -> Vec<(&'static str, Applet)> {
-    let mut table: Vec<(&'static str, Applet)> = Vec::with_capacity(24);
+    let mut table: Vec<(&'static str, Applet)> = Vec::with_capacity(25);
     #[cfg(feature = "chage")]
     table.push(("chage", |a| chage::uumain(a.iter().cloned())));
     #[cfg(feature = "chfn")]
@@ -64,6 +64,8 @@ fn applets() -> Vec<(&'static str, Applet)> {
     table.push(("grpconv", |a| grpconv::uumain(a.iter().cloned())));
     #[cfg(feature = "grpunconv")]
     table.push(("grpunconv", |a| grpunconv::uumain(a.iter().cloned())));
+    #[cfg(feature = "login")]
+    table.push(("login", |a| login::uumain(a.iter().cloned())));
     #[cfg(feature = "newgrp")]
     table.push(("newgrp", |a| newgrp::uumain(a.iter().cloned())));
     #[cfg(feature = "newusers")]
@@ -246,7 +248,7 @@ fn print_available_utils() {
 mod tests {
     use super::*;
 
-    const ALL_TOOLS: [&str; 24] = [
+    const ALL_TOOLS: [&str; 25] = [
         "chage",
         "chfn",
         "chgpasswd",
@@ -259,6 +261,7 @@ mod tests {
         "grpck",
         "grpconv",
         "grpunconv",
+        "login",
         "newgrp",
         "newusers",
         "passwd",

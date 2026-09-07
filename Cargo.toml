@@ -40,6 +40,7 @@ members = [
     "src/uu/pwunconv",
     "src/uu/grpconv",
     "src/uu/grpunconv",
+    "src/uu/login",
 ]
 
 [workspace.package]
@@ -67,7 +68,7 @@ uucore = "0.11"
 thiserror = "2"
 
 # Unix/Linux
-rustix = { version = "1", features = ["fs", "param", "process", "rand", "termios"] }
+rustix = { version = "1", features = ["event", "fs", "param", "process", "pty", "rand", "termios"] }
 libc = "0.2"
 
 # Security
@@ -110,17 +111,18 @@ pwconv = { optional = true, version = "0.4.0", package = "uu_pwconv", path = "sr
 pwunconv = { optional = true, version = "0.4.0", package = "uu_pwunconv", path = "src/uu/pwunconv" }
 grpconv = { optional = true, version = "0.4.0", package = "uu_grpconv", path = "src/uu/grpconv" }
 grpunconv = { optional = true, version = "0.4.0", package = "uu_grpunconv", path = "src/uu/grpunconv" }
+login = { optional = true, version = "0.4.0", package = "uu_login", path = "src/uu/login" }
 
 [features]
 default = ["passwd", "pwck", "useradd", "userdel", "usermod", "chpasswd", "chage",
            "groupadd", "groupdel", "groupmod", "grpck", "chfn", "chsh", "newgrp", "gpasswd",
            "sg", "chgpasswd", "newusers", "vipw", "vigr",
-           "pwconv", "pwunconv", "grpconv", "grpunconv"]
+           "pwconv", "pwunconv", "grpconv", "grpunconv", "login"]
 
 # PAM authentication (requires libpam-dev). The `?` matters: without it,
 # asking for PAM would drag in the three applets that can use it even when the
 # build deliberately left them out.
-pam = ["passwd?/pam", "chfn?/pam", "chsh?/pam"]
+pam = ["passwd?/pam", "chfn?/pam", "chsh?/pam", "login?/pam"]
 
 # Shell completions generator
 completions = ["dep:clap_complete"]
@@ -159,6 +161,7 @@ pwconv = { version = "0.4.0", package = "uu_pwconv", path = "src/uu/pwconv" }
 pwunconv = { version = "0.4.0", package = "uu_pwunconv", path = "src/uu/pwunconv" }
 grpconv = { version = "0.4.0", package = "uu_grpconv", path = "src/uu/grpconv" }
 grpunconv = { version = "0.4.0", package = "uu_grpunconv", path = "src/uu/grpunconv" }
+login = { version = "0.4.0", package = "uu_login", path = "src/uu/login" }
 passwd = { version = "0.4.0", package = "uu_passwd", path = "src/uu/passwd" }
 useradd = { version = "0.4.0", package = "uu_useradd", path = "src/uu/useradd" }
 userdel = { version = "0.4.0", package = "uu_userdel", path = "src/uu/userdel" }

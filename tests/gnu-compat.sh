@@ -232,6 +232,7 @@ for pair in \
     "pwunconv:/usr/sbin/pwunconv" \
     "grpconv:/usr/sbin/grpconv" \
     "grpunconv:/usr/sbin/grpunconv" \
+    "login:/usr/bin/login" \
     "gpasswd:/usr/bin/gpasswd" \
     "pwck:/usr/sbin/pwck" \
     "grpck:/usr/sbin/grpck"; do
