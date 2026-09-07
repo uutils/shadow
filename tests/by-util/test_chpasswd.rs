@@ -12,7 +12,6 @@
 //! `--prefix` then, and `--root` performs a real `chroot(2)` an in-process
 //! test cannot use.
 
-use std::io::Write as _;
 use std::process::Stdio;
 
 use crate::common::{Output, run, tool};
@@ -36,22 +35,25 @@ fn read_shadow(dir: &tempfile::TempDir) -> String {
 
 /// Run `chpasswd --prefix <dir> <args...>` with `input` on stdin.
 fn chpasswd(dir: &tempfile::TempDir, args: &[&str], input: &str) -> Output {
+    // stdin is a file, not a pipe. The tools exit as soon as a line is bad,
+    // and a pipe whose reader has gone raises SIGPIPE in the writer. Rust
+    // ignores that signal at startup, but every `uumain` run in-process by
+    // another test puts it back to its default -- uucore does so for GNU
+    // pipeline compatibility -- after which the write kills the whole test
+    // binary. A file has no reader to lose.
+    let stdin_path = dir.path().join("stdin.chpasswd");
+    std::fs::write(&stdin_path, input).expect("write stdin file");
+    let stdin = std::fs::File::open(&stdin_path).expect("open stdin file");
+
     let mut cmd = tool("chpasswd");
     cmd.arg("--prefix")
         .arg(dir.path())
         .args(args)
-        .stdin(Stdio::piped())
+        .stdin(Stdio::from(stdin))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().expect("cannot spawn chpasswd");
-    child
-        .stdin
-        .as_mut()
-        .expect("stdin")
-        .write_all(input.as_bytes())
-        .expect("cannot write to chpasswd");
-    let out = child.wait_with_output().expect("chpasswd did not finish");
+    let out = cmd.output().expect("chpasswd did not finish");
     Output {
         code: out.status.code().unwrap_or(1),
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
