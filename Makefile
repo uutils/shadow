@@ -4,7 +4,7 @@ SBINDIR ?= $(PREFIX)/sbin
 
 # Tools that need setuid-root to allow non-root callers (change own password,
 # GECOS, shell, effective group, or administer a group as a group admin).
-SETUID_TOOLS = passwd chfn chsh newgrp gpasswd sg
+SETUID_TOOLS = passwd chfn chsh newgrp gpasswd sg newuidmap newgidmap
 
 # Root-only tools (no setuid; fail at getuid() check for non-root callers).
 ROOT_TOOLS = useradd userdel usermod chpasswd chgpasswd newusers \
@@ -137,7 +137,7 @@ test-unprivileged:
 test-gnu-compat:
 	bash tests/gnu-compat.sh
 
-# Default install: 25 standalone per-tool binaries, with the setuid layout and
+# Default install: 27 standalone per-tool binaries, with the setuid layout and
 # the bin/sbin split GNU shadow-utils uses. Only $(SETUID_TOOLS) are setuid.
 install: build
 	@for tool in $(SETUID_TOOLS); do \

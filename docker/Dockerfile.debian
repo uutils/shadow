@@ -12,6 +12,8 @@ FROM rust:1.98-trixie
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpam0g-dev \
+    # uidmap: GNU newuidmap/newgidmap, for tests/gnu-compat.sh
+    uidmap \
     libselinux1-dev \
     libaudit-dev \
     pkg-config \

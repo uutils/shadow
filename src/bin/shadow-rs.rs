@@ -11,7 +11,7 @@
 //! # Privileges
 //!
 //! The per-tool install makes only `passwd`, `chfn`, `chsh`, `newgrp`,
-//! `gpasswd` and `sg` setuid-root.
+//! `gpasswd`, `sg`, `newuidmap` and `newgidmap` setuid-root.
 //! A multicall install has to make the one binary setuid, which
 //! would hand euid 0 to every applet — an unprivileged `pwck -s` rewriting
 //! `/etc/passwd`. So before an applet outside that set runs, the binary drops
@@ -25,11 +25,22 @@ use std::process::ExitCode;
 
 type Applet = fn(&[OsString]) -> i32;
 
-/// Applets that keep euid 0 for an unprivileged caller: the same six that
+/// Applets that keep euid 0 for an unprivileged caller: the same eight that
 /// `make install` marks setuid. `sg` is here for the reason `newgrp` is --
 /// it has to read `/etc/gshadow` to check a group password, and the GNU suite
-/// ships it as a symlink to the setuid `newgrp` for exactly that.
-const SETUID_APPLETS: [&str; 6] = ["passwd", "chfn", "chsh", "newgrp", "gpasswd", "sg"];
+/// ships it as a symlink to the setuid `newgrp` for exactly that. The two id
+/// mappers are here because writing a namespace's map beyond the caller's
+/// own id needs `CAP_SETUID`/`CAP_SETGID` in the parent namespace.
+const SETUID_APPLETS: [&str; 8] = [
+    "passwd",
+    "chfn",
+    "chsh",
+    "newgrp",
+    "gpasswd",
+    "sg",
+    "newuidmap",
+    "newgidmap",
+];
 
 /// Every applet compiled into this binary, by name, in `--list` order.
 // `#[cfg]` is not accepted on the elements of a `vec![]` literal, so the
@@ -39,7 +50,7 @@ const SETUID_APPLETS: [&str; 6] = ["passwd", "chfn", "chsh", "newgrp", "gpasswd"
 // nothing, and the binding is then not mutated.
 #[allow(unused_mut)]
 fn applets() -> Vec<(&'static str, Applet)> {
-    let mut table: Vec<(&'static str, Applet)> = Vec::with_capacity(25);
+    let mut table: Vec<(&'static str, Applet)> = Vec::with_capacity(27);
     #[cfg(feature = "chage")]
     table.push(("chage", |a| chage::uumain(a.iter().cloned())));
     #[cfg(feature = "chfn")]
@@ -66,8 +77,12 @@ fn applets() -> Vec<(&'static str, Applet)> {
     table.push(("grpunconv", |a| grpunconv::uumain(a.iter().cloned())));
     #[cfg(feature = "login")]
     table.push(("login", |a| login::uumain(a.iter().cloned())));
+    #[cfg(feature = "newgidmap")]
+    table.push(("newgidmap", |a| newgidmap::uumain(a.iter().cloned())));
     #[cfg(feature = "newgrp")]
     table.push(("newgrp", |a| newgrp::uumain(a.iter().cloned())));
+    #[cfg(feature = "newuidmap")]
+    table.push(("newuidmap", |a| newuidmap::uumain(a.iter().cloned())));
     #[cfg(feature = "newusers")]
     table.push(("newusers", |a| newusers::uumain(a.iter().cloned())));
     #[cfg(feature = "passwd")]
@@ -248,7 +263,7 @@ fn print_available_utils() {
 mod tests {
     use super::*;
 
-    const ALL_TOOLS: [&str; 25] = [
+    const ALL_TOOLS: [&str; 27] = [
         "chage",
         "chfn",
         "chgpasswd",
@@ -262,7 +277,9 @@ mod tests {
         "grpconv",
         "grpunconv",
         "login",
+        "newgidmap",
         "newgrp",
+        "newuidmap",
         "newusers",
         "passwd",
         "pwck",
@@ -297,7 +314,14 @@ mod tests {
                 keeps_privilege(tool),
                 matches!(
                     tool,
-                    "passwd" | "chfn" | "chsh" | "newgrp" | "gpasswd" | "sg"
+                    "passwd"
+                        | "chfn"
+                        | "chsh"
+                        | "newgrp"
+                        | "gpasswd"
+                        | "sg"
+                        | "newuidmap"
+                        | "newgidmap"
                 ),
                 "{tool}"
             );

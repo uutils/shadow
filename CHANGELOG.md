@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `newuidmap` and `newgidmap`, tools twenty-six and twenty-seven: the setuid
+  helpers that write a user namespace's `uid_map` and `gid_map`, which is what
+  Podman and rootless Docker call for every container they start. The caller
+  must own the target process and every requested range must lie inside a
+  range granted to them in `/etc/subuid` or `/etc/subgid` -- by login name or
+  by numeric uid -- except their own id mapped once, which the kernel already
+  allows an unprivileged process; root is exempt from neither, as
+  newuidmap(1) says. Ranges that overlap are refused by name rather than left
+  to the kernel's bare `EINVAL`. The map file is opened through a descriptor
+  held on `/proc/<pid>`, so a pid recycled between the check and the write
+  cannot redirect it; the `fd:N` form takes such a descriptor from the caller.
+  The tests write into a real namespace and read the kernel's map back
+
 - `login`, the twenty-fifth tool and the one `uutils/login` was archived
   towards: what getty runs on a terminal. It prompts for a name and, through
   the `login` PAM service, a password; refuses after `LOGIN_RETRIES` failures

@@ -41,6 +41,8 @@ members = [
     "src/uu/grpconv",
     "src/uu/grpunconv",
     "src/uu/login",
+    "src/uu/newuidmap",
+    "src/uu/newgidmap",
 ]
 
 [workspace.package]
@@ -112,12 +114,15 @@ pwunconv = { optional = true, version = "0.4.0", package = "uu_pwunconv", path =
 grpconv = { optional = true, version = "0.4.0", package = "uu_grpconv", path = "src/uu/grpconv" }
 grpunconv = { optional = true, version = "0.4.0", package = "uu_grpunconv", path = "src/uu/grpunconv" }
 login = { optional = true, version = "0.4.0", package = "uu_login", path = "src/uu/login" }
+newuidmap = { optional = true, version = "0.4.0", package = "uu_newuidmap", path = "src/uu/newuidmap" }
+newgidmap = { optional = true, version = "0.4.0", package = "uu_newgidmap", path = "src/uu/newgidmap" }
 
 [features]
 default = ["passwd", "pwck", "useradd", "userdel", "usermod", "chpasswd", "chage",
            "groupadd", "groupdel", "groupmod", "grpck", "chfn", "chsh", "newgrp", "gpasswd",
            "sg", "chgpasswd", "newusers", "vipw", "vigr",
-           "pwconv", "pwunconv", "grpconv", "grpunconv", "login"]
+           "pwconv", "pwunconv", "grpconv", "grpunconv", "login", "newuidmap",
+           "newgidmap"]
 
 # PAM authentication (requires libpam-dev). The `?` matters: without it,
 # asking for PAM would drag in the three applets that can use it even when the
@@ -162,6 +167,8 @@ pwunconv = { version = "0.4.0", package = "uu_pwunconv", path = "src/uu/pwunconv
 grpconv = { version = "0.4.0", package = "uu_grpconv", path = "src/uu/grpconv" }
 grpunconv = { version = "0.4.0", package = "uu_grpunconv", path = "src/uu/grpunconv" }
 login = { version = "0.4.0", package = "uu_login", path = "src/uu/login" }
+newuidmap = { version = "0.4.0", package = "uu_newuidmap", path = "src/uu/newuidmap" }
+newgidmap = { version = "0.4.0", package = "uu_newgidmap", path = "src/uu/newgidmap" }
 passwd = { version = "0.4.0", package = "uu_passwd", path = "src/uu/passwd" }
 useradd = { version = "0.4.0", package = "uu_useradd", path = "src/uu/useradd" }
 userdel = { version = "0.4.0", package = "uu_userdel", path = "src/uu/userdel" }

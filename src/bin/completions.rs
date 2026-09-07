@@ -49,8 +49,12 @@ fn get_tool_app(name: &str) -> Option<Command> {
         "grpunconv" => Some(grpunconv::uu_app()),
         #[cfg(feature = "login")]
         "login" => Some(login::uu_app()),
+        #[cfg(feature = "newgidmap")]
+        "newgidmap" => Some(newgidmap::uu_app()),
         #[cfg(feature = "newgrp")]
         "newgrp" => Some(newgrp::uu_app()),
+        #[cfg(feature = "newuidmap")]
+        "newuidmap" => Some(newuidmap::uu_app()),
         #[cfg(feature = "newusers")]
         "newusers" => Some(newusers::uu_app()),
         #[cfg(feature = "passwd")]
@@ -106,8 +110,12 @@ fn all_tool_names() -> Vec<&'static str> {
     names.push("grpunconv");
     #[cfg(feature = "login")]
     names.push("login");
+    #[cfg(feature = "newgidmap")]
+    names.push("newgidmap");
     #[cfg(feature = "newgrp")]
     names.push("newgrp");
+    #[cfg(feature = "newuidmap")]
+    names.push("newuidmap");
     #[cfg(feature = "newusers")]
     names.push("newusers");
     #[cfg(feature = "passwd")]

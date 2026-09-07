@@ -78,6 +78,8 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
 | `grpconv` | **Implemented.** `pwconv` for group and gshadow. |
 | `grpunconv` | **Implemented.** `pwunconv` for group and gshadow. |
 | `login` | **Implemented.** What getty runs: prompts, PAM authentication and session, utmp/wtmp, terminal handover, a login shell. Needs the `pam` feature. |
+| `newuidmap` | **Implemented.** Writes a user namespace's `uid_map` within the caller's `/etc/subuid` grant; what rootless containers call. |
+| `newgidmap` | **Implemented.** `newuidmap` for `gid_map` and `/etc/subgid`. |
 
 ## Scope
 
@@ -93,7 +95,7 @@ implemented. Of the rest:
 |---|---|
 | `login` | shipped. Debian 13 and Ubuntu 25.10 take `login` from util-linux, but every release in service today — Ubuntu 20.04, 22.04 and 24.04, Debian 12 — ships shadow's, and `uutils/login` was archived pointing here. It implements the option set the two share, plus util-linux's `-H` |
 | `expiry`, `groupmems` | Debian's tail; in scope, not yet shipped. `faillog` and `lastlog` left the Debian package with 13 and are not planned |
-| `newuidmap`, `newgidmap` | Fedora's pair, the basis of rootless containers; in scope, not yet shipped |
+| `newuidmap`, `newgidmap` | shipped. Fedora's pair, the basis of rootless containers |
 | `shadowconfig`, `cpgr`, `cppw`, `adduser` | Debian packaging scripts and a Fedora symlink, not upstream tools; out of scope |
 
 Three tools that the GNU suite ships are provided by other projects in this
@@ -145,9 +147,9 @@ docker compose run --rm debian cargo build --release
 
 ### Install
 
-Default install: 25 standalone per-tool binaries with least-privilege setuid
+Default install: 27 standalone per-tool binaries with least-privilege setuid
 layout matching GNU shadow-utils. Only `passwd`, `chfn`, `chsh`, `newgrp`,
-`gpasswd` and `sg` are installed setuid-root; the other 19 are plain `0755`.
+`gpasswd`, `sg`, `newuidmap` and `newgidmap` are installed setuid-root; the other 19 are plain `0755`.
 
 ```shell
 sudo make install PREFIX=/usr/local
@@ -155,7 +157,7 @@ sudo make install PREFIX=/usr/local
 
 Alternative: single multicall binary with symlinks. Smaller footprint (~15×
 disk savings). The binary is installed setuid-root so that `passwd`, `chfn`,
-`chsh`, `newgrp`, `gpasswd` and `sg` can serve unprivileged callers; every other
+`chsh`, `newgrp`, `gpasswd`, `sg`, `newuidmap` and `newgidmap` can serve unprivileged callers; every other
 applet drops back to the caller's uid before it runs, so the privilege model
 is the same as the per-tool layout. Intended for container/embedded use cases.
 
@@ -200,7 +202,7 @@ sudo install -o root -g root -m 4755 \
     uu_shadow-*/shadow-rs /usr/local/bin/shadow-rs
 for tool in passwd chfn chsh newgrp gpasswd sg chage chpasswd chgpasswd newusers \
             groupadd groupdel groupmod grpck pwck useradd userdel usermod vipw vigr \
-            pwconv pwunconv grpconv grpunconv login; do
+            pwconv pwunconv grpconv grpunconv login newuidmap newgidmap; do
     sudo ln -sf shadow-rs "/usr/local/bin/$tool"
 done
 ```
