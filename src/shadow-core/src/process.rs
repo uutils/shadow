@@ -207,6 +207,36 @@ pub fn block_critical_signals() -> io::Result<SavedSigSet> {
     }
 }
 
+/// Spawn `cmd` with an empty signal mask in the child.
+///
+/// A tool that blocks `SIGINT` and friends while it holds a lock -- so that a
+/// Ctrl-C cannot leave the lock behind -- passes that mask on to every child
+/// it starts, and an interactive program started under it, an editor say,
+/// then cannot be interrupted at all. The child gets a clean mask; the parent
+/// keeps its own.
+pub fn spawn_with_signals_unblocked(
+    cmd: &mut std::process::Command,
+) -> io::Result<std::process::Child> {
+    use std::os::unix::process::CommandExt as _;
+
+    // SAFETY: the closure runs in the forked child before exec. It calls only
+    // sigemptyset and sigprocmask, both async-signal-safe, and touches nothing
+    // else: no allocation, no locks, no Rust state shared with the parent.
+    unsafe {
+        cmd.pre_exec(|| {
+            let mut empty: libc::sigset_t = std::mem::zeroed();
+            if libc::sigemptyset(&raw mut empty) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::sigprocmask(libc::SIG_SETMASK, &raw const empty, std::ptr::null_mut()) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    cmd.spawn()
+}
+
 /// Restore a previously saved signal mask.
 pub fn restore_signals(saved: &SavedSigSet) -> io::Result<()> {
     // SAFETY: sigprocmask with SIG_SETMASK restores a previously captured mask.

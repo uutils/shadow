@@ -39,7 +39,7 @@ const SETUID_APPLETS: [&str; 6] = ["passwd", "chfn", "chsh", "newgrp", "gpasswd"
 // nothing, and the binding is then not mutated.
 #[allow(unused_mut)]
 fn applets() -> Vec<(&'static str, Applet)> {
-    let mut table: Vec<(&'static str, Applet)> = Vec::with_capacity(18);
+    let mut table: Vec<(&'static str, Applet)> = Vec::with_capacity(20);
     #[cfg(feature = "chage")]
     table.push(("chage", |a| chage::uumain(a.iter().cloned())));
     #[cfg(feature = "chfn")]
@@ -76,6 +76,10 @@ fn applets() -> Vec<(&'static str, Applet)> {
     table.push(("userdel", |a| userdel::uumain(a.iter().cloned())));
     #[cfg(feature = "usermod")]
     table.push(("usermod", |a| usermod::uumain(a.iter().cloned())));
+    #[cfg(feature = "vigr")]
+    table.push(("vigr", |a| vigr::uumain(a.iter().cloned())));
+    #[cfg(feature = "vipw")]
+    table.push(("vipw", |a| vipw::uumain(a.iter().cloned())));
     table
 }
 
@@ -234,7 +238,7 @@ fn print_available_utils() {
 mod tests {
     use super::*;
 
-    const ALL_TOOLS: [&str; 18] = [
+    const ALL_TOOLS: [&str; 20] = [
         "chage",
         "chfn",
         "chgpasswd",
@@ -253,6 +257,8 @@ mod tests {
         "useradd",
         "userdel",
         "usermod",
+        "vigr",
+        "vipw",
     ];
 
     // The table drives both dispatch and `--list`, so it must contain only

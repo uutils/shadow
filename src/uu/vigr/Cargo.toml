@@ -1,0 +1,32 @@
+[package]
+name = "uu_vigr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
+description = "vigr ~ (shadow-rs) edit the group file under a lock"
+
+[lib]
+path = "src/vigr.rs"
+
+[[bin]]
+name = "vigr"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+uucore = { workspace = true }
+# vigr is vipw with a different default; the GNU suite ships it as a symlink.
+uu_vipw = { path = "../vipw", version = "0.4.0" }
+
+[lints]
+workspace = true
+
+# Distributed via the `shadow-rs` multicall binary in the workspace root
+# package, not as a standalone archive (see dist-workspace.toml, issue #207).
+[package.metadata.dist]
+dist = false

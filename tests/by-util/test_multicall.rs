@@ -16,7 +16,7 @@ use std::process::Command;
 use crate::common::{run, run_cmd};
 
 /// Every applet this build is expected to carry, in `--list` order.
-const TOOLS: [&str; 18] = [
+const TOOLS: [&str; 20] = [
     "chage",
     "chfn",
     "chgpasswd",
@@ -35,6 +35,8 @@ const TOOLS: [&str; 18] = [
     "useradd",
     "userdel",
     "usermod",
+    "vigr",
+    "vipw",
 ];
 
 /// The binary with no applet argument.

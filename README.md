@@ -71,6 +71,8 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
 | `sg` | **Implemented.** Runs one command in another group; shares `newgrp`'s authorization. |
 | `chgpasswd` | **Implemented.** Batch group passwords, applied all-or-nothing. |
 | `newusers` | **Implemented.** Batch account creation: passwd, shadow, group and home. |
+| `vipw` | **Implemented.** Edit passwd or shadow under the suite's lock; the result is checked before it is installed. |
+| `vigr` | **Implemented.** `vipw` for group and gshadow. |
 
 ## Building
 
@@ -91,9 +93,9 @@ docker compose run --rm debian cargo build --release
 
 ### Install
 
-Default install: 18 standalone per-tool binaries with least-privilege setuid
+Default install: 20 standalone per-tool binaries with least-privilege setuid
 layout matching GNU shadow-utils. Only `passwd`, `chfn`, `chsh`, `newgrp`,
-`gpasswd` and `sg` are installed setuid-root; the other 12 are plain `0755`.
+`gpasswd` and `sg` are installed setuid-root; the other 14 are plain `0755`.
 
 ```shell
 sudo make install PREFIX=/usr/local
@@ -145,7 +147,7 @@ tar xzf uu_shadow-x86_64-unknown-linux-gnu.tar.gz   # or the -musl-static one
 sudo install -o root -g root -m 4755 \
     uu_shadow-*/shadow-rs /usr/local/bin/shadow-rs
 for tool in passwd chfn chsh newgrp gpasswd sg chage chpasswd chgpasswd newusers \
-            groupadd groupdel groupmod grpck pwck useradd userdel usermod; do
+            groupadd groupdel groupmod grpck pwck useradd userdel usermod vipw vigr; do
     sudo ln -sf shadow-rs "/usr/local/bin/$tool"
 done
 ```
