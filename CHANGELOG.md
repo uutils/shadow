@@ -145,6 +145,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The static musl archive aborted every setuid invocation with *argv[0] does
+  not match executed binary*, so on a host that deployed it as `make
+  install-multicall` does, no user could run `passwd`, `chfn`, `chsh`,
+  `newgrp`, `sg` or `gpasswd` at all; root, for whom the check does not run,
+  saw nothing wrong. The check read `AT_EXECFN` through rustix, which looks
+  getauxval(3) up by name at run time; in a static link nothing had pulled
+  that symbol into the binary, the lookup found nothing, and the tool's name
+  was compared against an empty string. getauxval is now called directly,
+  which links it in. Every static archive published so far, 0.2.2 through
+  0.4.0, has this defect; the glibc archives never did. CI now runs the
+  static archive setuid, through a symlink, as an unprivileged user
+
 - Two tools working on different account files at the same time could
   deadlock until both timed out. `FileLock` took the per-file `.lock` first
   and `/etc/.pwd.lock` second, so a tool holding `passwd.lock` and waiting for

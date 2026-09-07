@@ -102,6 +102,21 @@ jobs:
           "$bin" --version
           "$bin" --list | grep -qE '^ *passwd$'
           test -f "$RUNNER_TEMP/$name/PLATFORM-SUPPORT.md"
+      # Deployed the way `make install-multicall` deploys it: setuid root,
+      # reached through a symlink, called by an unprivileged user. Nothing
+      # else exercises the static binary in setuid context, and the argv[0]
+      # check once aborted every such call there (AT_EXECFN read through a
+      # by-name lookup of a symbol the static link had never pulled in).
+      - name: The archive works setuid, through a symlink, for a user
+        run: |
+          set -eu
+          name=uu_shadow-x86_64-unknown-linux-musl-static
+          sudo install -m 4755 -o root -g root "$RUNNER_TEMP/$name/shadow-rs" /usr/local/sbin/shadow-rs
+          sudo ln -sf /usr/local/sbin/shadow-rs /usr/local/bin/passwd
+          out=$(sudo -u nobody /usr/local/bin/passwd -S 2>&1) || true
+          sudo rm -f /usr/local/bin/passwd /usr/local/sbin/shadow-rs
+          echo "$out"
+          echo "$out" | grep -qE '^nobody '
       # shadow-core's crypt(3) wrapper has musl-specific expectations (no
       # yescrypt, `rounds=` honoured). Run its unit tests against the static
       # musl libc, not only Alpine's dynamic one in the Docker matrix.

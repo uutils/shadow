@@ -191,6 +191,11 @@ fn write_utmp(rec: &SessionRecord<'_>, ut_type: libc::c_short) {
     // SAFETY: standard utmpx API; `ut` is fully initialized and outlives the
     // calls. pututxline copies the record. Failures are deliberately ignored:
     // see the doc comment on record_login.
+    //
+    // The libc crate marks these deprecated on musl because musl implements
+    // them as stubs. That is the documented behaviour of the static build
+    // (docs/PLATFORM-SUPPORT.md): recording is a no-op there, not an error.
+    #[allow(deprecated)]
     unsafe {
         libc::setutxent();
         libc::pututxline(&raw const ut);
@@ -617,9 +622,30 @@ pub fn gid_exists(gid: u32) -> io::Result<bool> {
 /// from the ELF auxiliary vector records the real path the kernel executed,
 /// which cannot be spoofed from userspace.
 ///
-/// Returns `true` if the basenames match, `false` if they differ.
+/// Returns `true` if the basenames match, `false` if they differ or if
+/// `AT_EXECFN` cannot be read at all: a check that cannot run must fail
+/// closed in a setuid binary.
+///
+/// The value is read through getauxval(3) called directly. rustix's `param`
+/// module reaches that function by name at run time, through `dlsym(3)`, so
+/// that it can tolerate a glibc older than 2.16. In a statically linked
+/// binary a symbol is only present if something links it in, and a lookup by
+/// name links nothing in: the static musl archive carried no `getauxval` at
+/// all, rustix reported an empty `AT_EXECFN`, and every setuid invocation of
+/// that archive aborted here. A direct call both links the symbol and needs
+/// no lookup. glibc 2.34, the floor of the glibc archives, and musl both
+/// provide it.
 pub fn verify_argv0_matches_execfn(argv0: &str) -> bool {
-    let execfn = rustix::param::linux_execfn();
+    // SAFETY: getauxval has no preconditions. The `AT_EXECFN` string is
+    // placed on the initial stack by the kernel and lives as long as the
+    // process, so the pointer is valid for the borrow taken here.
+    let execfn = unsafe {
+        let ptr = libc::getauxval(libc::AT_EXECFN) as *const libc::c_char;
+        if ptr.is_null() {
+            return false;
+        }
+        std::ffi::CStr::from_ptr(ptr)
+    };
     let execfn = execfn.to_string_lossy();
 
     let argv0_base = std::path::Path::new(argv0)
