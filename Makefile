@@ -27,7 +27,7 @@ USER_TOOLS = $(SETUID_TOOLS) $(USER_BIN_TOOLS) $(SETGID_SHADOW_TOOLS)
 
 ALL_TOOLS = $(SETUID_TOOLS) $(ROOT_TOOLS) $(USER_BIN_TOOLS) $(SETGID_SHADOW_TOOLS)
 
-.PHONY: all build build-multicall build-arm64 dist-musl check test test-gnu-compat test-unprivileged test-arm64 install install-multicall uninstall clean
+.PHONY: all build build-multicall build-arm64 dist-musl check test test-gnu-compat test-unprivileged test-arm64 verify-release install install-multicall uninstall clean
 
 all: build
 
@@ -109,6 +109,14 @@ build-arm64:
 # and PAM FFI boundaries.
 test-arm64: build-arm64
 	ARM64_BIN=$(ARM64_BIN) bash tests/arm64-smoke.sh
+
+# Run the archives of a published release the way a user will, before the
+# release is announced: make verify-release TAG=0.5.0. Runs on the host, since
+# it drives docker (debian:12 for the glibc archive, alpine for the static
+# one, the debian image with qemu for arm64); needs `gh` logged in.
+verify-release:
+	@test -n "$(TAG)" || { echo "usage: make verify-release TAG=<version>" >&2; exit 2; }
+	bash tests/verify-release.sh $(TAG)
 
 # Run the suite as an unprivileged user.
 #

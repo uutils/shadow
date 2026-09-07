@@ -88,6 +88,22 @@ release also ships a *static* musl archive, built without PAM, which
 build gives up is documented in
 [docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md).
 
+After a tag has been pushed and the release pipeline has finished, run the
+published archives before announcing anything:
+
+```shell
+make verify-release TAG=0.5.0    # on the host: it drives docker and gh
+```
+
+It downloads the three archives, checks their digests, and runs each in a
+container of the kind it is meant for -- Debian 12 for the glibc archive,
+Alpine for the static one, qemu for arm64 -- installed setuid root and called
+by an unprivileged user through a symlink, which is how `make
+install-multicall` deploys them and the one thing no test suite does, since
+they all run as root. A green pipeline has shipped an archive that would not
+start and another whose setuid tools no user could run; this is what catches
+that.
+
 ### Linting
 
 ```shell

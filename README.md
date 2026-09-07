@@ -170,13 +170,14 @@ sudo make install-multicall PREFIX=/usr/local
 
 #### From a release archive
 
-Each [release](https://github.com/uutils/shadow/releases) publishes two
+Each [release](https://github.com/uutils/shadow/releases) publishes three
 archives, each with a `.sha256` alongside. They contain the same `shadow-rs`
-multicall binary but are **not interchangeable**:
+multicall binary but the two kinds are **not interchangeable**:
 
 | Archive | libc | Linking | Use it for |
 |---|---|---|---|
 | `uu_shadow-x86_64-unknown-linux-gnu.tar.gz` | glibc | dynamic | Any regular distribution. **This is the full build.** |
+| `uu_shadow-aarch64-unknown-linux-gnu.tar.gz` | glibc | dynamic | The same build for arm64 servers and Apple-silicon containers. |
 | `uu_shadow-x86_64-unknown-linux-musl-static.tar.gz` | musl | static | Minimal containers and embedded images: local `/etc/passwd`, no directory service, no PAM stack. |
 
 The static archive has no runtime dependencies, and pays for that with three
@@ -187,15 +188,15 @@ tools:
   `chsh` are root-only (they authenticate the caller through PAM and fail
   closed without it).
 - **No NSS.** Users from LDAP, SSSD, Active Directory or systemd-userdb are
-  invisible to the five tools that look up the calling user.
+  invisible to the eleven tools that look a user up.
 - **No yescrypt (`$y$`).** The default password hash on Debian 12+ and
   Ubuntu 24.04 can be neither verified nor produced.
 
-If any of those matter on the host, use the glibc archive.
+If any of those matter on the host, use a glibc archive.
 [docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md) explains each gap, what
 still works, and how the archive is built.
 
-Either archive ships a plain binary — nothing is installed, symlinked, or made
+Every archive ships a plain binary — nothing is installed, symlinked, or made
 setuid by extracting it. To deploy it the same way `make install-multicall`
 would:
 
@@ -210,7 +211,7 @@ for tool in passwd chfn chsh newgrp gpasswd sg chage chpasswd chgpasswd newusers
 done
 ```
 
-Mode `4755` is what the four self-service applets need; the others give the
+Mode `4755` is what the eight setuid applets need; the others give the
 privilege up before running. Run `shadow-rs --list` to see the applets a
 given build contains, and `sha256sum -c uu_shadow-*.tar.gz.sha256` to verify
 a download.
