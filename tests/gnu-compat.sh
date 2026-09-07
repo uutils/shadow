@@ -241,6 +241,16 @@ for pair in \
     compare_exit "$tool --help" "$RS/$tool --help" "$gnu --help"
 done
 
+# The GNU id mappers take no --help: any bad command line is the usage text
+# and exit 1, ours answers --help with 0. What the two share is what happens
+# to a caller who gets the operands wrong, so that is what is compared.
+echo "=== newuidmap / newgidmap refuse the same bad command lines ==="
+compare_exit "newuidmap with no operands" "$RS/newuidmap" "/usr/bin/newuidmap"
+compare_exit "newgidmap with no operands" "$RS/newgidmap" "/usr/bin/newgidmap"
+compare_exit "newuidmap with an incomplete triple" "$RS/newuidmap 1 0 100000" "/usr/bin/newuidmap 1 0 100000"
+compare_exit "newgidmap with a zero count" "$RS/newgidmap 1 0 100000 0" "/usr/bin/newgidmap 1 0 100000 0"
+compare_exit "newuidmap on a process that is not there" "$RS/newuidmap 4194304 0 0 1" "/usr/bin/newuidmap 4194304 0 0 1"
+
 # ── Results ─────────────────────────────────────────────────────────
 
 

@@ -100,8 +100,8 @@ hash_password() {
 
 # ── TOOLS list ──────────────────────────────────────────────────────
 
-TOOLS="passwd pwck useradd userdel usermod chpasswd chgpasswd newusers chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp sg vipw vigr pwconv pwunconv grpconv grpunconv login"
-SETUID_TOOLS="passwd chfn chsh newgrp gpasswd sg"
+TOOLS="passwd pwck useradd userdel usermod chpasswd chgpasswd newusers chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp sg vipw vigr pwconv pwunconv grpconv grpunconv login newuidmap newgidmap"
+SETUID_TOOLS="passwd chfn chsh newgrp gpasswd sg newuidmap newgidmap"
 
 # The tools an unprivileged user runs are installed in bin, the rest in sbin,
 # which is the split the GNU package uses: sbin is not on a normal user's
@@ -869,6 +869,57 @@ test_gpasswd_group_admin() {
     userdel -r gp_member 2>/dev/null || true
 }
 
+# ── newuidmap / newgidmap: id maps for a user namespace ────────────
+
+test_idmap() {
+    section "newuidmap / newgidmap — id maps for a user namespace"
+
+    userdel -r im_user 2>/dev/null || true
+    assert_ok "useradd -M im_user" useradd -M im_user
+    printf 'im_user:200000:65536\n' >> /etc/subuid
+    printf 'im_user:200000:65536\n' >> /etc/subgid
+
+    assert_fail "no operands is a usage error" newuidmap
+    assert_contains "an operand count that is not triples is reported" "ranges:" \
+        bash -c "newuidmap 1 0 200000 2>&1; true"
+    assert_contains "a zero count is the overflow message" "subuid overflow detected." \
+        bash -c "newuidmap 1 0 200000 0 2>&1; true"
+    assert_contains "no such process" "Could not open proc directory" \
+        bash -c "newuidmap 4194304 0 0 1 2>&1; true"
+
+    if ! su -s /bin/sh im_user -c 'unshare -U true' 2>/dev/null; then
+        echo -e "  ${YELLOW}⊘${NC} user namespaces not available here, skipping the live checks"
+        userdel im_user 2>/dev/null || true
+        return
+    fi
+    # A namespace owned by im_user, kept alive while the checks run.
+    su -s /bin/sh im_user -c 'unshare -U sh -c "echo \$\$ > /tmp/im_pid; sleep 30"' &
+    sleep 1; pid=$(cat /tmp/im_pid)
+    uid=$(id -u im_user); gid=$(id -g im_user)
+
+    assert_contains "a range outside the grant is refused by name" "not allowed" \
+        su -s /bin/sh im_user -c "newuidmap $pid 0 300000 10 2>&1; true"
+    assert_contains "overlapping ranges are refused by name" "overlap" \
+        su -s /bin/sh im_user -c "newuidmap $pid 0 200000 10 5 200100 10 2>&1; true"
+    assert_contains "someone else's process is refused" "owned by a different user" \
+        su -s /bin/sh im_user -c "newuidmap 1 0 $uid 1 2>&1; true"
+    assert_ok "the owner maps their own uid once" \
+        su -s /bin/sh im_user -c "newuidmap $pid 0 $uid 1"
+    assert_ok "and the kernel shows it" \
+        bash -c "test \"\$(tr -s ' ' < /proc/$pid/uid_map | sed 's/^ //')\" = '0 $uid 1'"
+    assert_fail "a second write is refused" \
+        su -s /bin/sh im_user -c "newuidmap $pid 0 $uid 1"
+    echo deny > /proc/$pid/setgroups
+    assert_ok "the owner maps their own gid once" \
+        su -s /bin/sh im_user -c "newgidmap $pid 0 $gid 1"
+    assert_ok "and the kernel shows that too" \
+        bash -c "test \"\$(tr -s ' ' < /proc/$pid/gid_map | sed 's/^ //')\" = '0 $gid 1'"
+
+    kill $pid 2>/dev/null; wait 2>/dev/null
+    sed -i '/^im_user:/d' /etc/subuid /etc/subgid
+    userdel im_user 2>/dev/null || true
+}
+
 # ── login: a session on a terminal ─────────────────────────────────
 
 test_login() {
@@ -1347,6 +1398,7 @@ main() {
     test_vipw
     test_pwconv_family
     test_login
+    test_idmap
     test_aging_and_input
     test_audit_logging
     test_root_option

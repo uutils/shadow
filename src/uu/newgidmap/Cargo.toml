@@ -1,0 +1,32 @@
+[package]
+name = "uu_newgidmap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
+description = "newgidmap ~ (shadow-rs) set the group ID mapping of a user namespace"
+
+[lib]
+path = "src/newgidmap.rs"
+
+[[bin]]
+name = "newgidmap"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+uucore = { workspace = true }
+# newgidmap is newuidmap writing the other map; one engine, two names.
+uu_newuidmap = { path = "../newuidmap", version = "0.4.0" }
+
+[lints]
+workspace = true
+
+# Distributed via the `shadow-rs` multicall binary in the workspace root
+# package, not as a standalone archive (see dist-workspace.toml, issue #207).
+[package.metadata.dist]
+dist = false

@@ -46,6 +46,8 @@ mod test_login;
 mod test_multicall;
 #[path = "by-util/test_newgrp.rs"]
 mod test_newgrp;
+#[path = "by-util/test_newuidmap.rs"]
+mod test_newuidmap;
 #[path = "by-util/test_newusers.rs"]
 mod test_newusers;
 #[path = "by-util/test_passwd.rs"]

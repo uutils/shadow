@@ -835,12 +835,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_newgidmap"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "uu_newuidmap",
+ "uucore",
+]
+
+[[package]]
 name = "uu_newgrp"
 version = "0.4.0"
 dependencies = [
  "clap",
  "rustix",
  "shadow-core",
+ "uucore",
+]
+
+[[package]]
+name = "uu_newuidmap"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "rustix",
+ "shadow-core",
+ "tempfile",
  "uucore",
 ]
 
@@ -927,7 +947,9 @@ dependencies = [
  "uu_grpconv",
  "uu_grpunconv",
  "uu_login",
+ "uu_newgidmap",
  "uu_newgrp",
+ "uu_newuidmap",
  "uu_newusers",
  "uu_passwd",
  "uu_pwck",

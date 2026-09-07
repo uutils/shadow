@@ -86,6 +86,9 @@ Effect, and this is the heaviest of the three gaps:
   than apply an unverified one, so without PAM they refuse every non-root
   invocation outright.
 
+`newuidmap` and `newgidmap` need neither PAM nor NSS beyond `getpwuid_r` for
+the caller, and work in the static build.
+
 `login` is the fourth: without PAM it has no way to authenticate, so the
 applet prints *PAM support is not compiled in* and exits 1. A static image
 that needs a getty-driven login must use the glibc archive. utmp and wtmp
