@@ -64,6 +64,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The README states the project's scope: the binary set of the upstream
+  suite as the distributions package it, established from package metadata and
+  man pages rather than source; which tools remain; and the three boundaries
+  within the organisation -- `login` is this project's, `nologin` is
+  `uutils/util-linux`'s, `su` is `sudo-rs`'s. It also lists every place this
+  project deliberately departs from GNU shadow, with the rule behind them
+
 - `shadow_core::process::spawn_with_signals_unblocked` starts a child with a
   clean signal mask. A tool that blocks `SIGINT` while it holds a lock passes
   that mask to every child, and an editor started under it could not be
