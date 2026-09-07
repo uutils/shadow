@@ -76,6 +76,40 @@ pub fn initgroups(user: &CStr, gid: u32) -> io::Result<()> {
     }
 }
 
+/// `getgroups()` — the process's current supplementary group list.
+pub fn getgroups() -> io::Result<Vec<u32>> {
+    // SAFETY: a null buffer with size 0 asks getgroups for the count only,
+    // which is the documented way to size the real call.
+    let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+    if count < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let len = usize::try_from(count).unwrap_or(0);
+    let mut groups: Vec<libc::gid_t> = vec![0; len];
+    // SAFETY: the buffer holds exactly `count` gid_t, which is the size passed.
+    let filled = unsafe { libc::getgroups(count, groups.as_mut_ptr()) };
+    if filled < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    groups.truncate(usize::try_from(filled).unwrap_or(0));
+    Ok(groups)
+}
+
+/// `setgroups(groups)` — replace the process's supplementary group list.
+///
+/// Requires `CAP_SETGID`, so a setuid-root tool must call this before it gives
+/// the privilege back.
+pub fn setgroups(groups: &[u32]) -> io::Result<()> {
+    // SAFETY: the pointer and length describe `groups` exactly, and setgroups
+    // only reads from it.
+    let ret = unsafe { libc::setgroups(groups.len(), groups.as_ptr()) };
+    if ret == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // exec
 // ---------------------------------------------------------------------------

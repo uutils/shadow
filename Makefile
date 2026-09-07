@@ -4,7 +4,7 @@ SBINDIR ?= $(PREFIX)/sbin
 
 # Tools that need setuid-root to allow non-root callers (change own password,
 # GECOS, shell, effective group, or administer a group as a group admin).
-SETUID_TOOLS = passwd chfn chsh newgrp gpasswd
+SETUID_TOOLS = passwd chfn chsh newgrp gpasswd sg
 
 # Root-only tools (no setuid; fail at getuid() check for non-root callers).
 ROOT_TOOLS = useradd userdel usermod chpasswd \
@@ -107,9 +107,8 @@ test-arm64: build-arm64
 test-gnu-compat:
 	bash tests/gnu-compat.sh
 
-# Default install: 15 standalone per-tool binaries, with the setuid layout and
-# the bin/sbin split GNU shadow-utils uses. Only passwd/chfn/chsh/newgrp are
-# setuid.
+# Default install: 16 standalone per-tool binaries, with the setuid layout and
+# the bin/sbin split GNU shadow-utils uses. Only $(SETUID_TOOLS) are setuid.
 install: build
 	@for tool in $(SETUID_TOOLS); do \
 		install -Dm4755 target/release/$$tool $(DESTDIR)$(BINDIR)/$$tool || exit 1; \
@@ -124,9 +123,9 @@ install: build
 	@echo "  $(DESTDIR)$(SBINDIR)/ root (0755):   $(ROOT_TOOLS)"
 
 # Opt-in install: single multicall binary with symlinks. Smaller footprint.
-# The binary is installed setuid-root for passwd/chfn/chsh/newgrp/gpasswd; the
-# other applets drop back to the caller's uid before running, so the privilege
-# model matches the per-tool layout. Intended for container/embedded use.
+# The binary is installed setuid-root for $(SETUID_TOOLS); the other applets
+# drop back to the caller's uid before running, so the privilege model matches
+# the per-tool layout. Intended for container/embedded use.
 install-multicall: build-multicall
 	install -Dm4755 target/release/shadow-rs $(DESTDIR)$(SBINDIR)/shadow-rs
 	@install -d $(DESTDIR)$(BINDIR)

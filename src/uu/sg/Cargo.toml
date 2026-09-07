@@ -1,5 +1,5 @@
 [package]
-name = "uu_newgrp"
+name = "uu_sg"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,18 +8,17 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 rust-version.workspace = true
-description = "newgrp ~ (shadow-rs) change effective group ID"
+description = "sg ~ (shadow-rs) run a command with a different primary group"
 
 [lib]
-path = "src/newgrp.rs"
+path = "src/sg.rs"
 
 [[bin]]
-name = "newgrp"
+name = "sg"
 path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-rustix = { workspace = true }
 shadow-core = { workspace = true, features = ["crypt"] }
 uucore = { workspace = true }
 

@@ -10,8 +10,9 @@
 //!
 //! # Privileges
 //!
-//! The per-tool install makes only `passwd`, `chfn`, `chsh` and `newgrp`
-//! setuid-root. A multicall install has to make the one binary setuid, which
+//! The per-tool install makes only `passwd`, `chfn`, `chsh`, `newgrp`,
+//! `gpasswd` and `sg` setuid-root.
+//! A multicall install has to make the one binary setuid, which
 //! would hand euid 0 to every applet — an unprivileged `pwck -s` rewriting
 //! `/etc/passwd`. So before an applet outside that set runs, the binary drops
 //! back to the caller's uid, and the two layouts have the same privilege
@@ -24,9 +25,11 @@ use std::process::ExitCode;
 
 type Applet = fn(&[OsString]) -> i32;
 
-/// Applets that keep euid 0 for an unprivileged caller: the same five that
-/// `make install` marks setuid.
-const SETUID_APPLETS: [&str; 5] = ["passwd", "chfn", "chsh", "newgrp", "gpasswd"];
+/// Applets that keep euid 0 for an unprivileged caller: the same six that
+/// `make install` marks setuid. `sg` is here for the reason `newgrp` is --
+/// it has to read `/etc/gshadow` to check a group password, and the GNU suite
+/// ships it as a symlink to the setuid `newgrp` for exactly that.
+const SETUID_APPLETS: [&str; 6] = ["passwd", "chfn", "chsh", "newgrp", "gpasswd", "sg"];
 
 /// Every applet compiled into this binary, by name, in `--list` order.
 // `#[cfg]` is not accepted on the elements of a `vec![]` literal, so the
@@ -36,7 +39,7 @@ const SETUID_APPLETS: [&str; 5] = ["passwd", "chfn", "chsh", "newgrp", "gpasswd"
 // nothing, and the binding is then not mutated.
 #[allow(unused_mut)]
 fn applets() -> Vec<(&'static str, Applet)> {
-    let mut table: Vec<(&'static str, Applet)> = Vec::with_capacity(14);
+    let mut table: Vec<(&'static str, Applet)> = Vec::with_capacity(16);
     #[cfg(feature = "chage")]
     table.push(("chage", |a| chage::uumain(a.iter().cloned())));
     #[cfg(feature = "chfn")]
@@ -61,6 +64,8 @@ fn applets() -> Vec<(&'static str, Applet)> {
     table.push(("passwd", |a| passwd::uumain(a.iter().cloned())));
     #[cfg(feature = "pwck")]
     table.push(("pwck", |a| pwck::uumain(a.iter().cloned())));
+    #[cfg(feature = "sg")]
+    table.push(("sg", |a| sg::uumain(a.iter().cloned())));
     #[cfg(feature = "useradd")]
     table.push(("useradd", |a| useradd::uumain(a.iter().cloned())));
     #[cfg(feature = "userdel")]
@@ -225,9 +230,9 @@ fn print_available_utils() {
 mod tests {
     use super::*;
 
-    const ALL_TOOLS: [&str; 15] = [
+    const ALL_TOOLS: [&str; 16] = [
         "chage", "chfn", "chpasswd", "chsh", "gpasswd", "groupadd", "groupdel", "groupmod",
-        "grpck", "newgrp", "passwd", "pwck", "useradd", "userdel", "usermod",
+        "grpck", "newgrp", "passwd", "pwck", "sg", "useradd", "userdel", "usermod",
     ];
 
     // The table drives both dispatch and `--list`, so it must contain only
@@ -242,14 +247,17 @@ mod tests {
         assert!(names.iter().all(|n| ALL_TOOLS.contains(n)));
     }
 
-    // Exactly the four tools that the per-tool install marks setuid keep the
+    // Exactly the tools that the per-tool install marks setuid keep the
     // privilege; every other applet gives it up before running.
     #[test]
     fn only_self_service_tools_keep_privilege() {
         for tool in ALL_TOOLS {
             assert_eq!(
                 keeps_privilege(tool),
-                matches!(tool, "passwd" | "chfn" | "chsh" | "newgrp" | "gpasswd"),
+                matches!(
+                    tool,
+                    "passwd" | "chfn" | "chsh" | "newgrp" | "gpasswd" | "sg"
+                ),
                 "{tool}"
             );
         }

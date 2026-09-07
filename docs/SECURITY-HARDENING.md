@@ -7,7 +7,8 @@ Techniques adopted from OpenBSD and best practices for setuid-root tools.
 ### Privilege model
 
 - [x] `caller_is_root()` uses `getuid()` not `geteuid()` for authorization
-- [x] In the multicall layout, an applet outside `passwd`/`chfn`/`chsh`/`newgrp`
+- [x] In the multicall layout, an applet outside
+      `passwd`/`chfn`/`chsh`/`newgrp`/`gpasswd`/`sg`
       drops to the caller's uid before running, so the single setuid binary has
       the same privilege model as the per-tool install — and fails closed if the
       kernel will not take the privilege away
@@ -34,7 +35,9 @@ Techniques adopted from OpenBSD and best practices for setuid-root tools.
       (`PrivDrop` RAII, #39). `passwd` keeps euid 0 across `pam_chauthtok`:
       `pam_unix` needs it to run its helper and rewrite `/etc/shadow`, and keys
       the current-password prompt on the *real* uid, which stays the caller's
-- [x] `initgroups()` in `newgrp` (prevent supplementary group leak across exec)
+- [x] `initgroups()` in `newgrp` and `sg` (prevent supplementary group leak
+      across exec), with the caller's original primary group added back so the
+      switch does not cost them access to their own files
 
 ### File integrity
 

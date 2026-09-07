@@ -68,6 +68,7 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
 | `chsh` | **Implemented.** Shell change with /etc/shells validation. |
 | `newgrp` | **Implemented.** Effective group change with crypt verification. |
 | `gpasswd` | **Implemented.** Group membership, administrators, and group password. |
+| `sg` | **Implemented.** Runs one command in another group; shares `newgrp`'s authorization. |
 
 ## Building
 
@@ -88,9 +89,9 @@ docker compose run --rm debian cargo build --release
 
 ### Install
 
-Default install: 15 standalone per-tool binaries with least-privilege setuid
+Default install: 16 standalone per-tool binaries with least-privilege setuid
 layout matching GNU shadow-utils. Only `passwd`, `chfn`, `chsh`, `newgrp`,
-`gpasswd` are installed setuid-root; the other 10 are plain `0755`.
+`gpasswd` and `sg` are installed setuid-root; the other 10 are plain `0755`.
 
 ```shell
 sudo make install PREFIX=/usr/local
@@ -98,7 +99,7 @@ sudo make install PREFIX=/usr/local
 
 Alternative: single multicall binary with symlinks. Smaller footprint (~15×
 disk savings). The binary is installed setuid-root so that `passwd`, `chfn`,
-`chsh`, `newgrp` and `gpasswd` can serve unprivileged callers; every other
+`chsh`, `newgrp`, `gpasswd` and `sg` can serve unprivileged callers; every other
 applet drops back to the caller's uid before it runs, so the privilege model
 is the same as the per-tool layout. Intended for container/embedded use cases.
 
@@ -141,7 +142,7 @@ would:
 tar xzf uu_shadow-x86_64-unknown-linux-gnu.tar.gz   # or the -musl-static one
 sudo install -o root -g root -m 4755 \
     uu_shadow-*/shadow-rs /usr/local/bin/shadow-rs
-for tool in passwd chfn chsh newgrp gpasswd chage chpasswd groupadd groupdel \
+for tool in passwd chfn chsh newgrp gpasswd sg chage chpasswd groupadd groupdel \
             groupmod grpck pwck useradd userdel usermod; do
     sudo ln -sf shadow-rs "/usr/local/bin/$tool"
 done

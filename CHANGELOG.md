@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `sg`, the sixteenth tool: it runs a single command with a different primary
+  group. `sg` and `newgrp` decide who may enter a group by the same rules and
+  enter it the same way — on a GNU system they are one binary reached through a
+  symlink — so the shared half now lives in `shadow_core::group_switch` and both
+  tools call it. `sg` execs the command rather than forking and waiting for it,
+  which is what lets the command's own exit status reach the caller unaltered
+
+### Changed
+
+- `newgrp` no longer refuses a passwordless group before prompting. It asked
+  for a password only when the group had one, so whether a prompt appeared told
+  any caller which groups have passwords set — a list of the ones worth
+  attacking. Both tools now prompt either way
+
+### Fixed
+
+- `newgrp` dropped the caller's original primary group when it rebuilt the
+  supplementary group list. `initgroups()` builds that list from the member
+  lists in `/etc/group`, where a primary group never appears, so `newgrp staff`
+  cost the caller access to their own files until they left the new shell. The
+  group they started in is now added back, matching the GNU tools
+
 ## [0.4.0] - 2026-09-06
 
 ### Added

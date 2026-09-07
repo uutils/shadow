@@ -45,6 +45,11 @@ pub mod pam;
 #[allow(unsafe_code)]
 pub mod crypt;
 
+// Entering a group has to check the group password, so it follows the gate of
+// the module that checks it.
+#[cfg(feature = "crypt")]
+pub mod group_switch;
+
 // Process-level POSIX wrappers (setuid, sigprocmask, etc.) — FFI requires unsafe.
 #[allow(unsafe_code)]
 pub mod process;

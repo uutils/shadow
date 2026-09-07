@@ -216,6 +216,7 @@ for pair in \
     "chfn:/usr/bin/chfn" \
     "chsh:/usr/bin/chsh" \
     "newgrp:/usr/bin/newgrp" \
+    "sg:/usr/bin/sg" \
     "useradd:/usr/sbin/useradd" \
     "userdel:/usr/sbin/userdel" \
     "usermod:/usr/sbin/usermod" \
