@@ -241,3 +241,170 @@ mod tests {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Ranges: what usermod -v/-V/-w/-W do to a user's entries
+// ---------------------------------------------------------------------------
+
+/// Parse `FIRST-LAST`, both inclusive, as usermod(8) spells a range.
+///
+/// Plain decimals only, `LAST` not below `FIRST`, and nothing above the
+/// 32-bit ids the kernel maps. `None` for anything else, which the caller
+/// reports as an invalid range.
+#[must_use]
+pub fn parse_range(spec: &str) -> Option<(u64, u64)> {
+    let (first, last) = spec.split_once('-')?;
+    let number = |s: &str| {
+        (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| s.parse::<u64>().ok())
+            .flatten()
+            .filter(|n| u32::try_from(*n).is_ok())
+    };
+    let (first, last) = (number(first)?, number(last)?);
+    (last >= first).then_some((first, last))
+}
+
+/// Grant `[first, last]` to `name`.
+///
+/// A range already covered by one of the user's entries is left alone -- the
+/// grant exists, and a second copy would only confuse whoever reads the file
+/// -- otherwise a new entry is appended. No check is made against other
+/// users' entries: the GNU tool makes none, and an administrator may
+/// deliberately share a range.
+pub fn add_range(entries: &mut Vec<SubIdEntry>, name: &str, first: u64, last: u64) {
+    let covered = entries
+        .iter()
+        .any(|e| e.name == name && e.start <= first && last < e.start + e.count);
+    if !covered {
+        entries.push(SubIdEntry {
+            name: name.to_string(),
+            start: first,
+            count: last - first + 1,
+        });
+    }
+}
+
+/// Revoke `[first, last]` from `name`.
+///
+/// An entry the range covers entirely disappears; one it overlaps is trimmed,
+/// and one it cuts through the middle of is split in two, so the ids on
+/// either side stay granted. A range the user never had is a no-op.
+pub fn remove_range(entries: &mut Vec<SubIdEntry>, name: &str, first: u64, last: u64) {
+    let mut kept = Vec::with_capacity(entries.len() + 1);
+    for e in entries.drain(..) {
+        if e.name != name || e.count == 0 {
+            kept.push(e);
+            continue;
+        }
+        let (start, end) = (e.start, e.start + e.count - 1);
+        if last < start || first > end {
+            kept.push(e);
+            continue;
+        }
+        if start < first {
+            kept.push(SubIdEntry {
+                name: e.name.clone(),
+                start,
+                count: first - start,
+            });
+        }
+        if end > last {
+            kept.push(SubIdEntry {
+                name: e.name.clone(),
+                start: last + 1,
+                count: end - last,
+            });
+        }
+    }
+    *entries = kept;
+}
+
+#[cfg(test)]
+mod range_tests {
+    use super::*;
+
+    fn e(name: &str, start: u64, count: u64) -> SubIdEntry {
+        SubIdEntry {
+            name: name.to_string(),
+            start,
+            count,
+        }
+    }
+
+    #[test]
+    fn test_parse_range() {
+        assert_eq!(parse_range("300000-300999"), Some((300_000, 300_999)));
+        assert_eq!(parse_range("5-5"), Some((5, 5)));
+        assert_eq!(parse_range("0-10"), Some((0, 10)));
+        for bad in [
+            "300999-300000",
+            "a-b",
+            "300000",
+            "-5",
+            "5-",
+            "1-4294967296",
+            " 1-2",
+            "1-2-3",
+        ] {
+            assert_eq!(parse_range(bad), None, "{bad:?}");
+        }
+    }
+
+    /// Adding appends, unless the user already holds the range.
+    #[test]
+    fn test_add_range() {
+        let mut v = vec![e("alice", 100_000, 65_536)];
+        add_range(&mut v, "alice", 300_000, 300_999);
+        assert_eq!(v.len(), 2);
+        assert_eq!((v[1].start, v[1].count), (300_000, 1000));
+        add_range(&mut v, "alice", 300_000, 300_999);
+        add_range(&mut v, "alice", 300_500, 300_600);
+        assert_eq!(v.len(), 2, "covered ranges are not added again");
+        add_range(&mut v, "bob", 300_000, 300_999);
+        assert_eq!(v.len(), 3, "another user may hold the same ids");
+    }
+
+    /// Removing trims, splits or deletes, and ignores what was never there.
+    #[test]
+    fn test_remove_range() {
+        let mut v = vec![e("alice", 300_000, 1000), e("bob", 300_000, 1000)];
+        remove_range(&mut v, "alice", 300_000, 300_499);
+        assert_eq!(
+            v.iter()
+                .filter(|x| x.name == "alice")
+                .map(|x| (x.start, x.count))
+                .collect::<Vec<_>>(),
+            vec![(300_500, 500)]
+        );
+        assert!(
+            v.iter().any(|x| x.name == "bob" && x.count == 1000),
+            "bob is untouched"
+        );
+
+        remove_range(&mut v, "alice", 300_700, 300_799);
+        let alice: Vec<_> = v
+            .iter()
+            .filter(|x| x.name == "alice")
+            .map(|x| (x.start, x.count))
+            .collect();
+        assert_eq!(
+            alice,
+            vec![(300_500, 200), (300_800, 200)],
+            "a cut in the middle splits"
+        );
+
+        remove_range(&mut v, "alice", 500_000, 500_010);
+        assert_eq!(
+            v.iter().filter(|x| x.name == "alice").count(),
+            2,
+            "a range never held is a no-op"
+        );
+
+        remove_range(&mut v, "alice", 300_000, 300_999);
+        assert_eq!(
+            v.iter().filter(|x| x.name == "alice").count(),
+            0,
+            "covered entries disappear"
+        );
+    }
+}

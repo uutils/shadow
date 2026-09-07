@@ -624,3 +624,195 @@ mod tests {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Aging: what an account's shadow line says about logging in today
+// ---------------------------------------------------------------------------
+
+/// What the aging fields mean for a login attempt on a given day.
+///
+/// The order of the variants is the order the checks are made in; the first
+/// that applies wins, which is how `login` and `expiry` behave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Aging {
+    /// The account has expired, or its password has been expired for longer
+    /// than the inactivity period allows. No login, no password change.
+    AccountExpired,
+    /// The password must be changed before the session continues: it was
+    /// expired by an administrator (`last_change` of 0) or has aged past
+    /// `max_age`.
+    MustChange,
+    /// The password expires within `warn_days`; `0` means today.
+    ExpiresIn(i64),
+    /// Nothing to report.
+    Ok,
+}
+
+/// A `max_age` at or above this many days disables expiry, as `chage -l`
+/// prints `never` at this value.
+const NEVER: i64 = 10_000;
+
+impl ShadowEntry {
+    /// Judge the aging fields as of `today` (days since the epoch).
+    ///
+    /// Arithmetic is checked: every input is read from a file anyone who can
+    /// write `/etc/shadow` chooses, and plain addition wraps in release builds.
+    #[must_use]
+    pub fn aging(&self, today: i64) -> Aging {
+        if let Some(expire) = self.expire_date
+            && expire > 0
+            && today >= expire
+        {
+            return Aging::AccountExpired;
+        }
+        let Some(last) = self.last_change else {
+            // No date at all: nothing is enforced.
+            return Aging::Ok;
+        };
+        if last == 0 {
+            return Aging::MustChange;
+        }
+        let Some(max) = self.max_age.filter(|m| *m >= 0 && *m < NEVER) else {
+            return Aging::Ok;
+        };
+        let Some(expires) = last.checked_add(max) else {
+            return Aging::Ok;
+        };
+        if today > expires {
+            // Past the inactivity period the account itself is disabled.
+            if let Some(inactive) = self.inactive_days.filter(|i| *i >= 0)
+                && let Some(limit) = expires.checked_add(inactive)
+                && today > limit
+            {
+                return Aging::AccountExpired;
+            }
+            return Aging::MustChange;
+        }
+        if let Some(warn) = self.warn_days.filter(|w| *w > 0)
+            && let Some(warn_from) = expires.checked_sub(warn)
+            && today >= warn_from
+        {
+            return Aging::ExpiresIn(expires - today);
+        }
+        Aging::Ok
+    }
+}
+
+#[cfg(test)]
+mod aging_tests {
+    use super::*;
+
+    fn entry(
+        last: Option<i64>,
+        max: Option<i64>,
+        warn: Option<i64>,
+        inactive: Option<i64>,
+        expire: Option<i64>,
+    ) -> ShadowEntry {
+        ShadowEntry {
+            name: "a".to_string(),
+            passwd: "$6$x$y".to_string(),
+            last_change: last,
+            min_age: Some(0),
+            max_age: max,
+            warn_days: warn,
+            inactive_days: inactive,
+            expire_date: expire,
+            reserved: String::new(),
+        }
+    }
+
+    #[test]
+    fn test_healthy_and_never() {
+        assert_eq!(
+            entry(Some(20_000), Some(99_999), Some(7), None, None).aging(20_100),
+            Aging::Ok
+        );
+        assert_eq!(
+            entry(Some(20_000), None, Some(7), None, None).aging(30_000),
+            Aging::Ok
+        );
+        assert_eq!(
+            entry(None, Some(1), Some(7), None, None).aging(30_000),
+            Aging::Ok,
+            "no date, nothing enforced"
+        );
+        assert_eq!(
+            entry(Some(20_000), Some(10_000), Some(7), None, None).aging(40_000),
+            Aging::Ok,
+            "10000 means never"
+        );
+    }
+
+    #[test]
+    fn test_must_change() {
+        assert_eq!(
+            entry(Some(0), Some(99_999), None, None, None).aging(20_000),
+            Aging::MustChange,
+            "last change 0 is the admin's marker"
+        );
+        assert_eq!(
+            entry(Some(20_000), Some(30), None, None, None).aging(20_031),
+            Aging::MustChange
+        );
+        assert_eq!(
+            entry(Some(20_000), Some(30), None, None, None).aging(20_030),
+            Aging::Ok,
+            "the last valid day is not yet expired"
+        );
+    }
+
+    #[test]
+    fn test_warning_window() {
+        let e = entry(Some(20_000), Some(30), Some(7), None, None);
+        assert_eq!(e.aging(20_022), Aging::Ok);
+        assert_eq!(e.aging(20_023), Aging::ExpiresIn(7));
+        assert_eq!(e.aging(20_029), Aging::ExpiresIn(1));
+        assert_eq!(e.aging(20_030), Aging::ExpiresIn(0));
+    }
+
+    #[test]
+    fn test_account_expiry_and_inactivity() {
+        assert_eq!(
+            entry(Some(20_000), Some(99_999), None, None, Some(20_050)).aging(20_050),
+            Aging::AccountExpired
+        );
+        assert_eq!(
+            entry(Some(20_000), Some(99_999), None, None, Some(20_050)).aging(20_049),
+            Aging::Ok
+        );
+        let e = entry(Some(20_000), Some(30), None, Some(5), None);
+        assert_eq!(
+            e.aging(20_033),
+            Aging::MustChange,
+            "within the inactivity period"
+        );
+        assert_eq!(
+            e.aging(20_036),
+            Aging::AccountExpired,
+            "past it, the account is disabled"
+        );
+        assert_eq!(
+            entry(Some(20_000), Some(99_999), None, None, Some(0)).aging(30_000),
+            Aging::Ok,
+            "an expiry of 0 is unset"
+        );
+    }
+
+    /// Values from the file are hostile until proven otherwise.
+    #[test]
+    fn test_arithmetic_is_checked() {
+        assert_eq!(
+            entry(Some(i64::MAX), Some(5), Some(7), None, None).aging(20_000),
+            Aging::Ok
+        );
+        assert_eq!(
+            entry(Some(20_000), Some(5), Some(i64::MAX), None, None).aging(20_004),
+            Aging::ExpiresIn(1)
+        );
+        assert_eq!(
+            entry(Some(20_000), Some(5), None, Some(i64::MAX), None).aging(30_000),
+            Aging::MustChange
+        );
+    }
+}

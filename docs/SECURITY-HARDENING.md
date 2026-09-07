@@ -8,7 +8,7 @@ Techniques adopted from OpenBSD and best practices for setuid-root tools.
 
 - [x] `caller_is_root()` uses `getuid()` not `geteuid()` for authorization
 - [x] In the multicall layout, an applet outside
-      `passwd`/`chfn`/`chsh`/`newgrp`/`gpasswd`/`sg`/`newuidmap`/`newgidmap`
+      `passwd`/`chfn`/`chsh`/`newgrp`/`gpasswd`/`sg`/`newuidmap`/`newgidmap`/`expiry`
       drops to the caller's uid before running, so the single setuid binary has
       the same privilege model as the per-tool install — and fails closed if the
       kernel will not take the privilege away

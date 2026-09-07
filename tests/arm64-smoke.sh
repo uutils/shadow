@@ -64,10 +64,10 @@ version=$("${QEMU[@]}" "$BIN" --version 2>&1)
 if [ -n "$version" ]; then ok "runs: $version"; else bad "would not run"; exit 1; fi
 
 applets=$("${QEMU[@]}" "$BIN" --list 2>/dev/null | tail -n +2 | wc -l)
-if [ "$applets" -ge 27 ]; then
+if [ "$applets" -ge 28 ]; then
     ok "carries $applets applets"
 else
-    bad "expected at least 27 applets, found $applets"
+    bad "expected at least 28 applets, found $applets"
 fi
 
 # ── A prefix tree, so nothing here touches the container's own accounts ──
@@ -128,6 +128,7 @@ check "vigr starts" "${QEMU[@]}" "$BIN" vigr --help
 check "login starts" "${QEMU[@]}" "$BIN" login --help
 check "newuidmap starts" "${QEMU[@]}" "$BIN" newuidmap --help
 check "newgidmap starts" "${QEMU[@]}" "$BIN" newgidmap --help
+check "expiry starts" "${QEMU[@]}" "$BIN" expiry --help
 
 # newusers writes three files and a home directory from one line, so it
 # exercises the allocator, crypt(3) and the fchown in shadow_core::home

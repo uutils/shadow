@@ -64,6 +64,28 @@ changes that are specified on the command line.
 :   Unlock the user's password by removing the '!' prefix from the
     shadow password.
 
+## SUBORDINATE IDS
+
+**-v**, **--add-subuids** *FIRST-LAST*
+:   Grant the user the subordinate user IDs *FIRST* to *LAST*, inclusive, in
+    /etc/subuid. A range the user already holds is not added again. May be
+    repeated.
+
+**-V**, **--del-subuids** *FIRST-LAST*
+:   Revoke the range. An entry the range covers disappears; one it overlaps is
+    trimmed, and one it cuts through the middle of is split, so the IDs on
+    either side stay granted. A range the user never held is a no-op.
+
+**-w**, **--add-subgids** *FIRST-LAST*, **-W**, **--del-subgids** *FIRST-LAST*
+:   The same for subordinate group IDs and /etc/subgid.
+
+An invalid range — reversed, not two numbers, above 2³²−1 — is refused with
+exit status 3 before anything is written. Entries are keyed by the login name
+given on the command line and are not renamed by **-l**: a range is a grant to
+a name, and an administrator who renames the account re-grants it if that is
+what they meant. Because **-V** is this option, **--version** has no short
+form.
+
 ## EXIT STATUS
 
 **0**

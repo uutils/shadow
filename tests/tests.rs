@@ -28,6 +28,8 @@ mod test_chgpasswd;
 mod test_chpasswd;
 #[path = "by-util/test_chsh.rs"]
 mod test_chsh;
+#[path = "by-util/test_expiry.rs"]
+mod test_expiry;
 #[path = "by-util/test_fuzz_corpus.rs"]
 mod test_fuzz_corpus;
 #[path = "by-util/test_gpasswd.rs"]
@@ -64,5 +66,7 @@ mod test_useradd;
 mod test_userdel;
 #[path = "by-util/test_usermod.rs"]
 mod test_usermod;
+#[path = "by-util/test_usermod_subid.rs"]
+mod test_usermod_subid;
 #[path = "by-util/test_vipw.rs"]
 mod test_vipw;

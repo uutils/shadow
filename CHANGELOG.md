@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `expiry`, the twenty-eighth tool: it judges the caller's own shadow line as
+  `login` would -- silent when all is well, a warning inside `warn_days`, a
+  forced change through PAM when the password has expired, and a refusal when
+  the account has -- so a session that did not come through `login` still
+  meets the policy. Installed setgid `shadow`, as the GNU suite ships it.
+  Under `--prefix` it reports and never changes anything. The aging rules
+  live in `shadow_core::shadow::Aging`, with checked arithmetic over fields
+  anyone who can write `/etc/shadow` chooses
+
+- `usermod` gained `-v/--add-subuids`, `-V/--del-subuids`, `-w/--add-subgids`
+  and `-W/--del-subgids`, each repeatable. A range the user already holds is
+  not added twice; a removal trims, splits or deletes the entries it touches
+  and ignores a range never held; an invalid range is exit 3 before anything
+  is written. `-V` is GNU's letter, so clap's own `-V` gave way and
+  `--version` stays
+
 - `newuidmap` and `newgidmap`, tools twenty-six and twenty-seven: the setuid
   helpers that write a user namespace's `uid_map` and `gid_map`, which is what
   Podman and rootless Docker call for every container they start. The caller

@@ -100,13 +100,13 @@ hash_password() {
 
 # ── TOOLS list ──────────────────────────────────────────────────────
 
-TOOLS="passwd pwck useradd userdel usermod chpasswd chgpasswd newusers chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp sg vipw vigr pwconv pwunconv grpconv grpunconv login newuidmap newgidmap"
+TOOLS="passwd pwck useradd userdel usermod chpasswd chgpasswd newusers chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp sg vipw vigr pwconv pwunconv grpconv grpunconv login newuidmap newgidmap expiry"
 SETUID_TOOLS="passwd chfn chsh newgrp gpasswd sg newuidmap newgidmap"
 
 # The tools an unprivileged user runs are installed in bin, the rest in sbin,
 # which is the split the GNU package uses: sbin is not on a normal user's
 # PATH, so `passwd` there would be "command not found".
-USER_TOOLS="$SETUID_TOOLS chage login"
+USER_TOOLS="$SETUID_TOOLS chage login expiry"
 BINDIR="/usr/sbin"
 USER_BINDIR="/usr/bin"
 
@@ -869,6 +869,63 @@ test_gpasswd_group_admin() {
     userdel -r gp_member 2>/dev/null || true
 }
 
+# ── usermod subordinate ids, and expiry ────────────────────────────
+
+test_subid_and_expiry() {
+    section "usermod -v/-V/-w/-W, and expiry"
+
+    userdel -r ex_user 2>/dev/null || true
+    assert_ok "useradd -m ex_user" useradd -m -s /bin/sh ex_user
+    assert_ok "set a password" bash -c "printf 'ex_user:oldpw\n' | chpasswd"
+
+    assert_ok "usermod -v grants a subuid range" usermod -v 500000-500999 ex_user
+    assert_file_contains "the range is in /etc/subuid" /etc/subuid '^ex_user:500000:1000$'
+    assert_ok "usermod -V of half of it splits the entry" usermod -V 500000-500499 ex_user
+    assert_file_contains "the remainder is what is left" /etc/subuid '^ex_user:500500:500$'
+    assert_fail "an invalid range is refused" usermod -v 9-1 ex_user
+
+    assert_ok "expiry -c is silent on a healthy account" \
+        bash -c "out=\$(su -s /bin/sh ex_user -c 'expiry -c'); test -z \"\$out\""
+    chage -M 30 -d "$(date -d '-27 days' +%Y-%m-%d)" ex_user
+    assert_contains "expiry warns inside the warning window" "Your password will expire in 3 days." \
+        su -s /bin/sh ex_user -c 'expiry -c'
+
+    if command -v python3 >/dev/null 2>&1; then
+        chage -M 1 -d 2000-01-01 ex_user
+        cat > /tmp/drive_expiry.py <<'PYDRV'
+import os, pty, select, sys, time
+pid, fd = pty.fork()
+if pid == 0:
+    os.environ["TERM"] = "dumb"; os.execvp("su", ["su", "-s", "/bin/sh", "ex_user", "-c", "expiry -f; echo RC=$?"])
+buf = b""; t0 = time.time(); i = 0
+steps = [("urrent password:", "oldpw"), ("ew password:", "N3w-Passw0rd-e2e"), ("etype new password:", "N3w-Passw0rd-e2e")]
+while time.time() - t0 < 20 and b"RC=" not in buf:
+    r, _, _ = select.select([fd], [], [], 0.2)
+    if r:
+        try: buf += os.read(fd, 4096)
+        except OSError: break
+    if i < len(steps) and steps[i][0].encode() in buf:
+        os.write(fd, steps[i][1].encode() + b"\n"); buf = buf.replace(steps[i][0].encode(), b"", 1); i += 1
+try: os.kill(pid, 9)
+except ProcessLookupError: pass
+os.waitpid(pid, 0)
+sys.stdout.write(buf.decode(errors="replace"))
+PYDRV
+        before=$(grep '^ex_user:' /etc/shadow | cut -d: -f2)
+        assert_contains "expiry -f on an expired password forces the change" "RC=0" python3 /tmp/drive_expiry.py
+        assert_ok "and the hash changed" \
+            bash -c "test \"\$(grep '^ex_user:' /etc/shadow | cut -d: -f2)\" != \"$before\""
+        rm -f /tmp/drive_expiry.py
+    fi
+
+    chage -E 2000-01-01 ex_user
+    assert_fail "expiry refuses an expired account" su -s /bin/sh ex_user -c 'expiry -c'
+    chage -E -1 ex_user
+
+    userdel -r ex_user 2>/dev/null || true
+    sed -i '/^ex_user:/d' /etc/subuid /etc/subgid
+}
+
 # ── newuidmap / newgidmap: id maps for a user namespace ────────────
 
 test_idmap() {
@@ -1399,6 +1456,7 @@ main() {
     test_pwconv_family
     test_login
     test_idmap
+    test_subid_and_expiry
     test_aging_and_input
     test_audit_logging
     test_root_option

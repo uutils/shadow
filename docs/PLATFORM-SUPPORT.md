@@ -86,6 +86,10 @@ Effect, and this is the heaviest of the three gaps:
   than apply an unverified one, so without PAM they refuse every non-root
   invocation outright.
 
+`expiry -c` reports without PAM; the forced change it performs on an expired
+password goes through PAM, and the static build says so and points at
+`passwd(1)` instead.
+
 `newuidmap` and `newgidmap` need neither PAM nor NSS beyond `getpwuid_r` for
 the caller, and work in the static build.
 

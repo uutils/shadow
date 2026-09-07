@@ -80,6 +80,7 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
 | `login` | **Implemented.** What getty runs: prompts, PAM authentication and session, utmp/wtmp, terminal handover, a login shell. Needs the `pam` feature. |
 | `newuidmap` | **Implemented.** Writes a user namespace's `uid_map` within the caller's `/etc/subuid` grant; what rootless containers call. |
 | `newgidmap` | **Implemented.** `newuidmap` for `gid_map` and `/etc/subgid`. |
+| `expiry` | **Implemented.** Checks the caller's own password aging and forces the change `login` would; setgid `shadow`. |
 
 ## Scope
 
@@ -94,7 +95,9 @@ implemented. Of the rest:
 | tool | status |
 |---|---|
 | `login` | shipped. Debian 13 and Ubuntu 25.10 take `login` from util-linux, but every release in service today — Ubuntu 20.04, 22.04 and 24.04, Debian 12 — ships shadow's, and `uutils/login` was archived pointing here. It implements the option set the two share, plus util-linux's `-H` |
-| `expiry`, `groupmems` | Debian's tail; in scope, not yet shipped. `faillog` and `lastlog` left the Debian package with 13 and are not planned |
+| `expiry` | shipped |
+| `groupmems` | out of scope. Debian 13 and Fedora do not ship it; Ubuntu 24.04 does, without a `/etc/pam.d/groupmems`, so every action there fails against PAM's default — a tool one distribution ships and none can use |
+| `faillog`, `lastlog` | left the Debian package with 13; not planned |
 | `newuidmap`, `newgidmap` | shipped. Fedora's pair, the basis of rootless containers |
 | `shadowconfig`, `cpgr`, `cppw`, `adduser` | Debian packaging scripts and a Fedora symlink, not upstream tools; out of scope |
 
@@ -147,9 +150,9 @@ docker compose run --rm debian cargo build --release
 
 ### Install
 
-Default install: 27 standalone per-tool binaries with least-privilege setuid
+Default install: 28 standalone per-tool binaries with least-privilege setuid
 layout matching GNU shadow-utils. Only `passwd`, `chfn`, `chsh`, `newgrp`,
-`gpasswd`, `sg`, `newuidmap` and `newgidmap` are installed setuid-root; the other 19 are plain `0755`.
+`gpasswd`, `sg`, `newuidmap` and `newgidmap` are installed setuid-root, `expiry` is setgid `shadow`; the other 19 are plain `0755`.
 
 ```shell
 sudo make install PREFIX=/usr/local
@@ -202,7 +205,7 @@ sudo install -o root -g root -m 4755 \
     uu_shadow-*/shadow-rs /usr/local/bin/shadow-rs
 for tool in passwd chfn chsh newgrp gpasswd sg chage chpasswd chgpasswd newusers \
             groupadd groupdel groupmod grpck pwck useradd userdel usermod vipw vigr \
-            pwconv pwunconv grpconv grpunconv login newuidmap newgidmap; do
+            pwconv pwunconv grpconv grpunconv login newuidmap newgidmap expiry; do
     sudo ln -sf shadow-rs "/usr/local/bin/$tool"
 done
 ```

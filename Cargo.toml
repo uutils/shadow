@@ -43,6 +43,7 @@ members = [
     "src/uu/login",
     "src/uu/newuidmap",
     "src/uu/newgidmap",
+    "src/uu/expiry",
 ]
 
 [workspace.package]
@@ -116,18 +117,19 @@ grpunconv = { optional = true, version = "0.4.0", package = "uu_grpunconv", path
 login = { optional = true, version = "0.4.0", package = "uu_login", path = "src/uu/login" }
 newuidmap = { optional = true, version = "0.4.0", package = "uu_newuidmap", path = "src/uu/newuidmap" }
 newgidmap = { optional = true, version = "0.4.0", package = "uu_newgidmap", path = "src/uu/newgidmap" }
+expiry = { optional = true, version = "0.4.0", package = "uu_expiry", path = "src/uu/expiry" }
 
 [features]
 default = ["passwd", "pwck", "useradd", "userdel", "usermod", "chpasswd", "chage",
            "groupadd", "groupdel", "groupmod", "grpck", "chfn", "chsh", "newgrp", "gpasswd",
            "sg", "chgpasswd", "newusers", "vipw", "vigr",
            "pwconv", "pwunconv", "grpconv", "grpunconv", "login", "newuidmap",
-           "newgidmap"]
+           "newgidmap", "expiry"]
 
 # PAM authentication (requires libpam-dev). The `?` matters: without it,
 # asking for PAM would drag in the three applets that can use it even when the
 # build deliberately left them out.
-pam = ["passwd?/pam", "chfn?/pam", "chsh?/pam", "login?/pam"]
+pam = ["passwd?/pam", "chfn?/pam", "chsh?/pam", "login?/pam", "expiry?/pam"]
 
 # Shell completions generator
 completions = ["dep:clap_complete"]
@@ -169,6 +171,7 @@ grpunconv = { version = "0.4.0", package = "uu_grpunconv", path = "src/uu/grpunc
 login = { version = "0.4.0", package = "uu_login", path = "src/uu/login" }
 newuidmap = { version = "0.4.0", package = "uu_newuidmap", path = "src/uu/newuidmap" }
 newgidmap = { version = "0.4.0", package = "uu_newgidmap", path = "src/uu/newgidmap" }
+expiry = { version = "0.4.0", package = "uu_expiry", path = "src/uu/expiry" }
 passwd = { version = "0.4.0", package = "uu_passwd", path = "src/uu/passwd" }
 useradd = { version = "0.4.0", package = "uu_useradd", path = "src/uu/useradd" }
 userdel = { version = "0.4.0", package = "uu_userdel", path = "src/uu/userdel" }
