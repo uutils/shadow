@@ -43,6 +43,10 @@ fn get_tool_app(name: &str) -> Option<Command> {
         "gpasswd" => Some(gpasswd::uu_app()),
         #[cfg(feature = "grpck")]
         "grpck" => Some(grpck::uu_app()),
+        #[cfg(feature = "grpconv")]
+        "grpconv" => Some(grpconv::uu_app()),
+        #[cfg(feature = "grpunconv")]
+        "grpunconv" => Some(grpunconv::uu_app()),
         #[cfg(feature = "newgrp")]
         "newgrp" => Some(newgrp::uu_app()),
         #[cfg(feature = "newusers")]
@@ -51,6 +55,10 @@ fn get_tool_app(name: &str) -> Option<Command> {
         "passwd" => Some(passwd::uu_app()),
         #[cfg(feature = "pwck")]
         "pwck" => Some(pwck::uu_app()),
+        #[cfg(feature = "pwconv")]
+        "pwconv" => Some(pwconv::uu_app()),
+        #[cfg(feature = "pwunconv")]
+        "pwunconv" => Some(pwunconv::uu_app()),
         #[cfg(feature = "sg")]
         "sg" => Some(sg::uu_app()),
         #[cfg(feature = "useradd")]
@@ -90,6 +98,10 @@ fn all_tool_names() -> Vec<&'static str> {
     names.push("gpasswd");
     #[cfg(feature = "grpck")]
     names.push("grpck");
+    #[cfg(feature = "grpconv")]
+    names.push("grpconv");
+    #[cfg(feature = "grpunconv")]
+    names.push("grpunconv");
     #[cfg(feature = "newgrp")]
     names.push("newgrp");
     #[cfg(feature = "newusers")]
@@ -98,6 +110,10 @@ fn all_tool_names() -> Vec<&'static str> {
     names.push("passwd");
     #[cfg(feature = "pwck")]
     names.push("pwck");
+    #[cfg(feature = "pwconv")]
+    names.push("pwconv");
+    #[cfg(feature = "pwunconv")]
+    names.push("pwunconv");
     #[cfg(feature = "sg")]
     names.push("sg");
     #[cfg(feature = "useradd")]

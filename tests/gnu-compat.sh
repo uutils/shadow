@@ -228,6 +228,10 @@ for pair in \
     "newusers:/usr/sbin/newusers" \
     "vipw:/usr/sbin/vipw" \
     "vigr:/usr/sbin/vigr" \
+    "pwconv:/usr/sbin/pwconv" \
+    "pwunconv:/usr/sbin/pwunconv" \
+    "grpconv:/usr/sbin/grpconv" \
+    "grpunconv:/usr/sbin/grpunconv" \
     "gpasswd:/usr/bin/gpasswd" \
     "pwck:/usr/sbin/pwck" \
     "grpck:/usr/sbin/grpck"; do

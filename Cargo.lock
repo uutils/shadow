@@ -805,6 +805,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_grpconv"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "uu_pwconv",
+ "uucore",
+]
+
+[[package]]
+name = "uu_grpunconv"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "uu_pwconv",
+ "uucore",
+]
+
+[[package]]
 name = "uu_newgrp"
 version = "0.4.0"
 dependencies = [
@@ -847,6 +865,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_pwconv"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "rustix",
+ "shadow-core",
+ "tempfile",
+ "uucore",
+]
+
+[[package]]
+name = "uu_pwunconv"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "uu_pwconv",
+ "uucore",
+]
+
+[[package]]
 name = "uu_sg"
 version = "0.4.0"
 dependencies = [
@@ -874,10 +912,14 @@ dependencies = [
  "uu_groupdel",
  "uu_groupmod",
  "uu_grpck",
+ "uu_grpconv",
+ "uu_grpunconv",
  "uu_newgrp",
  "uu_newusers",
  "uu_passwd",
  "uu_pwck",
+ "uu_pwconv",
+ "uu_pwunconv",
  "uu_sg",
  "uu_useradd",
  "uu_userdel",

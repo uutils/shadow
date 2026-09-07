@@ -1,0 +1,33 @@
+[package]
+name = "uu_pwunconv"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
+description = "pwunconv ~ (shadow-rs) move password hashes from /etc/shadow back into /etc/passwd"
+
+[lib]
+path = "src/pwunconv.rs"
+
+[[bin]]
+name = "pwunconv"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+uucore = { workspace = true }
+# One engine serves pwconv, pwunconv, grpconv and grpunconv; this crate names
+# which of the four it is.
+uu_pwconv = { path = "../pwconv", version = "0.4.0" }
+
+[lints]
+workspace = true
+
+# Distributed via the `shadow-rs` multicall binary in the workspace root
+# package, not as a standalone archive (see dist-workspace.toml, issue #207).
+[package.metadata.dist]
+dist = false

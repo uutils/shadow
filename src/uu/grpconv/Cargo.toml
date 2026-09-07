@@ -1,0 +1,33 @@
+[package]
+name = "uu_grpconv"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
+description = "grpconv ~ (shadow-rs) move group passwords from /etc/group into /etc/gshadow"
+
+[lib]
+path = "src/grpconv.rs"
+
+[[bin]]
+name = "grpconv"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+uucore = { workspace = true }
+# One engine serves pwconv, pwunconv, grpconv and grpunconv; this crate names
+# which of the four it is.
+uu_pwconv = { path = "../pwconv", version = "0.4.0" }
+
+[lints]
+workspace = true
+
+# Distributed via the `shadow-rs` multicall binary in the workspace root
+# package, not as a standalone archive (see dist-workspace.toml, issue #207).
+[package.metadata.dist]
+dist = false
