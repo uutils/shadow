@@ -21,7 +21,7 @@ path = "src/main.rs"
 clap = { workspace = true }
 uucore = { workspace = true }
 # vigr is vipw with a different default; the GNU suite ships it as a symlink.
-uu_vipw = { path = "../vipw", version = "0.4.0" }
+uu_vipw = { path = "../vipw", version = "0.5.0" }
 
 [lints]
 workspace = true
