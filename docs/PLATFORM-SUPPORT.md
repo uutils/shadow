@@ -86,6 +86,12 @@ Effect, and this is the heaviest of the three gaps:
   than apply an unverified one, so without PAM they refuse every non-root
   invocation outright.
 
+`login` is the fourth: without PAM it has no way to authenticate, so the
+applet prints *PAM support is not compiled in* and exits 1. A static image
+that needs a getty-driven login must use the glibc archive. utmp and wtmp
+recording is also a no-op under musl, which has stub `pututxline` and
+`updwtmpx`; `who(1)` and `last(1)` see nothing there.
+
 Unaffected: `passwd -S/-l/-u/-d/-e/-n/-x/-w/-i`, and `newgrp`, `sg` and
 `gpasswd`, which authenticate against the group password through crypt(3)
 rather than PAM -- so a group administrator can still use them. The other ten

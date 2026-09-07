@@ -100,13 +100,13 @@ hash_password() {
 
 # ── TOOLS list ──────────────────────────────────────────────────────
 
-TOOLS="passwd pwck useradd userdel usermod chpasswd chgpasswd newusers chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp sg vipw vigr pwconv pwunconv grpconv grpunconv"
+TOOLS="passwd pwck useradd userdel usermod chpasswd chgpasswd newusers chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp sg vipw vigr pwconv pwunconv grpconv grpunconv login"
 SETUID_TOOLS="passwd chfn chsh newgrp gpasswd sg"
 
 # The tools an unprivileged user runs are installed in bin, the rest in sbin,
 # which is the split the GNU package uses: sbin is not on a normal user's
 # PATH, so `passwd` there would be "command not found".
-USER_TOOLS="$SETUID_TOOLS chage"
+USER_TOOLS="$SETUID_TOOLS chage login"
 BINDIR="/usr/sbin"
 USER_BINDIR="/usr/bin"
 
@@ -869,6 +869,73 @@ test_gpasswd_group_admin() {
     userdel -r gp_member 2>/dev/null || true
 }
 
+# ── login: a session on a terminal ─────────────────────────────────
+
+test_login() {
+    section "login — a session on a terminal"
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo -e "  ${YELLOW}⊘${NC} python3 not available, skipping the pty-driven checks"
+        return
+    fi
+    userdel -r lg_e2e 2>/dev/null || true
+    assert_ok "useradd -m lg_e2e" useradd -m -s /bin/sh lg_e2e
+    assert_ok "set a password" bash -c "printf 'lg_e2e:e2epw\n' | chpasswd"
+
+    # Drive login the way getty would: on a fresh pty, as session leader,
+    # answering each prompt only once it has appeared.
+    cat > /tmp/drive_login.py <<'PYDRV'
+import os, pty, select, sys, time
+def run(argv, steps, timeout=40):
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.environ["TERM"] = "dumb"; os.execvp(argv[0], argv)
+    buf = b""; i = 0; t0 = time.time(); seen = b""
+    while time.time() - t0 < timeout:
+        r, _, _ = select.select([fd], [], [], 0.2)
+        if r:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                break
+            buf += chunk; seen += chunk
+        if i < len(steps) and steps[i][0].encode() in buf:
+            os.write(fd, steps[i][1].encode() + b"\n"); buf = b""; i += 1
+        if i == len(steps) and steps and steps[-1][1].endswith("exit"):
+            done, _ = os.waitpid(pid, os.WNOHANG)
+            if done:
+                break
+    try:
+        os.kill(pid, 9)
+    except ProcessLookupError:
+        pass
+    try:
+        os.waitpid(pid, 0)
+    except ChildProcessError:
+        pass
+    sys.stdout.write(seen.decode(errors="replace"))
+case = sys.argv[1]
+if case == "autologin":
+    run(["login", "-f", "lg_e2e"], [("$ ", "printf 'O''UT %s %s %s\\n' \"$(id -un)\" \"$HOME\" \"$0\"; exit")])
+elif case == "password":
+    run(["login", "-H"], [("login: ", "lg_e2e"), ("assword:", "wrong"), ("login: ", "lg_e2e"), ("assword:", "e2epw"), ("$ ", "printf 'O''UT %s\\n' \"$(id -un)\"; exit")])
+elif case == "unknown":
+    run(["login", "-H"], [("login: ", "nobody_here_e2e"), ("assword:", "x")], timeout=12)
+PYDRV
+    assert_contains "autologin gives a login shell as the user, in the home" \
+        "OUT lg_e2e /home/lg_e2e -sh" python3 /tmp/drive_login.py autologin
+    assert_contains "a wrong password is refused and the right one accepted" \
+        "OUT lg_e2e" python3 /tmp/drive_login.py password
+    assert_contains "an unknown user gets the same answer as a wrong password" \
+        "Login incorrect" python3 /tmp/drive_login.py unknown
+    assert_fail "login refuses to run as a normal user" \
+        su -s /bin/bash lg_e2e -c "login -f root"
+    assert_fail "login refuses without a terminal" bash -c "login -f root </dev/null"
+
+    userdel -r lg_e2e 2>/dev/null || true
+    rm -f /tmp/drive_login.py
+}
+
 # ── pwconv family: shadow round trips ──────────────────────────────
 
 test_pwconv_family() {
@@ -1279,6 +1346,7 @@ main() {
     test_newusers
     test_vipw
     test_pwconv_family
+    test_login
     test_aging_and_input
     test_audit_logging
     test_root_option

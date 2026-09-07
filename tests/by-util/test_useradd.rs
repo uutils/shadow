@@ -775,3 +775,41 @@ fn test_base_dir_flag_and_uid_sentinel() {
     );
     assert!(!read_passwd(&dir).contains("bad:"), "nothing written");
 }
+
+/// Every account file is locked before any is written. A shadow file that
+/// cannot be opened -- here, a directory in its place -- has to fail the
+/// whole creation with `/etc/passwd` untouched, not leave a passwd line
+/// whose shadow line never came: that half-made account is what a second
+/// `useradd` then reports as already existing.
+#[test]
+fn test_unusable_shadow_file_leaves_passwd_untouched() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let etc = dir.path().join("etc");
+    std::fs::create_dir_all(&etc).expect("etc");
+    std::fs::write(etc.join("passwd"), "root:x:0:0:root:/root:/bin/sh\n").expect("passwd");
+    std::fs::write(etc.join("group"), "root:x:0:\n").expect("group");
+    std::fs::write(etc.join("login.defs"), "UID_MIN 1000\nGID_MIN 1000\n").expect("defs");
+    std::fs::create_dir(etc.join("shadow")).expect("a directory where the shadow file goes");
+
+    let out = crate::common::run(
+        "useradd",
+        &[
+            "--prefix",
+            dir.path().to_str().expect("utf8"),
+            "-M",
+            "halfmade",
+        ],
+    );
+    assert_ne!(
+        out.code, 0,
+        "useradd must fail when shadow cannot be written"
+    );
+    let passwd = std::fs::read_to_string(etc.join("passwd")).expect("read");
+    assert!(
+        !passwd.contains("halfmade"),
+        "passwd was written although shadow could not be: {passwd:?}"
+    );
+}

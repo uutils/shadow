@@ -14,7 +14,7 @@
 //! This is one of the few modules that permits `unsafe` — all unsafe is
 //! confined to well-understood POSIX C library calls.
 
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::io;
 
 // ---------------------------------------------------------------------------
@@ -108,6 +108,231 @@ pub fn setgroups(groups: &[u32]) -> io::Result<()> {
     } else {
         Err(io::Error::last_os_error())
     }
+}
+
+// ---------------------------------------------------------------------------
+// Sessions: utmp/wtmp, controlling terminals, watchdogs
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    // In glibc and musl alike; not in the libc crate's bindings. musl's is a
+    // no-op, which is the documented state of utmp there.
+    fn updwtmpx(file: *const libc::c_char, ut: *const libc::utmpx);
+}
+
+/// Where login records go for `last(1)`.
+const WTMP_FILE: &CStr = c"/var/log/wtmp";
+
+/// Copy `s` into a fixed C char array, truncating; the tail stays zero.
+fn fill(dst: &mut [libc::c_char], s: &str) {
+    for (d, b) in dst.iter_mut().zip(s.bytes()) {
+        // c_char is i8 on x86 and u8 on arm; both hold a byte bit for bit.
+        #[allow(clippy::cast_possible_wrap)]
+        {
+            *d = b as libc::c_char;
+        }
+    }
+}
+
+/// A login or logout event for the accounting files.
+#[derive(Debug, Clone)]
+pub struct SessionRecord<'a> {
+    /// The terminal, without `/dev/` (`pts/3`, `tty1`).
+    pub line: &'a str,
+    /// The account name; empty for a logout.
+    pub user: &'a str,
+    /// The remote host, or empty.
+    pub host: &'a str,
+    /// The pid of the session leader.
+    pub pid: i32,
+}
+
+/// Record a login in utmp and wtmp, so `who(1)` and `last(1)` see it.
+///
+/// Best effort: a machine without utmp -- musl, or a system that moved to
+/// wtmpdb -- is a normal machine, and a failure to record a session must not
+/// stop the session. The `ut_id` is the tail of the line, which is what init
+/// and getty use, so the slot is the one they will later mark dead.
+pub fn record_login(rec: &SessionRecord<'_>) {
+    write_utmp(rec, libc::USER_PROCESS);
+}
+
+/// Record the end of a session in utmp and wtmp.
+pub fn record_logout(rec: &SessionRecord<'_>) {
+    let ended = SessionRecord {
+        user: "",
+        host: "",
+        ..rec.clone()
+    };
+    write_utmp(&ended, libc::DEAD_PROCESS);
+}
+
+fn write_utmp(rec: &SessionRecord<'_>, ut_type: libc::c_short) {
+    // SAFETY: utmpx is a plain C struct of integers and char arrays; all-zero
+    // is a valid value, and every field written below is written in bounds.
+    let mut ut: libc::utmpx = unsafe { std::mem::zeroed() };
+    ut.ut_type = ut_type;
+    ut.ut_pid = rec.pid;
+    fill(&mut ut.ut_line, rec.line);
+    let id_start = rec.line.len().saturating_sub(4);
+    fill(&mut ut.ut_id, &rec.line[id_start..]);
+    fill(&mut ut.ut_user, rec.user);
+    fill(&mut ut.ut_host, rec.host);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    // glibc keeps a 32-bit tv_sec in utmpx on 64-bit hosts for compatibility;
+    // musl uses a full timeval. The cast follows whichever the target has.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    {
+        ut.ut_tv.tv_sec = now as _;
+    }
+
+    // SAFETY: standard utmpx API; `ut` is fully initialized and outlives the
+    // calls. pututxline copies the record. Failures are deliberately ignored:
+    // see the doc comment on record_login.
+    unsafe {
+        libc::setutxent();
+        libc::pututxline(&raw const ut);
+        libc::endutxent();
+        updwtmpx(WTMP_FILE.as_ptr(), &raw const ut);
+    }
+}
+
+/// Spawn `cmd` as a new session with `tty` as its controlling terminal.
+///
+/// This is what getty does before it runs `login`, and what a test has to do
+/// to run `login` the way getty would. The child becomes a session leader and
+/// claims the terminal; nothing else about the process changes.
+pub fn spawn_with_controlling_tty(
+    cmd: &mut std::process::Command,
+    tty: std::os::unix::io::RawFd,
+) -> io::Result<std::process::Child> {
+    use std::os::unix::process::CommandExt as _;
+
+    // SAFETY: runs in the forked child before exec, and calls only setsid and
+    // ioctl, both async-signal-safe; `tty` is a descriptor the parent opened
+    // and keeps open across the fork.
+    unsafe {
+        cmd.pre_exec(move || {
+            if libc::setsid() < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::ioctl(tty, libc::TIOCSCTTY, 0) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    cmd.spawn()
+}
+
+/// Spawn `cmd` as `uid`:`gid` with the given supplementary groups, and a
+/// clean signal mask.
+///
+/// The order is the one that works: supplementary groups and the primary
+/// group while still root, then the uid, after which nothing can be changed
+/// back. `std::process::Command` offers the same through `uid`, `gid` and
+/// `groups`, but `groups` is not stable, and half of the drop through one API
+/// and half through another is how the order gets wrong.
+pub fn spawn_as_user(
+    cmd: &mut std::process::Command,
+    uid: u32,
+    gid: u32,
+    groups: Vec<u32>,
+) -> io::Result<std::process::Child> {
+    use std::os::unix::process::CommandExt as _;
+
+    // SAFETY: runs in the forked child before exec and calls only
+    // sigprocmask, setgroups, setgid and setuid, all async-signal-safe;
+    // `groups` was allocated by the parent and is only read here.
+    unsafe {
+        cmd.pre_exec(move || {
+            let mut empty: libc::sigset_t = std::mem::zeroed();
+            if libc::sigemptyset(&raw mut empty) != 0
+                || libc::sigprocmask(libc::SIG_SETMASK, &raw const empty, std::ptr::null_mut()) != 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::setgroups(groups.len(), groups.as_ptr()) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::setgid(gid) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::setuid(uid) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    cmd.spawn()
+}
+
+/// End the process after `seconds` unless it has exec'd or exited by then.
+///
+/// `login(1)` gives a caller `LOGIN_TIMEOUT` seconds to get through the
+/// prompts, so an abandoned getty line does not hold a half-open session for
+/// ever. A successful login execs the shell, which replaces the process,
+/// thread included; a failed one exits on its own. Only a stalled prompt is
+/// left for this to end.
+pub fn exit_after(seconds: u64, message: &'static str) {
+    use std::io::Write as _;
+
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(seconds));
+        let _ = writeln!(io::stderr(), "{message}");
+        // SAFETY: _exit terminates the process without unwinding or running
+        // destructors, which is what a watchdog wants: nothing here holds a
+        // lock or a half-written file.
+        unsafe { libc::_exit(0) };
+    });
+}
+
+/// Look up an account by name through NSS (`getpwnam_r`).
+///
+/// Like [`getpwuid`], so a directory user can log in where `/etc/passwd` has
+/// never heard of them.
+pub fn getpwnam(name: &str) -> io::Result<Option<crate::passwd::PasswdEntry>> {
+    let name_c = CString::new(name).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    let mut buf = vec![0u8; 16 * 1024];
+    // SAFETY: getpwnam_r writes into `pwd` and `buf`, both sized and live for
+    // the call; `result` points at `pwd` on success or is null.
+    let rc = unsafe {
+        libc::getpwnam_r(
+            name_c.as_ptr(),
+            &raw mut pwd,
+            buf.as_mut_ptr().cast::<libc::c_char>(),
+            buf.len(),
+            &raw mut result,
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::from_raw_os_error(rc));
+    }
+    if result.is_null() {
+        return Ok(None);
+    }
+    // SAFETY: on success every string pointer in `pwd` points into `buf`,
+    // which is still alive, and is null-terminated.
+    let field = |p: *const libc::c_char| unsafe {
+        if p.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr(p).to_string_lossy().into_owned()
+        }
+    };
+    Ok(Some(crate::passwd::PasswdEntry {
+        name: field(pwd.pw_name),
+        passwd: field(pwd.pw_passwd),
+        uid: pwd.pw_uid,
+        gid: pwd.pw_gid,
+        gecos: field(pwd.pw_gecos),
+        home: field(pwd.pw_dir),
+        shell: field(pwd.pw_shell),
+    }))
 }
 
 // ---------------------------------------------------------------------------

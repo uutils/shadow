@@ -47,6 +47,8 @@ fn get_tool_app(name: &str) -> Option<Command> {
         "grpconv" => Some(grpconv::uu_app()),
         #[cfg(feature = "grpunconv")]
         "grpunconv" => Some(grpunconv::uu_app()),
+        #[cfg(feature = "login")]
+        "login" => Some(login::uu_app()),
         #[cfg(feature = "newgrp")]
         "newgrp" => Some(newgrp::uu_app()),
         #[cfg(feature = "newusers")]
@@ -102,6 +104,8 @@ fn all_tool_names() -> Vec<&'static str> {
     names.push("grpconv");
     #[cfg(feature = "grpunconv")]
     names.push("grpunconv");
+    #[cfg(feature = "login")]
+    names.push("login");
     #[cfg(feature = "newgrp")]
     names.push("newgrp");
     #[cfg(feature = "newusers")]

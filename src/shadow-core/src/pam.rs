@@ -133,6 +133,10 @@ pub mod flags {
     pub const PAM_CHANGE_EXPIRED_AUTHTOK: i32 = 0x0020;
     /// Don't update the last-changed timestamp.
     pub const PAM_DISALLOW_NULL_AUTHTOK: i32 = 0x0001;
+    /// `pam_setcred`: establish the user's credentials.
+    pub const PAM_ESTABLISH_CRED: i32 = 0x0002;
+    /// `pam_setcred`: delete the user's credentials.
+    pub const PAM_DELETE_CRED: i32 = 0x0004;
 }
 
 // ---------------------------------------------------------------------------
@@ -209,6 +213,15 @@ unsafe extern "C" {
     ) -> libc::c_int;
 
     fn pam_strerror(pamh: *mut PamHandle, errnum: libc::c_int) -> *const libc::c_char;
+    fn pam_setcred(pamh: *mut PamHandle, flags: libc::c_int) -> libc::c_int;
+    fn pam_open_session(pamh: *mut PamHandle, flags: libc::c_int) -> libc::c_int;
+    fn pam_close_session(pamh: *mut PamHandle, flags: libc::c_int) -> libc::c_int;
+    fn pam_get_item(
+        pamh: *const PamHandle,
+        item_type: libc::c_int,
+        item: *mut *const libc::c_void,
+    ) -> libc::c_int;
+    fn pam_getenvlist(pamh: *mut PamHandle) -> *mut *mut libc::c_char;
 }
 
 // ---------------------------------------------------------------------------
@@ -649,6 +662,110 @@ impl PamContext {
         }
 
         Ok(())
+    }
+
+    /// Establish or delete the user's credentials (`pam_setcred`).
+    ///
+    /// `login(1)` calls this with `PAM_ESTABLISH_CRED` after authentication
+    /// and before the session opens, which is when modules such as
+    /// `pam_group` hand out supplementary groups.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ShadowError::Auth` if the stack refuses.
+    pub fn setcred(&mut self, flags: i32) -> Result<(), ShadowError> {
+        // SAFETY: `self.handle` is a valid PAM handle (same invariant as above).
+        let rc = unsafe { pam_setcred(self.handle, flags) };
+        self.last_status = rc;
+        if rc != return_code::PAM_SUCCESS {
+            return Err(ShadowError::Auth(self.strerror(rc).into()));
+        }
+        Ok(())
+    }
+
+    /// Open a session (`pam_open_session`): motd, limits, environment,
+    /// audit uid -- whatever the `session` stack of the service does.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ShadowError::Auth` if the stack refuses.
+    pub fn open_session(&mut self, flags: i32) -> Result<(), ShadowError> {
+        // SAFETY: `self.handle` is a valid PAM handle (same invariant as above).
+        let rc = unsafe { pam_open_session(self.handle, flags) };
+        self.last_status = rc;
+        if rc != return_code::PAM_SUCCESS {
+            return Err(ShadowError::Auth(self.strerror(rc).into()));
+        }
+        Ok(())
+    }
+
+    /// Close a session opened with [`open_session`](Self::open_session).
+    ///
+    /// # Errors
+    ///
+    /// Returns `ShadowError::Auth` if the stack reports a failure; callers at
+    /// the end of a session usually have nothing left to do about it.
+    pub fn close_session(&mut self, flags: i32) -> Result<(), ShadowError> {
+        // SAFETY: `self.handle` is a valid PAM handle (same invariant as above).
+        let rc = unsafe { pam_close_session(self.handle, flags) };
+        self.last_status = rc;
+        if rc != return_code::PAM_SUCCESS {
+            return Err(ShadowError::Auth(self.strerror(rc).into()));
+        }
+        Ok(())
+    }
+
+    /// The user the stack settled on.
+    ///
+    /// A module may change `PAM_USER` during authentication -- mapping a
+    /// login name to an account, say -- so the name given to
+    /// [`new`](Self::new) is not necessarily the one to log in.
+    #[must_use]
+    pub fn user(&self) -> Option<String> {
+        let mut item: *const libc::c_void = ptr::null();
+        // SAFETY: `self.handle` is valid and `item` is a valid out-pointer. On
+        // success PAM points it at a string it owns, which is not freed here.
+        let rc = unsafe { pam_get_item(self.handle, item_type::PAM_USER, &raw mut item) };
+        if rc != return_code::PAM_SUCCESS || item.is_null() {
+            return None;
+        }
+        // SAFETY: a successful PAM_USER lookup yields a null-terminated string.
+        let cstr = unsafe { CStr::from_ptr(item.cast::<libc::c_char>()) };
+        Some(cstr.to_string_lossy().into_owned())
+    }
+
+    /// The environment the session stack built (`pam_getenvlist`), as
+    /// `KEY=value` strings.
+    ///
+    /// `pam_env` and `pam_systemd` put the variables a login shell should see
+    /// here, and a session started without them is missing its locale, its
+    /// `XDG_*` directories and whatever the administrator configured.
+    #[must_use]
+    pub fn environment(&mut self) -> Vec<String> {
+        // SAFETY: `self.handle` is valid. `pam_getenvlist` returns a
+        // null-terminated array of malloc'd strings the caller owns, or null.
+        let list = unsafe { pam_getenvlist(self.handle) };
+        if list.is_null() {
+            return Vec::new();
+        }
+        let mut vars = Vec::new();
+        let mut i = 0;
+        loop {
+            // SAFETY: the array is null-terminated; each entry up to the null
+            // is a valid string allocated with malloc, freed exactly once here.
+            unsafe {
+                let entry = *list.add(i);
+                if entry.is_null() {
+                    break;
+                }
+                vars.push(CStr::from_ptr(entry).to_string_lossy().into_owned());
+                libc::free(entry.cast::<libc::c_void>());
+            }
+            i += 1;
+        }
+        // SAFETY: the array itself was malloc'd by PAM and is ours to free.
+        unsafe { libc::free(list.cast::<libc::c_void>()) };
+        vars
     }
 
     /// Get the human-readable error string for a PAM return code.

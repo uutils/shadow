@@ -823,6 +823,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_login"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "rustix",
+ "shadow-core",
+ "tempfile",
+ "uucore",
+ "zeroize",
+]
+
+[[package]]
 name = "uu_newgrp"
 version = "0.4.0"
 dependencies = [
@@ -914,6 +926,7 @@ dependencies = [
  "uu_grpck",
  "uu_grpconv",
  "uu_grpunconv",
+ "uu_login",
  "uu_newgrp",
  "uu_newusers",
  "uu_passwd",

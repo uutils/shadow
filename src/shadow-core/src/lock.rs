@@ -87,25 +87,40 @@ impl FileLock {
         let deadline = Instant::now() + timeout;
         let tmp_path = tmp_lock_path(&lock_path);
 
-        // Write our PID to the temp file once, then try to link it in a loop.
-        write_pid_file(&tmp_path)?;
+        // For the account files, /etc/.pwd.lock comes *first*, then the
+        // per-file lock -- the order lckpwdf(3) and the GNU tools use, and the
+        // only order that cannot deadlock. Taken the other way round, a tool
+        // holding passwd.lock and waiting for .pwd.lock met a tool holding
+        // shadow.lock and waiting for .pwd.lock's holder to let go of
+        // passwd.lock: both sat out the full timeout and both failed, on a
+        // system that was merely busy. With .pwd.lock first, whoever holds it
+        // is the only one asking for per-file locks, and it never has to wait
+        // for anyone who is waiting for it.
+        let pwd_path = account_pwd_lock_path(file_path);
+        if let Some(pwd_path) = &pwd_path {
+            acquire_pwd_lock(pwd_path, deadline)?;
+        }
 
-        let result = Self::acquire_loop(&lock_path, &tmp_path, deadline);
+        // Write our PID to the temp file once, then try to link it in a loop.
+        let result = write_pid_file(&tmp_path)
+            .and_then(|()| Self::acquire_loop(&lock_path, &tmp_path, deadline));
 
         // Always clean up our temp file, regardless of success or failure.
         let _ = fs::remove_file(&tmp_path);
 
-        let mut lock = result?;
-
-        // For the account files, also take /etc/.pwd.lock so we exclude the
-        // system's own account tools. If it cannot be taken, drop the .lock we
-        // just got (via the early return running `lock`'s destructor).
-        if let Some(pwd_path) = account_pwd_lock_path(file_path) {
-            acquire_pwd_lock(&pwd_path, deadline)?;
-            lock.pwd_lock_path = Some(pwd_path);
+        match result {
+            Ok(mut lock) => {
+                lock.pwd_lock_path = pwd_path;
+                Ok(lock)
+            }
+            Err(e) => {
+                // Give the suite-wide lock back: nothing is held on failure.
+                if let Some(pwd_path) = &pwd_path {
+                    release_pwd_lock(pwd_path);
+                }
+                Err(e)
+            }
         }
-
-        Ok(lock)
     }
 
     /// Inner acquisition loop. Separated so the caller can guarantee temp file cleanup.
