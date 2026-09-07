@@ -1,9 +1,22 @@
 name: CI
 
+# Pull requests are the gate. Main is not rebuilt on every merge: a squash
+# merge produces exactly the tree of the pull-request tip that just passed, so
+# that run only repeated a result. Main is instead exercised once a night,
+# which is also the only way drift in the toolchain and the base images shows
+# up between merges.
 on:
-  push:
-    branches: [main]
   pull_request:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+# A force-push supersedes the run in flight on the same pull request; letting
+# both finish doubles the queue time behind the rest of the organisation for
+# a result nobody reads. Scheduled runs are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

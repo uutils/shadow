@@ -19,6 +19,11 @@ unix-archive = ".tar.gz"
 # Build with PAM. Without it `passwd` refuses the interactive change path
 # ("PAM support is not compiled in"), which is the tool's primary function.
 features = ["pam"]
+# No `dist plan` job on pull requests. It only re-parsed this file, which the
+# tag-triggered pipeline does anyway, and it ran twice per pull-request update
+# alongside the CI workflow. `ci.yml` builds the static musl archive on every
+# pull request, which is the release step that can actually break.
+pr-run-mode = "skip"
 
 # Ship only the multicall binary. `shadow-rs-completions` is a build-time
 # helper behind `required-features = ["completions"]`, so it is not part of a
