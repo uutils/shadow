@@ -85,33 +85,32 @@ Effect, and this is the heaviest of the three gaps:
   PAM before applying a change, and a setuid-root tool must fail closed rather
   than apply an unverified one, so without PAM they refuse every non-root
   invocation outright.
+- `login` has no way to authenticate at all, so the applet prints *PAM
+  support is not compiled in* and exits 1. A static image that needs a
+  getty-driven login must use the glibc archive. utmp and wtmp recording is
+  also a no-op under musl, which has stub `pututxline` and `updwtmpx`;
+  `who(1)` and `last(1)` see nothing there.
+- `expiry` still reports, and `-c` still refuses an expired account; the
+  forced change it performs on an expired password goes through PAM, so the
+  static build says so and points at `passwd(1)` instead.
 
-`expiry -c` reports without PAM; the forced change it performs on an expired
-password goes through PAM, and the static build says so and points at
-`passwd(1)` instead.
-
-`newuidmap` and `newgidmap` need neither PAM nor NSS beyond `getpwuid_r` for
-the caller, and work in the static build.
-
-`login` is the fourth: without PAM it has no way to authenticate, so the
-applet prints *PAM support is not compiled in* and exits 1. A static image
-that needs a getty-driven login must use the glibc archive. utmp and wtmp
-recording is also a no-op under musl, which has stub `pututxline` and
-`updwtmpx`; `who(1)` and `last(1)` see nothing there.
-
-Unaffected: `passwd -S/-l/-u/-d/-e/-n/-x/-w/-i`, and `newgrp`, `sg` and
+Unaffected: `passwd -S/-l/-u/-d/-e/-n/-x/-w/-i`; `newgrp`, `sg` and
 `gpasswd`, which authenticate against the group password through crypt(3)
-rather than PAM -- so a group administrator can still use them. The other ten
-tools are root-only anyway and reach the account files directly.
+rather than PAM -- so a group administrator can still use them; `chage`,
+`newuidmap` and `newgidmap`, which never authenticate through PAM; and the
+seventeen root-only tools, `useradd` through `grpunconv`, which reach the
+account files directly.
 
 ### 2. No NSS
 
-`shadow_core::process` resolves the calling user through `getpwuid_r`, used by
-`passwd`, `chfn`, `chsh`, `chage`, `newgrp`, `sg` and `gpasswd`.
+`shadow_core` resolves the calling user through `getpwuid_r`, used by
+`passwd`, `chfn`, `chsh`, `chage`, `newgrp`, `sg`, `gpasswd`, `expiry`,
+`newuidmap` and `newgidmap`; `login` resolves the name typed at the prompt
+through `getpwnam`.
 
 glibc answers such lookups through its NSS module system, so it sees users from
 LDAP, SSSD, Active Directory or systemd-userdb. musl has no NSS module system
-and reads `/etc/passwd` directly. On a directory-joined host those seven tools
+and reads `/etc/passwd` directly. On a directory-joined host those eleven tools
 do not see network users at all.
 
 ### 3. No yescrypt (`$y$`)
@@ -123,10 +122,11 @@ yescrypt.
 This is not a marginal format: **Debian 12+ and Ubuntu 24.04 use yescrypt as
 the default password hash.** A musl build can neither verify nor produce `$y$`
 hashes, so `newgrp`, `sg` and `gpasswd` fail against a `$y$` group password,
-`gpasswd` cannot set one on a host configured for yescrypt, and `chpasswd -c
-YESCRYPT` is rejected. The prefix guard in `shadow_core::crypt` reports the
-unsupported method explicitly; it never falls back to a weaker hash silently.
-The default method is SHA-512, which is unaffected.
+`gpasswd` cannot set one on a host configured for yescrypt, and `-c YESCRYPT`
+is rejected by `chpasswd`, `chgpasswd` and `newusers`. The prefix guard in
+`shadow_core::crypt` reports the unsupported method explicitly; it never falls
+back to a weaker hash silently. The default method is SHA-512, which is
+unaffected.
 
 ### Where the static build is the right choice
 

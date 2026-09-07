@@ -22,7 +22,7 @@ clap = { workspace = true }
 uucore = { workspace = true }
 # One engine serves pwconv, pwunconv, grpconv and grpunconv; this crate names
 # which of the four it is.
-uu_pwconv = { path = "../pwconv", version = "0.4.0" }
+uu_pwconv = { path = "../pwconv", version = "0.5.0" }
 
 [lints]
 workspace = true
