@@ -40,6 +40,10 @@ mod options {
     pub const ROOT: &str = "root";
     pub const PREFIX: &str = "prefix";
     pub const USER: &str = "USER";
+    pub const ADD_SUBUIDS: &str = "add-subuids";
+    pub const DEL_SUBUIDS: &str = "del-subuids";
+    pub const ADD_SUBGIDS: &str = "add-subgids";
+    pub const DEL_SUBGIDS: &str = "del-subgids";
 }
 
 #[derive(Debug)]
@@ -130,6 +134,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 .map_err(|e| UsermodError::BadArgument(e.to_string()))?;
         }
     }
+
+    // Subordinate id ranges are validated with the other arguments, before any
+    // file is written; usermod(8) exits 3 for an invalid one.
+    let subid_changes = parse_subid_changes(&matches)?;
 
     // Parse the expiry date before anything is written, so a malformed value
     // cannot leave the passwd change committed and the shadow change not.
@@ -413,11 +421,89 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         }
     }
 
+    apply_subid_changes(&root, login, &subid_changes)?;
+
     nscd::invalidate_cache("passwd");
     nscd::invalidate_cache("group");
 
     audit::log_user_event("MOD_USER", login, new_uid, true);
 
+    Ok(())
+}
+
+/// One requested change to `/etc/subuid` or `/etc/subgid`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SubIdChange {
+    gids: bool,
+    remove: bool,
+    first: u64,
+    last: u64,
+}
+
+/// Read `-v`, `-V`, `-w` and `-W`, each of which may be given more than once.
+fn parse_subid_changes(matches: &clap::ArgMatches) -> Result<Vec<SubIdChange>, UsermodError> {
+    let mut changes = Vec::new();
+    for (key, gids, remove) in [
+        (options::ADD_SUBUIDS, false, false),
+        (options::DEL_SUBUIDS, false, true),
+        (options::ADD_SUBGIDS, true, false),
+        (options::DEL_SUBGIDS, true, true),
+    ] {
+        for spec in matches.get_many::<String>(key).into_iter().flatten() {
+            let (first, last) = shadow_core::subid::parse_range(spec).ok_or_else(|| {
+                UsermodError::BadArgument(format!(
+                    "invalid subordinate {} range '{spec}'",
+                    if gids { "gid" } else { "uid" }
+                ))
+            })?;
+            changes.push(SubIdChange {
+                gids,
+                remove,
+                first,
+                last,
+            });
+        }
+    }
+    Ok(changes)
+}
+
+/// Apply the subordinate id changes, each file in its own transaction.
+///
+/// The entries are keyed by the login name as given on the command line. The
+/// GNU tool does the same, and does not rename them on `-l` either: a range
+/// is a grant to a name, and the administrator who renames the account
+/// re-grants it if that is what they meant.
+fn apply_subid_changes(
+    root: &SysRoot,
+    login: &str,
+    changes: &[SubIdChange],
+) -> Result<(), UsermodError> {
+    use shadow_core::subid::{SubIdEntry, add_range, remove_range};
+
+    for gids in [false, true] {
+        let mine: Vec<&SubIdChange> = changes.iter().filter(|c| c.gids == gids).collect();
+        if mine.is_empty() {
+            continue;
+        }
+        let path = if gids {
+            root.subgid_path()
+        } else {
+            root.subuid_path()
+        };
+        let mut file = LockedFile::<SubIdEntry>::open_or_empty(&path).map_err(|e| {
+            UsermodError::CantUpdate(format!("cannot open {}: {e}", path.display()))
+        })?;
+        for c in mine {
+            if c.remove {
+                remove_range(file.entries_mut(), login, c.first, c.last);
+            } else {
+                add_range(file.entries_mut(), login, c.first, c.last);
+            }
+        }
+        file.commit().map_err(|e| {
+            UsermodError::CantUpdate(format!("cannot write {}: {e}", path.display()))
+        })?;
+    }
     Ok(())
 }
 
@@ -469,6 +555,15 @@ pub fn uu_app() -> Command {
         .about("Edit a user account's fields")
         .override_usage("usermod [options] LOGIN")
         .version(shadow_core::cli::VERSION)
+        // usermod(8) spells --del-subuids as -V; clap's own -V is given up
+        // and --version kept.
+        .disable_version_flag(true)
+        .arg(
+            Arg::new("version")
+                .long("version")
+                .help("print version")
+                .action(ArgAction::Version),
+        )
         .after_help(shadow_core::cli::AFTER_HELP)
         .arg(
             Arg::new(options::COMMENT)
@@ -578,6 +673,38 @@ pub fn uu_app() -> Command {
                 .long("prefix")
                 .value_name("PREFIX_DIR")
                 .help("Directory prefix"),
+        )
+        .arg(
+            Arg::new(options::ADD_SUBUIDS)
+                .short('v')
+                .long("add-subuids")
+                .value_name("FIRST-LAST")
+                .action(ArgAction::Append)
+                .help("add a range of subordinate uids"),
+        )
+        .arg(
+            Arg::new(options::DEL_SUBUIDS)
+                .short('V')
+                .long("del-subuids")
+                .value_name("FIRST-LAST")
+                .action(ArgAction::Append)
+                .help("remove a range of subordinate uids"),
+        )
+        .arg(
+            Arg::new(options::ADD_SUBGIDS)
+                .short('w')
+                .long("add-subgids")
+                .value_name("FIRST-LAST")
+                .action(ArgAction::Append)
+                .help("add a range of subordinate gids"),
+        )
+        .arg(
+            Arg::new(options::DEL_SUBGIDS)
+                .short('W')
+                .long("del-subgids")
+                .value_name("FIRST-LAST")
+                .action(ArgAction::Append)
+                .help("remove a range of subordinate gids"),
         )
         .arg(
             Arg::new(options::USER)
