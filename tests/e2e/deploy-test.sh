@@ -100,7 +100,7 @@ hash_password() {
 
 # ── TOOLS list ──────────────────────────────────────────────────────
 
-TOOLS="passwd pwck useradd userdel usermod chpasswd chgpasswd chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp sg"
+TOOLS="passwd pwck useradd userdel usermod chpasswd chgpasswd newusers chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp sg"
 SETUID_TOOLS="passwd chfn chsh newgrp gpasswd sg"
 
 # The tools an unprivileged user runs are installed in bin, the rest in sbin,
@@ -869,6 +869,74 @@ test_gpasswd_group_admin() {
     userdel -r gp_member 2>/dev/null || true
 }
 
+# ── newusers: batch account creation ───────────────────────────────
+
+test_newusers() {
+    section "newusers — batch account creation"
+
+    for u in nu_alice nu_bob nu_svc; do userdel -r $u 2>/dev/null || true; done
+    groupdel nu_shared 2>/dev/null || true
+    assert_ok "groupadd nu_shared" groupadd nu_shared
+
+    assert_ok "a batch of three accounts applies" \
+        bash -c "printf 'nu_alice:pw1:::Alice:/home/nu_alice:/bin/bash\nnu_bob:pw2::nu_shared:Bob:/home/nu_bob:/bin/sh\nnu_svc:pw3:::Service::/usr/sbin/nologin\n' | newusers"
+
+    assert_file_contains "nu_alice is in passwd" /etc/passwd '^nu_alice:x:'
+    assert_file_contains "nu_alice has a hash in shadow" /etc/shadow '^nu_alice:\$'
+    assert_file_contains "nu_alice got a group of her own" /etc/group '^nu_alice:'
+    assert_ok "nu_alice has a home" test -d /home/nu_alice
+    assert_ok "the skeleton reached it" bash -c "ls -A /home/nu_alice | grep -q ."
+    assert_ok "the home belongs to her" \
+        bash -c "test \"\$(stat -c %U /home/nu_alice)\" = nu_alice"
+    assert_ok "and is private" \
+        bash -c "test \"\$(stat -c %a /home/nu_alice)\" = 700"
+
+    # A named group in the gid field is used rather than a new one invented.
+    assert_ok "nu_bob landed in the named group" \
+        bash -c "test \"\$(id -gn nu_bob)\" = nu_shared"
+
+    # An empty home field means no directory at all.
+    assert_ok "nu_svc has no home directory" bash -c "! test -e /home/nu_svc"
+
+    # The default scheme is the host's, from login.defs, not a hard-coded one.
+    assert_file_contains "the default scheme follows login.defs (yescrypt here)" \
+        /etc/shadow '^nu_alice:\$y\$'
+
+    # And the hash has to actually encode the password supplied, not merely
+    # look like a hash. Re-hash the plaintext with the salt taken from the
+    # stored field and compare -- a tool that wrote a well-formed hash of the
+    # wrong string passes every shape check above and fails this one. Done with
+    # -c SHA512 because openssl can recompute that one.
+    userdel -r nu_check 2>/dev/null || true
+    assert_ok "an account hashed with SHA512" \
+        bash -c "printf 'nu_check:checkpw:::::\n' | newusers -c SHA512"
+    assert_ok "the stored hash really encodes the supplied password" \
+        bash -c 'stored=$(grep "^nu_check:" /etc/shadow | cut -d: -f2); \
+                 salt=$(printf "%s" "$stored" | cut -d"$" -f3); \
+                 test "$stored" = "$(openssl passwd -6 -salt "$salt" checkpw)"'
+    assert_fail "and does not encode a different one" \
+        bash -c 'stored=$(grep "^nu_check:" /etc/shadow | cut -d: -f2); \
+                 salt=$(printf "%s" "$stored" | cut -d"$" -f3); \
+                 test "$stored" = "$(openssl passwd -6 -salt "$salt" wrongpw)"'
+    userdel -r nu_check 2>/dev/null || true
+
+    # All or nothing.
+    for u in nu_x nu_y; do userdel -r $u 2>/dev/null || true; done
+    assert_fail "a batch with a bad line fails" \
+        bash -c "printf 'nu_x:pw:::::\nbadline\n' | newusers"
+    assert_ok "and created nothing" bash -c "! grep -q '^nu_x:' /etc/passwd"
+
+    assert_fail "an empty password is refused" \
+        bash -c "printf 'nu_y::::::\n' | newusers"
+    assert_ok "leaving no account behind" bash -c "! grep -q '^nu_y:' /etc/passwd"
+
+    assert_ok "empty input succeeds having done nothing" \
+        bash -c "newusers < /dev/null"
+
+    for u in nu_alice nu_bob nu_svc; do userdel -r $u 2>/dev/null || true; done
+    groupdel nu_shared 2>/dev/null || true
+}
+
 # ── chgpasswd: group passwords in batch ────────────────────────────
 
 test_chgpasswd() {
@@ -1090,6 +1158,7 @@ main() {
     test_gpasswd_group_admin
     test_sg_group_switch
     test_chgpasswd
+    test_newusers
     test_aging_and_input
     test_audit_logging
     test_root_option

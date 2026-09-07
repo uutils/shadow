@@ -16,7 +16,7 @@ use std::process::Command;
 use crate::common::{run, run_cmd};
 
 /// Every applet this build is expected to carry, in `--list` order.
-const TOOLS: [&str; 17] = [
+const TOOLS: [&str; 18] = [
     "chage",
     "chfn",
     "chgpasswd",
@@ -28,6 +28,7 @@ const TOOLS: [&str; 17] = [
     "groupmod",
     "grpck",
     "newgrp",
+    "newusers",
     "passwd",
     "pwck",
     "sg",

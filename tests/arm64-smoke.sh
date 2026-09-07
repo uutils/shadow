@@ -64,10 +64,10 @@ version=$("${QEMU[@]}" "$BIN" --version 2>&1)
 if [ -n "$version" ]; then ok "runs: $version"; else bad "would not run"; exit 1; fi
 
 applets=$("${QEMU[@]}" "$BIN" --list 2>/dev/null | tail -n +2 | wc -l)
-if [ "$applets" -ge 16 ]; then
+if [ "$applets" -ge 18 ]; then
     ok "carries $applets applets"
 else
-    bad "expected at least 16 applets, found $applets"
+    bad "expected at least 18 applets, found $applets"
 fi
 
 # ── A prefix tree, so nothing here touches the container's own accounts ──
@@ -123,6 +123,15 @@ fi
 # starts under emulation. It is the only caller of getgroups/setgroups, and a
 # wrong struct width there would show up as a failure to run at all.
 check "sg starts" "${QEMU[@]}" "$BIN" sg --help
+
+# newusers writes three files and a home directory from one line, so it
+# exercises the allocator, crypt(3) and the fchown in shadow_core::home
+# together -- the widest single check available here.
+printf 'batched:a long passphrase:2500:2500:Batched::/bin/sh\n' \
+    | "${QEMU[@]}" "$BIN" newusers -P "$T" >/dev/null 2>&1
+contains "newusers created the account" "$T/etc/passwd" '^batched:x:2500:2500:'
+contains "with a SHA-512 hash" "$T/etc/shadow" '^batched:\$6\$'
+contains "and a group of its own" "$T/etc/group" '^batched:x:2500:' 
 
 # pwck exits 2 for warnings, which a synthetic tree produces (no real shells),
 # so anything up to 2 means it read and checked the files rather than failing.

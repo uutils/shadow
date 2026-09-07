@@ -44,6 +44,8 @@ mod test_grpck;
 mod test_multicall;
 #[path = "by-util/test_newgrp.rs"]
 mod test_newgrp;
+#[path = "by-util/test_newusers.rs"]
+mod test_newusers;
 #[path = "by-util/test_passwd.rs"]
 mod test_passwd;
 #[path = "by-util/test_pwck.rs"]
