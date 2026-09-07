@@ -27,6 +27,8 @@ fn get_tool_app(name: &str) -> Option<Command> {
         "chage" => Some(chage::uu_app()),
         #[cfg(feature = "chfn")]
         "chfn" => Some(chfn::uu_app()),
+        #[cfg(feature = "chgpasswd")]
+        "chgpasswd" => Some(chgpasswd::uu_app()),
         #[cfg(feature = "chpasswd")]
         "chpasswd" => Some(chpasswd::uu_app()),
         #[cfg(feature = "chsh")]
@@ -66,6 +68,8 @@ fn all_tool_names() -> Vec<&'static str> {
     names.push("chage");
     #[cfg(feature = "chfn")]
     names.push("chfn");
+    #[cfg(feature = "chgpasswd")]
+    names.push("chgpasswd");
     #[cfg(feature = "chpasswd")]
     names.push("chpasswd");
     #[cfg(feature = "chsh")]

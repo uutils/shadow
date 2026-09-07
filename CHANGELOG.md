@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `chgpasswd`, the seventeenth tool: it sets group passwords in batch from
+  stdin, the counterpart of `chpasswd` for groups. Every line is resolved and
+  hashed before any file is written, so a batch naming one group that does not
+  exist changes nothing. The hash goes to `/etc/gshadow` where that file
+  exists, with `x` left in `/etc/group`, and into `/etc/group` where it does
+  not — without creating a gshadow file, which would change how the rest of the
+  host reads group passwords. `-c NONE`, which GNU honours by storing the
+  password as clear text, is refused; `-e` already writes a field verbatim when
+  that is genuinely wanted
+
 - `sg`, the sixteenth tool: it runs a single command with a different primary
   group. `sg` and `newgrp` decide who may enter a group by the same rules and
   enter it the same way — on a GNU system they are one binary reached through a
@@ -17,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which is what lets the command's own exit status reach the caller unaltered
 
 ### Changed
+
+- `make check` also runs the suite as an unprivileged user, through the new
+  `make test-unprivileged`. Every container in `docker-compose.yml` runs as
+  root, so a test that silently assumed root passed locally and failed only in
+  CI -- and a test asserting a failure exit code passed there for the wrong
+  reason, since "permission denied" is a failure too
 
 - `newgrp` no longer refuses a passwordless group before prompting. It asked
   for a password only when the group had one, so whether a prompt appeared told

@@ -22,6 +22,8 @@ mod common;
 mod test_chage;
 #[path = "by-util/test_chfn.rs"]
 mod test_chfn;
+#[path = "by-util/test_chgpasswd.rs"]
+mod test_chgpasswd;
 #[path = "by-util/test_chpasswd.rs"]
 mod test_chpasswd;
 #[path = "by-util/test_chsh.rs"]

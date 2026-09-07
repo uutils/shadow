@@ -7,7 +7,7 @@ SBINDIR ?= $(PREFIX)/sbin
 SETUID_TOOLS = passwd chfn chsh newgrp gpasswd sg
 
 # Root-only tools (no setuid; fail at getuid() check for non-root callers).
-ROOT_TOOLS = useradd userdel usermod chpasswd \
+ROOT_TOOLS = useradd userdel usermod chpasswd chgpasswd \
              groupadd groupdel groupmod pwck grpck
 
 # Tools an ordinary user runs, and which therefore go in bin rather than sbin:
@@ -20,7 +20,7 @@ USER_TOOLS = $(SETUID_TOOLS) chage
 
 ALL_TOOLS = $(SETUID_TOOLS) $(ROOT_TOOLS) chage
 
-.PHONY: all build build-multicall build-arm64 dist-musl check test test-gnu-compat test-arm64 install install-multicall uninstall clean
+.PHONY: all build build-multicall build-arm64 dist-musl check test test-gnu-compat test-unprivileged test-arm64 install install-multicall uninstall clean
 
 all: build
 
@@ -71,6 +71,7 @@ check:
 	cargo clippy --workspace --all-targets --features pam -- -D warnings
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
 	$(MAKE) test
+	$(MAKE) test-unprivileged
 
 # `install` ships binaries built with pam, so the tests must cover that build
 # as well as the default one: the feature changes which code paths exist.
@@ -102,12 +103,37 @@ build-arm64:
 test-arm64: build-arm64
 	ARM64_BIN=$(ARM64_BIN) bash tests/arm64-smoke.sh
 
+# Run the suite as an unprivileged user.
+#
+# Every container in docker-compose.yml runs as root, so a test that silently
+# assumes root passes here and fails in CI, where one job runs as an ordinary
+# user -- and a test asserting a failure exit code passes for the wrong reason,
+# because "permission denied" is also a failure. This target is that job,
+# locally. The binaries are already built, so it only re-runs them.
+#
+# SHADOW_TEST_REQUIRE_ROOT is cleared deliberately: it exists to turn a skip
+# into a failure when the suite *is* running as root, which is the opposite of
+# what this target does.
+UNPRIV_USER = shadowtest
+
+test-unprivileged:
+	cargo test --workspace --no-run 2>&1 \
+		| sed -n 's/.*(\(target\/debug\/deps\/[^)]*\))$$/\1/p' > /tmp/test-binaries
+	@id -u $(UNPRIV_USER) >/dev/null 2>&1 || useradd -m $(UNPRIV_USER)
+	@chmod -R a+rX target
+	@fail=0; while read -r bin; do \
+		printf '== %s\n' "$$bin"; \
+		su $(UNPRIV_USER) -s /bin/sh -c "SHADOW_TEST_REQUIRE_ROOT= $(CURDIR)/$$bin" \
+			|| fail=1; \
+	done < /tmp/test-binaries; \
+	exit $$fail
+
 # Compare our output and exit codes against the GNU tools installed alongside.
 # Needs root and the GNU shadow package, so it belongs in a container.
 test-gnu-compat:
 	bash tests/gnu-compat.sh
 
-# Default install: 16 standalone per-tool binaries, with the setuid layout and
+# Default install: 17 standalone per-tool binaries, with the setuid layout and
 # the bin/sbin split GNU shadow-utils uses. Only $(SETUID_TOOLS) are setuid.
 install: build
 	@for tool in $(SETUID_TOOLS); do \

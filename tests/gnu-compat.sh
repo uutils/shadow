@@ -224,6 +224,7 @@ for pair in \
     "groupdel:/usr/sbin/groupdel" \
     "groupmod:/usr/sbin/groupmod" \
     "chpasswd:/usr/sbin/chpasswd" \
+    "chgpasswd:/usr/sbin/chgpasswd" \
     "gpasswd:/usr/bin/gpasswd" \
     "pwck:/usr/sbin/pwck" \
     "grpck:/usr/sbin/grpck"; do
