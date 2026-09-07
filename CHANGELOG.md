@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `vipw` and `vigr`, the nineteenth and twentieth tools: they hand
+  `/etc/passwd`, `/etc/shadow`, `/etc/group` or `/etc/gshadow` to the
+  administrator's editor under the same lock every other tool takes, so a hand
+  edit cannot interleave with a `useradd` running at the same moment, and they
+  install the result atomically. Two deliberate departures from GNU: the edited
+  file is parsed before it is installed — GNU installs whatever was saved, a
+  line with no colons included — and when it is refused the edit is kept
+  beside the file rather than thrown away; and changes are detected by content,
+  where GNU compares timestamps in whole seconds and discards an edit saved
+  within the same second. `vigr` is `vipw` with the group file as its default,
+  which is how the GNU suite ships it, as a symlink
+
 - `newusers`, the eighteenth tool: it creates or updates accounts in batch
   from stdin, writing the passwd record, the hashed shadow record, a group and
   the home directory for each line. Every line is parsed, every group resolved
@@ -37,6 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which is what lets the command's own exit status reach the caller unaltered
 
 ### Changed
+
+- `shadow_core::process::spawn_with_signals_unblocked` starts a child with a
+  clean signal mask. A tool that blocks `SIGINT` while it holds a lock passes
+  that mask to every child, and an editor started under it could not be
+  interrupted at all
 
 - Home directory creation moved to `shadow_core::home`, shared by `useradd`
   and `newusers`. The care it takes -- forcing the umask so the mode is exact,

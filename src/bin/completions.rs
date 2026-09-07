@@ -59,6 +59,10 @@ fn get_tool_app(name: &str) -> Option<Command> {
         "userdel" => Some(userdel::uu_app()),
         #[cfg(feature = "usermod")]
         "usermod" => Some(usermod::uu_app()),
+        #[cfg(feature = "vigr")]
+        "vigr" => Some(vigr::uu_app()),
+        #[cfg(feature = "vipw")]
+        "vipw" => Some(vipw::uu_app()),
         _ => None,
     }
 }
@@ -102,6 +106,10 @@ fn all_tool_names() -> Vec<&'static str> {
     names.push("userdel");
     #[cfg(feature = "usermod")]
     names.push("usermod");
+    #[cfg(feature = "vigr")]
+    names.push("vigr");
+    #[cfg(feature = "vipw")]
+    names.push("vipw");
     names
 }
 

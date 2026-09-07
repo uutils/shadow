@@ -58,3 +58,5 @@ mod test_useradd;
 mod test_userdel;
 #[path = "by-util/test_usermod.rs"]
 mod test_usermod;
+#[path = "by-util/test_vipw.rs"]
+mod test_vipw;

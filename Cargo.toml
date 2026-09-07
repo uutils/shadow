@@ -34,6 +34,8 @@ members = [
     "src/uu/sg",
     "src/uu/chgpasswd",
     "src/uu/newusers",
+    "src/uu/vipw",
+    "src/uu/vigr",
 ]
 
 [workspace.package]
@@ -98,11 +100,13 @@ gpasswd = { optional = true, version = "0.4.0", package = "uu_gpasswd", path = "
 sg = { optional = true, version = "0.4.0", package = "uu_sg", path = "src/uu/sg" }
 chgpasswd = { optional = true, version = "0.4.0", package = "uu_chgpasswd", path = "src/uu/chgpasswd" }
 newusers = { optional = true, version = "0.4.0", package = "uu_newusers", path = "src/uu/newusers" }
+vipw = { optional = true, version = "0.4.0", package = "uu_vipw", path = "src/uu/vipw" }
+vigr = { optional = true, version = "0.4.0", package = "uu_vigr", path = "src/uu/vigr" }
 
 [features]
 default = ["passwd", "pwck", "useradd", "userdel", "usermod", "chpasswd", "chage",
            "groupadd", "groupdel", "groupmod", "grpck", "chfn", "chsh", "newgrp", "gpasswd",
-           "sg", "chgpasswd", "newusers"]
+           "sg", "chgpasswd", "newusers", "vipw", "vigr"]
 
 # PAM authentication (requires libpam-dev). The `?` matters: without it,
 # asking for PAM would drag in the three applets that can use it even when the
@@ -140,6 +144,8 @@ newgrp = { version = "0.4.0", package = "uu_newgrp", path = "src/uu/newgrp" }
 sg = { version = "0.4.0", package = "uu_sg", path = "src/uu/sg" }
 chgpasswd = { version = "0.4.0", package = "uu_chgpasswd", path = "src/uu/chgpasswd" }
 newusers = { version = "0.4.0", package = "uu_newusers", path = "src/uu/newusers" }
+vipw = { version = "0.4.0", package = "uu_vipw", path = "src/uu/vipw" }
+vigr = { version = "0.4.0", package = "uu_vigr", path = "src/uu/vigr" }
 passwd = { version = "0.4.0", package = "uu_passwd", path = "src/uu/passwd" }
 useradd = { version = "0.4.0", package = "uu_useradd", path = "src/uu/useradd" }
 userdel = { version = "0.4.0", package = "uu_userdel", path = "src/uu/userdel" }

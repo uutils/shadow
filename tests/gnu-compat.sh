@@ -226,6 +226,8 @@ for pair in \
     "chpasswd:/usr/sbin/chpasswd" \
     "chgpasswd:/usr/sbin/chgpasswd" \
     "newusers:/usr/sbin/newusers" \
+    "vipw:/usr/sbin/vipw" \
+    "vigr:/usr/sbin/vigr" \
     "gpasswd:/usr/bin/gpasswd" \
     "pwck:/usr/sbin/pwck" \
     "grpck:/usr/sbin/grpck"; do

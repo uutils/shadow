@@ -100,7 +100,7 @@ hash_password() {
 
 # ── TOOLS list ──────────────────────────────────────────────────────
 
-TOOLS="passwd pwck useradd userdel usermod chpasswd chgpasswd newusers chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp sg"
+TOOLS="passwd pwck useradd userdel usermod chpasswd chgpasswd newusers chage groupadd groupdel groupmod gpasswd grpck chfn chsh newgrp sg vipw vigr"
 SETUID_TOOLS="passwd chfn chsh newgrp gpasswd sg"
 
 # The tools an unprivileged user runs are installed in bin, the rest in sbin,
@@ -869,6 +869,70 @@ test_gpasswd_group_admin() {
     userdel -r gp_member 2>/dev/null || true
 }
 
+# ── vipw / vigr: hand edits under the lock ─────────────────────────
+
+test_vipw() {
+    section "vipw / vigr — hand edits under the lock"
+
+    userdel -r vp_alice 2>/dev/null || true
+    userdel -r vp_racer 2>/dev/null || true
+    groupdel vp_team 2>/dev/null || true
+    rm -f /etc/passwd.edit /etc/group.edit
+
+    # An "editor" that appends a line, and one that sleeps so a race can be
+    # arranged. Both come back within the same second as the copy was made,
+    # which the GNU tool would misread as "unchanged".
+    cat > /usr/local/bin/ed-append <<'E'
+#!/bin/sh
+printf '%s\n' "$APPEND" >> "$1"
+E
+    cat > /usr/local/bin/ed-slow <<'E'
+#!/bin/sh
+sleep 3
+printf '%s\n' "$APPEND" >> "$1"
+E
+    chmod +x /usr/local/bin/ed-append /usr/local/bin/ed-slow
+
+    assert_ok "vipw installs an edit" \
+        env APPEND='vp_alice:x:5601:5601::/home/vp_alice:/bin/sh' EDITOR=ed-append vipw -q
+    assert_file_contains "the line is in /etc/passwd" /etc/passwd '^vp_alice:x:5601:'
+    assert_ok "the mode of /etc/passwd is intact" \
+        bash -c "test \"\$(stat -c %a /etc/passwd)\" = 644"
+    assert_ok "no working copy is left behind" bash -c "! test -e /etc/passwd.edit"
+
+    assert_ok "vigr installs an edit" \
+        env APPEND='vp_team:x:5602:vp_alice' EDITOR=ed-append vigr -q
+    assert_file_contains "the group is in /etc/group" /etc/group '^vp_team:x:5602:vp_alice'
+    assert_ok "the mode of /etc/shadow survives vipw -s" \
+        bash -c "EDITOR=true vipw -s -q && test \"\$(stat -c %a /etc/shadow)\" = 640"
+
+    # The reason the tool exists: while the editor is open, another tool that
+    # wants the same file waits, and both changes land.
+    APPEND='vp_racer_placeholder:x:5603:5603:::' EDITOR=ed-slow vipw -q &
+    sleep 1
+    assert_ok "useradd waits for the lock rather than failing" useradd -M vp_racer
+    wait
+    assert_file_contains "the hand edit landed" /etc/passwd '^vp_racer_placeholder:'
+    assert_file_contains "and so did the concurrent useradd" /etc/passwd '^vp_racer:'
+
+    # A result the suite cannot parse is refused and the edit kept.
+    assert_fail "an unparseable result is refused" \
+        env APPEND='this has no colons' EDITOR=ed-append vipw -q
+    assert_file_not_contains "the live file is untouched" /etc/passwd 'no colons'
+    assert_ok "the edit is kept beside the file" \
+        bash -c "grep -q 'no colons' /etc/passwd.edit"
+    rm -f /etc/passwd.edit
+
+    assert_fail "an editor that fails installs nothing" \
+        env EDITOR=false vipw -q
+
+    userdel -r vp_racer 2>/dev/null || true
+    userdel vp_racer_placeholder 2>/dev/null || true
+    userdel -r vp_alice 2>/dev/null || true
+    groupdel vp_team 2>/dev/null || true
+    rm -f /usr/local/bin/ed-append /usr/local/bin/ed-slow
+}
+
 # ── newusers: batch account creation ───────────────────────────────
 
 test_newusers() {
@@ -1159,6 +1223,7 @@ main() {
     test_sg_group_switch
     test_chgpasswd
     test_newusers
+    test_vipw
     test_aging_and_input
     test_audit_logging
     test_root_option

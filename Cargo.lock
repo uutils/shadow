@@ -882,6 +882,8 @@ dependencies = [
  "uu_useradd",
  "uu_userdel",
  "uu_usermod",
+ "uu_vigr",
+ "uu_vipw",
 ]
 
 [[package]]
@@ -908,6 +910,26 @@ dependencies = [
 
 [[package]]
 name = "uu_usermod"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "rustix",
+ "shadow-core",
+ "tempfile",
+ "uucore",
+]
+
+[[package]]
+name = "uu_vigr"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "uu_vipw",
+ "uucore",
+]
+
+[[package]]
+name = "uu_vipw"
 version = "0.4.0"
 dependencies = [
  "clap",

@@ -64,10 +64,10 @@ version=$("${QEMU[@]}" "$BIN" --version 2>&1)
 if [ -n "$version" ]; then ok "runs: $version"; else bad "would not run"; exit 1; fi
 
 applets=$("${QEMU[@]}" "$BIN" --list 2>/dev/null | tail -n +2 | wc -l)
-if [ "$applets" -ge 18 ]; then
+if [ "$applets" -ge 20 ]; then
     ok "carries $applets applets"
 else
-    bad "expected at least 18 applets, found $applets"
+    bad "expected at least 20 applets, found $applets"
 fi
 
 # ── A prefix tree, so nothing here touches the container's own accounts ──
@@ -123,6 +123,8 @@ fi
 # starts under emulation. It is the only caller of getgroups/setgroups, and a
 # wrong struct width there would show up as a failure to run at all.
 check "sg starts" "${QEMU[@]}" "$BIN" sg --help
+check "vipw starts" "${QEMU[@]}" "$BIN" vipw --help
+check "vigr starts" "${QEMU[@]}" "$BIN" vigr --help
 
 # newusers writes three files and a home directory from one line, so it
 # exercises the allocator, crypt(3) and the fchown in shadow_core::home
