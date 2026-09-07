@@ -13,6 +13,9 @@ FROM fedora:46
 RUN dnf install -y \
     gcc \
     pam-devel \
+    # util-linux carries /etc/pam.d/login on Fedora; without it PAM falls back
+    # to `other`, which denies everything, and login cannot be tested at all.
+    util-linux \
     libselinux-devel \
     audit-libs-devel \
     pkgconf-pkg-config \
