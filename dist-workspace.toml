@@ -4,9 +4,9 @@ members = ["cargo:."]
 # Release automation for the multicall binary (issue #207).
 #
 # Only the workspace root package (uu_shadow) is distributed: it builds the
-# single `shadow-rs` multicall binary that provides all 14 tools via argv[0],
-# the same layout as `make install-multicall`. The 14 per-tool crates each
-# carry `dist = false` so we ship one archive per target instead of fifteen.
+# single `shadow-rs` multicall binary that provides every tool via argv[0],
+# the same layout as `make install-multicall`. The per-tool crates each carry
+# `dist = false` so we ship one archive per target instead of one per tool.
 [dist]
 cargo-dist-version = "0.32.0"
 ci = "github"
