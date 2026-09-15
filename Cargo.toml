@@ -58,7 +58,7 @@ categories = ["command-line-utilities"]
 
 [workspace.dependencies]
 # Internal crates
-shadow-core = { path = "src/shadow-core", version = "0.5.1" }
+shadow-core = { package = "uu_shadow_core", path = "src/shadow-core", version = "0.5.1" }
 
 # CLI
 clap = { version = "4", features = ["wrap_help"] }
@@ -86,7 +86,7 @@ tempfile = "3"
 [dependencies]
 clap = { workspace = true }
 clap_complete = { workspace = true, optional = true }
-shadow-core = { path = "src/shadow-core", version = "0.5.1" }
+shadow-core = { package = "uu_shadow_core", path = "src/shadow-core", version = "0.5.1" }
 rustix = { workspace = true }
 
 # Tool crates (optional, enabled by features)
@@ -178,7 +178,7 @@ userdel = { version = "0.5.1", package = "uu_userdel", path = "src/uu/userdel" }
 usermod = { version = "0.5.1", package = "uu_usermod", path = "src/uu/usermod" }
 pwck = { version = "0.5.1", package = "uu_pwck", path = "src/uu/pwck" }
 grpck = { version = "0.5.1", package = "uu_grpck", path = "src/uu/grpck" }
-shadow-core = { path = "src/shadow-core", version = "0.5.1" }
+shadow-core = { package = "uu_shadow_core", path = "src/shadow-core", version = "0.5.1" }
 rustix = { workspace = true }
 tempfile = { workspace = true }
 

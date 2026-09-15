@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The shared library crate is named `uu_shadow_core` in its manifest, which is
+  the name it was published under (0.2.1) and the only one it can be published
+  under: `shadow-core` on crates.io belongs to an unrelated project. Its Rust
+  name stays `shadow_core`, so no code changes; `cargo test -p` and the like
+  take the new package name
+
 ## [0.5.1] - 2026-09-15
 
 ### Fixed

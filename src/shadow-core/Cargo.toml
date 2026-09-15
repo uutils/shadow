@@ -1,5 +1,8 @@
 [package]
-name = "shadow-core"
+# Published as uu_shadow_core: the name shadow-core on crates.io belongs to an
+# unrelated project. The library keeps its Rust name, shadow_core, so nothing
+# that uses it changes.
+name = "uu_shadow_core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,9 +11,10 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 rust-version.workspace = true
-description = "shadow-core ~ (shadow-rs) parsers, atomic file ops, locking, PAM"
+description = "uutils shadow ~ shared library: record parsers, atomic file operations, locking, PAM"
 
 [lib]
+name = "shadow_core"
 path = "src/lib.rs"
 
 [dependencies]
