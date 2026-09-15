@@ -1,5 +1,6 @@
 # Steps dist inserts into each build job before it installs the apt
-# dependencies from dist-workspace.toml and runs `dist build`.
+# dependencies from dist-workspace.toml and runs `dist build`. Not a workflow:
+# it lives one directory down so that GitHub does not read it as one.
 #
 # dist runs `apt-get install` without `-y`. On GitHub's own runners that is
 # harmless, because their apt is configured to assume yes; inside the

@@ -25,8 +25,11 @@ features = ["pam"]
 # pull request, which is the release step that can actually break.
 pr-run-mode = "skip"
 # Steps run in each build job before the apt dependencies below are installed:
-# see the file for why.
-github-build-setup = "build-setup.yml"
+# see the file for why. The path is relative to .github/workflows; the file
+# sits in a subdirectory because GitHub reads every YAML file directly under
+# .github/workflows as a workflow, and a bare list of steps is not one -- it
+# showed up as a failing workflow on every push.
+github-build-setup = "setup/build-setup.yml"
 
 # Ship only the multicall binary. `shadow-rs-completions` is a build-time
 # helper behind `required-features = ["completions"]`, so it is not part of a
