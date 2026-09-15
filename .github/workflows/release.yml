@@ -126,6 +126,10 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
+      - name: "Make apt non-interactive in the build container"
+        run: |
+          printf 'APT::Get::Assume-Yes "true";\n' > /etc/apt/apt.conf.d/90-assume-yes
+          echo "DEBIAN_FRONTEND=noninteractive" >> "$GITHUB_ENV"
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest
