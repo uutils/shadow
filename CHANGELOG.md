@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-15
+
 ### Fixed
 
 - `chage -l` did not work for a user on their own account, the one mode the
