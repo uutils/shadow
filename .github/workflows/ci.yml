@@ -120,12 +120,12 @@ jobs:
       # shadow-core's crypt(3) wrapper has musl-specific expectations (no
       # yescrypt, `rounds=` honoured). Run its unit tests against the static
       # musl libc, not only Alpine's dynamic one in the Docker matrix.
-      - run: cargo test --target x86_64-unknown-linux-musl -p shadow-core --features crypt
+      - run: cargo test --target x86_64-unknown-linux-musl -p uu_shadow_core --features crypt
       # `pam` must be refused on static musl, not silently produce a binary
       # whose authentication path can never work.
       - name: pam is rejected on static musl
         run: |
-          if cargo check --target x86_64-unknown-linux-musl -p shadow-core --features pam 2>check.log; then
+          if cargo check --target x86_64-unknown-linux-musl -p uu_shadow_core --features pam 2>check.log; then
             echo "::error::the pam feature built on static musl; the compile_error guard in shadow-core is gone"
             exit 1
           fi

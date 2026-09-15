@@ -104,6 +104,23 @@ they all run as root. A green pipeline has shipped an archive that would not
 start and another whose setuid tools no user could run; this is what catches
 that.
 
+### Publishing to crates.io
+
+The crates are owned by @sylvestre on crates.io; publishing needs an owner's
+token. The library is published as `uu_shadow_core` (its Rust name stays
+`shadow_core`; `shadow-core` on crates.io is somebody else's crate). Order
+matters, since each crate's dependencies must already be on the registry at
+the same version:
+
+1. `uu_shadow_core`
+2. every `uu_<tool>` crate that depends only on it
+3. `uu_vigr`, `uu_pwunconv`, `uu_grpconv`, `uu_grpunconv`, `uu_newgidmap`,
+   which each wrap another tool's crate
+4. `uu_shadow`, the multicall binary, which depends on all of them
+
+`cargo publish --dry-run -p uu_shadow_core` works from a checkout; the others
+can only be dry-run once their dependencies are published.
+
 ### Linting
 
 ```shell

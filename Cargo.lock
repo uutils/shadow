@@ -533,22 +533,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "shadow-core"
-version = "0.5.1"
-dependencies = [
- "clap",
- "landlock",
- "libc",
- "proptest",
- "rustix",
- "subtle",
- "tempfile",
- "thiserror",
- "uucore",
- "zeroize",
-]
-
-[[package]]
 name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -699,8 +683,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -710,8 +694,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -720,8 +704,8 @@ name = "uu_chgpasswd"
 version = "0.5.1"
 dependencies = [
  "clap",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
  "zeroize",
 ]
@@ -732,8 +716,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
  "zeroize",
 ]
@@ -744,8 +728,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -755,8 +739,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -766,8 +750,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
  "zeroize",
 ]
@@ -778,8 +762,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -789,8 +773,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -800,8 +784,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -810,8 +794,8 @@ name = "uu_grpck"
 version = "0.5.1"
 dependencies = [
  "clap",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -839,8 +823,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
  "zeroize",
 ]
@@ -860,7 +844,7 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -870,8 +854,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -880,8 +864,8 @@ name = "uu_newusers"
 version = "0.5.1"
 dependencies = [
  "clap",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
  "zeroize",
 ]
@@ -892,8 +876,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -902,8 +886,8 @@ name = "uu_pwck"
 version = "0.5.1"
 dependencies = [
  "clap",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -913,8 +897,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -932,7 +916,7 @@ name = "uu_sg"
 version = "0.5.1"
 dependencies = [
  "clap",
- "shadow-core",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -943,7 +927,6 @@ dependencies = [
  "clap",
  "clap_complete",
  "rustix",
- "shadow-core",
  "tempfile",
  "uu_chage",
  "uu_chfn",
@@ -968,6 +951,7 @@ dependencies = [
  "uu_pwconv",
  "uu_pwunconv",
  "uu_sg",
+ "uu_shadow_core",
  "uu_useradd",
  "uu_userdel",
  "uu_usermod",
@@ -976,13 +960,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_shadow_core"
+version = "0.5.1"
+dependencies = [
+ "clap",
+ "landlock",
+ "libc",
+ "proptest",
+ "rustix",
+ "subtle",
+ "tempfile",
+ "thiserror",
+ "uucore",
+ "zeroize",
+]
+
+[[package]]
 name = "uu_useradd"
 version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -992,8 +992,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -1003,8 +1003,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
@@ -1023,8 +1023,8 @@ version = "0.5.1"
 dependencies = [
  "clap",
  "rustix",
- "shadow-core",
  "tempfile",
+ "uu_shadow_core",
  "uucore",
 ]
 
