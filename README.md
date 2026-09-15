@@ -153,6 +153,7 @@ docker compose run --rm debian cargo build --release
 Default install: 28 standalone per-tool binaries with least-privilege setuid
 layout matching GNU shadow-utils. Only `passwd`, `chfn`, `chsh`, `newgrp`,
 `gpasswd`, `sg`, `newuidmap` and `newgidmap` are installed setuid-root, `expiry` is setgid `shadow`; the other 19 are plain `0755`.
+On a system with no `shadow` group -- Fedora, Arch -- `expiry` is installed setuid-root instead, the way those systems ship the GNU tools that read `/etc/shadow` for a user; a group under another name is named with `SHADOW_GROUP=`.
 
 ```shell
 sudo make install PREFIX=/usr/local

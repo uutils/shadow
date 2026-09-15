@@ -23,6 +23,24 @@ USER_BIN_TOOLS = chage login
 # expiry reads the caller's own /etc/shadow line and nothing else, and the GNU
 # suite ships it setgid shadow -- enough to read the file, no more.
 SETGID_SHADOW_TOOLS = expiry
+
+# The group allowed to read /etc/shadow. Debian and Ubuntu have one, `shadow`,
+# and that is what the tools above are made setgid to. Fedora and Arch have no
+# such group: /etc/shadow there is readable by root alone, and the GNU tool
+# that reads it on a user's behalf, chage, is setuid root instead. Where the
+# group does not exist at install time -- those systems, or a packager's
+# chroot -- the tools above follow that convention and are installed setuid
+# root; they check the caller's real uid, so the extra privilege buys a user
+# nothing beyond reading their own line. Packagers whose target has the group
+# under another name set SHADOW_GROUP.
+SHADOW_GROUP ?= shadow
+ifneq ($(shell getent group '$(SHADOW_GROUP)' >/dev/null 2>&1 && echo yes),)
+SETGID_INSTALL = install -Dm2755 -g '$(SHADOW_GROUP)'
+SETGID_LABEL = setgid $(SHADOW_GROUP) (2755)
+else
+SETGID_INSTALL = install -Dm4755
+SETGID_LABEL = setuid (4755; no group '$(SHADOW_GROUP)' on this system)
+endif
 USER_TOOLS = $(SETUID_TOOLS) $(USER_BIN_TOOLS) $(SETGID_SHADOW_TOOLS)
 
 ALL_TOOLS = $(SETUID_TOOLS) $(ROOT_TOOLS) $(USER_BIN_TOOLS) $(SETGID_SHADOW_TOOLS)
@@ -158,7 +176,7 @@ install: build
 		install -Dm0755 target/release/$$tool $(DESTDIR)$(BINDIR)/$$tool || exit 1; \
 	done
 	@for tool in $(SETGID_SHADOW_TOOLS); do \
-		install -Dm2755 -g shadow target/release/$$tool $(DESTDIR)$(BINDIR)/$$tool || exit 1; \
+		$(SETGID_INSTALL) target/release/$$tool $(DESTDIR)$(BINDIR)/$$tool || exit 1; \
 	done
 	@for tool in $(ROOT_TOOLS); do \
 		install -Dm0755 target/release/$$tool $(DESTDIR)$(SBINDIR)/$$tool || exit 1; \
@@ -166,7 +184,7 @@ install: build
 	@echo "Installed $(words $(ALL_TOOLS)) standalone binaries"
 	@echo "  $(DESTDIR)$(BINDIR)/  setuid (4755): $(SETUID_TOOLS)"
 	@echo "  $(DESTDIR)$(BINDIR)/  user (0755):   $(USER_BIN_TOOLS)"
-	@echo "  $(DESTDIR)$(BINDIR)/  setgid shadow (2755): $(SETGID_SHADOW_TOOLS)"
+	@echo "  $(DESTDIR)$(BINDIR)/  $(SETGID_LABEL): $(SETGID_SHADOW_TOOLS)"
 	@echo "  $(DESTDIR)$(SBINDIR)/ root (0755):   $(ROOT_TOOLS)"
 
 # Opt-in install: single multicall binary with symlinks. Smaller footprint.
