@@ -144,7 +144,7 @@ effective — sudo-rs uses this approach.
 `harden_process()` does not modify the process's own environment: in-process
 PAM and NSS modules still see the caller's. It no longer *claims* to — it used
 to return a sanitized environment that all thirteen callers discarded. Children
-are given a clean environment where they are spawned. Tracked in #249.
+are given a clean environment where they are spawned. Tracked in #314.
 
 ## References
 
