@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `make install` failed on any system without a `shadow` group -- Fedora,
+  Arch, or a packager's chroot -- because `expiry` was installed setgid to a
+  group that was not there. On such systems `/etc/shadow` is readable by root
+  alone and the GNU tool that reads it on a user's behalf, `chage`, is setuid
+  root; `expiry` now follows that convention where the group is absent, and
+  `SHADOW_GROUP=` names one that goes by another name. Reported by the Arch
+  packager (#306)
+
 ### Added
 
 - `make verify-release TAG=<version>` runs the three published archives of a
