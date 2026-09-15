@@ -16,7 +16,10 @@ itself expires. The fields live in /etc/shadow (see **shadow**(5)) and are
 counted in **days since 1970-01-01**, not in dates.
 
 **chage -l** prints those fields in a readable form and is the only mode a
-normal user may run, and only for their own account. Every other mode requires
+normal user may run, and only for their own account. Reading /etc/shadow for
+that is why the binary is installed setgid *shadow* (setuid root on systems
+with no such group); what the caller may do is decided from their real uid, so
+the privilege buys a user nothing beyond their own line. Every other mode requires
 the superuser.
 
 ## OPTIONS

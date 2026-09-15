@@ -26,16 +26,18 @@ use std::process::ExitCode;
 
 type Applet = fn(&[OsString]) -> i32;
 
-/// Applets that keep euid 0 for an unprivileged caller: the same eight that
-/// `make install` marks setuid. `sg` is here for the reason `newgrp` is --
-/// it has to read `/etc/gshadow` to check a group password, and the GNU suite
-/// ships it as a symlink to the setuid `newgrp` for exactly that. The two id
-/// mappers are here because writing a namespace's map beyond the caller's
-/// own id needs `CAP_SETUID`/`CAP_SETGID` in the parent namespace. `expiry`
-/// is setgid `shadow` in the per-tool install, which is only enough to read
-/// `/etc/shadow`; a single setuid binary has nothing that narrow to offer, so
-/// it keeps euid 0 here and reads the one line it needs.
-const SETUID_APPLETS: [&str; 9] = [
+/// Applets that keep euid 0 for an unprivileged caller: the eight that
+/// `make install` marks setuid, and the two it marks setgid `shadow`. `sg` is
+/// here for the reason `newgrp` is -- it has to read `/etc/gshadow` to check
+/// a group password, and the GNU suite ships it as a symlink to the setuid
+/// `newgrp` for exactly that. The two id mappers are here because writing a
+/// namespace's map beyond the caller's own id needs `CAP_SETUID`/`CAP_SETGID`
+/// in the parent namespace. `expiry` and `chage -l` read the caller's own
+/// `/etc/shadow` line; setgid `shadow` is enough for that in the per-tool
+/// install, but a single setuid binary has nothing that narrow to offer, so
+/// they keep euid 0 here. Both decide what the caller may do from the real
+/// uid, so a user gets that one line and nothing else.
+const SETUID_APPLETS: [&str; 10] = [
     "passwd",
     "chfn",
     "chsh",
@@ -45,6 +47,7 @@ const SETUID_APPLETS: [&str; 9] = [
     "newuidmap",
     "newgidmap",
     "expiry",
+    "chage",
 ];
 
 /// Every applet compiled into this binary, by name, in `--list` order.
@@ -313,8 +316,9 @@ mod tests {
         assert!(names.iter().all(|n| ALL_TOOLS.contains(n)));
     }
 
-    // Exactly the tools that the per-tool install marks setuid keep the
-    // privilege; every other applet gives it up before running.
+    // Exactly the tools that the per-tool install marks setuid or setgid
+    // `shadow` keep the privilege; every other applet gives it up before
+    // running.
     #[test]
     fn only_self_service_tools_keep_privilege() {
         for tool in ALL_TOOLS {
@@ -331,6 +335,7 @@ mod tests {
                         | "newuidmap"
                         | "newgidmap"
                         | "expiry"
+                        | "chage"
                 ),
                 "{tool}"
             );

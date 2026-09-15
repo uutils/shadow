@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `chage -l` did not work for a user on their own account, the one mode the
+  tool allows them: `make install` put `chage` at `0755`, which cannot read
+  `/etc/shadow`, and the multicall binary dropped its privilege before running
+  it. Debian ships `chage` setgid `shadow`, Fedora and Arch setuid root; it
+  now follows `expiry` -- setgid `shadow`, or setuid root where the group is
+  absent, and an applet that keeps euid 0 in the multicall binary. What the
+  caller may do is still decided from the real uid, so a user gets their own
+  line and nothing else; the deployment suite now checks both halves of that
+
 - `make install` failed on any system without a `shadow` group -- Fedora,
   Arch, or a packager's chroot -- because `expiry` was installed setgid to a
   group that was not there. On such systems `/etc/shadow` is readable by root

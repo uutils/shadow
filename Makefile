@@ -15,14 +15,16 @@ ROOT_TOOLS = useradd userdel usermod chpasswd chgpasswd newusers \
 # sbin is not on a normal user's PATH, so `passwd` there is `command not
 # found`. This is where GNU shadow puts them -- verified against the Debian
 # package, which ships passwd, chage, chfn, chsh and newgrp in /usr/bin and
-# everything else in /usr/sbin. chage is here for `chage -l`, the one mode a
-# user may run on their own account.
-# login lives in bin too, and is root-only without being setuid: getty runs
-# it as root, and it refuses to run as anyone else.
-USER_BIN_TOOLS = chage login
-# expiry reads the caller's own /etc/shadow line and nothing else, and the GNU
-# suite ships it setgid shadow -- enough to read the file, no more.
-SETGID_SHADOW_TOOLS = expiry
+# everything else in /usr/sbin.
+# login lives in bin, and is root-only without being setuid: getty runs it as
+# root, and it refuses to run as anyone else.
+USER_BIN_TOOLS = login
+# Tools a user runs on their own account that have to read /etc/shadow for
+# it: expiry reads the caller's line to judge it, chage -l reads it to print
+# it. Neither writes anything for a caller who is not root -- both check the
+# real uid -- so the GNU suite ships them setgid shadow, enough to read the
+# file and no more.
+SETGID_SHADOW_TOOLS = expiry chage
 
 # The group allowed to read /etc/shadow. Debian and Ubuntu have one, `shadow`,
 # and that is what the tools above are made setgid to. Fedora and Arch have no
