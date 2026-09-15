@@ -59,7 +59,7 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
 | `userdel` | **Implemented.** Remove from all system files, optional home/mail cleanup. |
 | `usermod` | **Implemented.** Modify all properties, group membership, lock/unlock, set pre-hashed password. |
 | `chpasswd` | **Implemented.** Batch password change from stdin. |
-| `chage` | **Implemented.** Password aging management, `-l` list mode. |
+| `chage` | **Implemented.** Password aging management; `-l` for a user's own account, setgid `shadow`. |
 | `groupadd` | **Implemented.** Auto GID allocation, system groups, force mode. |
 | `groupdel` | **Implemented.** Primary group usage check. |
 | `groupmod` | **Implemented.** GID change, rename, password. |
@@ -152,8 +152,8 @@ docker compose run --rm debian cargo build --release
 
 Default install: 28 standalone per-tool binaries with least-privilege setuid
 layout matching GNU shadow-utils. Only `passwd`, `chfn`, `chsh`, `newgrp`,
-`gpasswd`, `sg`, `newuidmap` and `newgidmap` are installed setuid-root, `expiry` is setgid `shadow`; the other 19 are plain `0755`.
-On a system with no `shadow` group -- Fedora, Arch -- `expiry` is installed setuid-root instead, the way those systems ship the GNU tools that read `/etc/shadow` for a user; a group under another name is named with `SHADOW_GROUP=`.
+`gpasswd`, `sg`, `newuidmap` and `newgidmap` are installed setuid-root, `expiry` and `chage` are setgid `shadow` (enough to read a user's own `/etc/shadow` line, which `expiry` and `chage -l` need); the other 18 are plain `0755`.
+On a system with no `shadow` group -- Fedora, Arch -- those two are installed setuid-root instead, the way those systems ship the GNU `chage`; a group under another name is named with `SHADOW_GROUP=`.
 
 ```shell
 sudo make install PREFIX=/usr/local
@@ -212,8 +212,8 @@ for tool in passwd chfn chsh newgrp gpasswd sg chage chpasswd chgpasswd newusers
 done
 ```
 
-Mode `4755` is what the eight setuid applets need; the others give the
-privilege up before running. Run `shadow-rs --list` to see the applets a
+Mode `4755` is what the ten applets that keep euid 0 need; the others give
+the privilege up before running. Run `shadow-rs --list` to see the applets a
 given build contains, and `sha256sum -c uu_shadow-*.tar.gz.sha256` to verify
 a download.
 

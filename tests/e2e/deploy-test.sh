@@ -872,11 +872,20 @@ test_gpasswd_group_admin() {
 # ── usermod subordinate ids, and expiry ────────────────────────────
 
 test_subid_and_expiry() {
-    section "usermod -v/-V/-w/-W, and expiry"
+    section "usermod -v/-V/-w/-W, expiry, and chage -l as a user"
 
     userdel -r ex_user 2>/dev/null || true
     assert_ok "useradd -m ex_user" useradd -m -s /bin/sh ex_user
     assert_ok "set a password" bash -c "printf 'ex_user:oldpw\n' | chpasswd"
+
+    # chage -l is the one mode a user may run on their own account, and it
+    # has to read /etc/shadow to answer: the tool keeps euid 0 for that. The
+    # real uid still decides what the caller may do.
+    assert_contains "chage -l on one's own account answers a user" "Last password change" \
+        su -s /bin/sh ex_user -c 'chage -l ex_user'
+    assert_fail "chage -l on another account is refused" su -s /bin/sh ex_user -c 'chage -l root'
+    assert_fail "chage -M as a user is refused" su -s /bin/sh ex_user -c 'chage -M 5 ex_user'
+    assert_fail "chage --root as a user is refused" su -s /bin/sh ex_user -c 'chage --root / -l ex_user'
 
     assert_ok "usermod -v grants a subuid range" usermod -v 500000-500999 ex_user
     assert_file_contains "the range is in /etc/subuid" /etc/subuid '^ex_user:500000:1000$'
