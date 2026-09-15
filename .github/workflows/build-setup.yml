@@ -1,0 +1,13 @@
+# Steps dist inserts into each build job before it installs the apt
+# dependencies from dist-workspace.toml and runs `dist build`.
+#
+# dist runs `apt-get install` without `-y`. On GitHub's own runners that is
+# harmless, because their apt is configured to assume yes; inside the
+# buildpack-deps container the builds use, it is not, and apt answered its
+# own "Do you want to continue?" with "Abort" -- which is how the 0.5.1
+# pipeline failed on both architectures. Configure apt the way the runners
+# do, in the container, before dist gets to it.
+- name: Make apt non-interactive in the build container
+  run: |
+    printf 'APT::Get::Assume-Yes "true";\n' > /etc/apt/apt.conf.d/90-assume-yes
+    echo "DEBIAN_FRONTEND=noninteractive" >> "$GITHUB_ENV"

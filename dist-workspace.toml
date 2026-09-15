@@ -24,6 +24,9 @@ features = ["pam"]
 # alongside the CI workflow. `ci.yml` builds the static musl archive on every
 # pull request, which is the release step that can actually break.
 pr-run-mode = "skip"
+# Steps run in each build job before the apt dependencies below are installed:
+# see the file for why.
+github-build-setup = "build-setup.yml"
 
 # Ship only the multicall binary. `shadow-rs-completions` is a build-time
 # helper behind `required-features = ["completions"]`, so it is not part of a
