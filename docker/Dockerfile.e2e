@@ -1,7 +1,7 @@
 # shadow-rs end-to-end deployment test image
 #
 # Simulates a real deployment: build from source, install system-wide
-# (replacing GNU shadow-utils), then run ~100 assertions.
+# (replacing the distribution's shadow-utils), then run ~100 assertions.
 #
 # Usage:
 #   docker compose build e2e
@@ -30,7 +30,7 @@ RUN make install-multicall DESTDIR=/install PREFIX=/usr
 # ── Stage 2: runtime with tests ────────────────────────────────────
 FROM debian:13
 
-# Install GNU shadow-utils first — this creates /etc/pam.d/passwd,
+# Install the distribution's shadow-utils first — this creates /etc/pam.d/passwd,
 # /etc/pam.d/su, and other PAM configs we need. We overwrite the
 # binaries below but keep the PAM configuration intact.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -38,8 +38,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     login \
     && rm -rf /var/lib/apt/lists/*
 
-# Overwrite GNU binaries with shadow-rs. Both directories: the tools an
-# ordinary user runs live in bin, as they do in the GNU package, and sbin is
+# Overwrite the upstream binaries with shadow-rs. Both directories: the tools an
+# ordinary user runs live in bin, as they do in the upstream package, and sbin is
 # not on a normal user's PATH.
 COPY --from=builder /install/usr/sbin/ /usr/sbin/
 COPY --from=builder /install/usr/bin/ /usr/bin/

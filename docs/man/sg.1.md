@@ -18,7 +18,7 @@ afterwards, which is the usual reason to run it.
 group by the same rules, move the process into it the same way, and differ only
 in what follows: **newgrp** replaces the caller's shell and leaves them in the
 new group until they exit it, while **sg** runs one command and is done. On
-systems shipping the GNU shadow suite the two are the same binary, reached
+systems shipping the upstream shadow suite the two are the same binary, reached
 through a symlink.
 
 With no *command*, **sg** starts a shell, behaving as **newgrp** does.
@@ -38,7 +38,7 @@ working directory are the caller's throughout; it is not **su**(1).
 ## THE -c OPERAND
 
 **-c** is optional and has no effect: `sg staff -c 'id -gn'` and
-`sg staff 'id -gn'` are the same request. It is accepted because the GNU tool
+`sg staff 'id -gn'` are the same request. It is accepted because the upstream tool
 accepts it, and scripts written against that tool pass it.
 
 *command* is a single operand, so a command of more than one word must be

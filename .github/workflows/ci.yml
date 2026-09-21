@@ -171,7 +171,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # A real deployment: release build with pam, `make install-multicall`
-      # over GNU's binaries, then the deployment test suite as root and as an
+      # over the distribution's binaries, then the deployment test suite as root and as an
       # unprivileged user. This is the only place PAM password changes, the
       # setuid privilege model and the Landlock rules are exercised for real.
       - name: Build e2e image

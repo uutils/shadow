@@ -45,7 +45,7 @@ pub fn require_root() -> bool {
 ///
 /// Tests that call `uumain` in-process assert on an exit code and nothing
 /// else: no test in this suite has ever checked a byte of output, so
-/// "bit-for-bit identical to GNU" was unverified. Running the real binary also
+/// "bit-for-bit identical to upstream" was unverified. Running the real binary also
 /// keeps `harden_process`, `setuid`, Landlock and umask changes from leaking
 /// from one test into the next through a shared process.
 #[must_use]

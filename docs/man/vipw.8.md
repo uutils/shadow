@@ -65,9 +65,9 @@ die holding the lock.
 **-P**, **--prefix** *PREFIX_DIR*
 :   Edit the account files under *PREFIX_DIR* without chrooting.
 
-## DIFFERENCES FROM GNU SHADOW
+## DIFFERENCES FROM UPSTREAM SHADOW
 
-**The result is checked before it is installed.** GNU **vipw** installs
+**The result is checked before it is installed.** upstream **vipw** installs
 whatever the editor saved — a line with no colons, or a UID 0 account with an
 empty password field — and leaves **pwck**(8) to find it later. Here a file the
 rest of the suite could not parse is refused. The check is structural: it does
@@ -76,7 +76,7 @@ that. When it refuses, the edited copy is kept rather than discarded: an
 administrator whose ten minutes of work vanished would use a raw editor next
 time, which is the outcome this tool exists to prevent.
 
-**Changes are detected by content, not by timestamp.** GNU compares
+**Changes are detected by content, not by timestamp.** upstream compares
 modification times in whole seconds, so an edit saved within the same second
 as the copy was made is silently thrown away. Any edit that changes a byte is
 installed here.

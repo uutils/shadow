@@ -33,7 +33,8 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
 ## Goals
 
 - **Drop-in replacement**: same flags, same exit codes, same output format as
-  GNU shadow-utils. Differences are treated as bugs.
+  the shadow-utils suite every distribution ships. Differences are treated as
+  bugs.
 - **uutils compatible**: built on [`uucore`](https://crates.io/crates/uucore)
   with the standard `uumain()` / `uu_app()` API contract. Designed to merge
   into the uutils ecosystem.
@@ -101,7 +102,7 @@ implemented. Of the rest:
 | `newuidmap`, `newgidmap` | shipped. Fedora's pair, the basis of rootless containers |
 | `shadowconfig`, `cpgr`, `cppw`, `adduser` | Debian packaging scripts and a Fedora symlink, not upstream tools; out of scope |
 
-Three tools that the GNU suite ships are provided by other projects in this
+Three tools that the upstream suite ships are provided by other projects in this
 organisation, and are deliberately not duplicated here — the same rule
 `uutils/procps` and `uutils/util-linux` apply between themselves:
 
@@ -109,26 +110,26 @@ organisation, and are deliberately not duplicated here — the same rule
 - `su` is in [`sudo-rs`](https://github.com/trifectatechfoundation/sudo-rs).
 - `login` is here: on the installed base it is shadow's tool, whatever the newest releases do.
 
-### Where this differs from GNU shadow
+### Where this differs from upstream shadow
 
-Differences with the GNU tools are treated as bugs, with one class of
+Differences with the upstream tools are treated as bugs, with one class of
 exceptions: a behaviour that quietly weakens the system is refused rather than
 reproduced. Each refusal is loud, names the alternative, and is documented in
-the tool's man page under *Differences from GNU shadow*. The pattern so far:
+the tool's man page under *Differences from upstream shadow*. The pattern so far:
 
 - Insecure hashing schemes (`-m`, `-c MD5`, `-c DES`) and unhashed storage
   (`-c NONE`) are refused by `chpasswd`, `chgpasswd` and `newusers`.
 - An empty password in plaintext mode is refused: hashing `""` yields a hash a
   bare Enter matches, which is an account anyone can enter, not one with no
   password.
-- `vipw` and `vigr` parse the edited file before installing it — GNU installs
-  whatever the editor saved — and keep the edit when they refuse it.
+- `vipw` and `vigr` parse the edited file before installing it — upstream
+  installs whatever the editor saved — and keep the edit when they refuse it.
 - `newusers` refuses a group name that does not exist rather than leaving the
   account pointing at a GID that is not there.
 - `newgrp` and `sg` prompt for a password whether or not the group has one, so
   the presence of a prompt no longer reveals which groups are worth attacking.
 
-Nothing falls back silently. Where the GNU tool and this one disagree on a
+Nothing falls back silently. Where the upstream tool and this one disagree on a
 result, the exit code says so.
 
 ## Building
@@ -151,9 +152,9 @@ docker compose run --rm debian cargo build --release
 ### Install
 
 Default install: 28 standalone per-tool binaries with least-privilege setuid
-layout matching GNU shadow-utils. Only `passwd`, `chfn`, `chsh`, `newgrp`,
+layout matching the upstream shadow-utils package. Only `passwd`, `chfn`, `chsh`, `newgrp`,
 `gpasswd`, `sg`, `newuidmap` and `newgidmap` are installed setuid-root, `expiry` and `chage` are setgid `shadow` (enough to read a user's own `/etc/shadow` line, which `expiry` and `chage -l` need); the other 18 are plain `0755`.
-On a system with no `shadow` group -- Fedora, Arch -- those two are installed setuid-root instead, the way those systems ship the GNU `chage`; a group under another name is named with `SHADOW_GROUP=`.
+On a system with no `shadow` group -- Fedora, Arch -- those two are installed setuid-root instead, the way those systems ship upstream's `chage`; a group under another name is named with `SHADOW_GROUP=`.
 
 ```shell
 sudo make install PREFIX=/usr/local
@@ -290,9 +291,9 @@ uutils infrastructure via [`uucore`](https://crates.io/crates/uucore) (MIT).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-**Important**: uutils/shadow is developed under a strict GPL clean-room policy. Do
-**not** read, reference, or feed into an LLM any code from
-[shadow-maint/shadow](https://github.com/shadow-maint/shadow) (GPL-2.0+).
+**Important**: uutils/shadow is an independent implementation, developed
+under a clean-room policy. Do **not** read, reference, or feed into an LLM any
+code from [shadow-maint/shadow](https://github.com/shadow-maint/shadow).
 Reference only: POSIX specs, man pages, BSD-licensed implementations (FreeBSD,
 OpenBSD, musl), and sudo-rs.
 
@@ -300,4 +301,9 @@ OpenBSD, musl), and sudo-rs.
 
 uutils/shadow is licensed under the [MIT License](LICENSE).
 
-GNU shadow-utils is licensed under the GPL 2.0 or later.
+The upstream shadow-utils suite, [shadow-maint/shadow](https://github.com/shadow-maint/shadow),
+is not a GNU project. Its tree is BSD-3-Clause for the most part, with files
+under the GPL 2.0 or later among them (`su.c`, `vipw.c`, contributed scripts,
+some translated manuals); Fedora tags the package `BSD-3-Clause AND
+GPL-2.0-or-later`. This project takes nothing from either part: it is written
+from the specifications, and is MIT throughout.

@@ -29,7 +29,7 @@ manager, an ssh key, a **su** without a password. Shell profiles run
 **-f**, **--force**
 :   Force a password change if the caller's password has expired.
 
-With either option the behaviour is the same, as it is in the GNU tool; with
+With either option the behaviour is the same, as it is in the upstream tool; with
 neither, nothing is asked and the usage is printed. **-P**/**--prefix** reads
 the account files under another directory and only reports, since a PAM
 change would act on this system's account of the same name.
@@ -51,7 +51,7 @@ A maximum age of 10000 days or more means never, as **chage -l** prints it.
 
 ## PRIVILEGES
 
-The GNU suite installs **expiry** setgid **shadow**: enough to read
+The upstream suite installs **expiry** setgid **shadow**: enough to read
 /etc/shadow, no more, and the password change runs through PAM as the caller.
 The per-tool install here does the same. The single multicall binary keeps its
 setuid privilege for **expiry**, having nothing narrower to offer, and reads

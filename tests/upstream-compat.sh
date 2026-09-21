@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # GNU compatibility suite for shadow-rs.
 #
-# Runs our tool and the GNU tool on the same input and compares what they
+# Runs our tool and the upstream tool on the same input and compares what they
 # produce. This is the only check that compares against GNU directly; the Rust
 # suite asserts against expectations written down by hand, which can drift from
 # what GNU actually does.
@@ -17,7 +17,7 @@
 # different. Only that both accept the flag.
 #
 # Usage: docker compose run --rm debian bash tests/gnu-compat.sh
-# Requires: root, and the GNU shadow package installed alongside our build.
+# Requires: root, and the distribution's shadow package installed alongside our build.
 
 set -uo pipefail
 
@@ -53,7 +53,7 @@ compare_output() {
     fi
 }
 
-# Assert a difference we mean to have: our code, GNU's code, and why.
+# Assert a difference we mean to have: our code, upstream's code, and why.
 #
 # A deliberate divergence still has to be watched. Left out of the suite it
 # would be indistinguishable from a regression the day it changed by accident.
@@ -85,13 +85,13 @@ compare_exit() {
 # ── Setup ───────────────────────────────────────────────────────────
 
 if [ "$(id -u)" -ne 0 ]; then
-    echo "error: this suite needs root; the GNU tools refuse otherwise" >&2
+    echo "error: this suite needs root; the upstream tools refuse otherwise" >&2
     exit 1
 fi
 
 for gnu in /usr/bin/passwd /usr/bin/chage /usr/sbin/pwck /usr/sbin/grpck; do
     if [ ! -x "$gnu" ]; then
-        echo "error: $gnu is missing; install the GNU shadow package" >&2
+        echo "error: $gnu is missing; install the distribution's shadow package" >&2
         exit 1
     fi
 done

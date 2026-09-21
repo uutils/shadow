@@ -50,7 +50,7 @@ surprise than a missing directory.
 *pw_passwd*
 :   The password, in clear text. It is hashed with the scheme from
     **ENCRYPT_METHOD** in /etc/login.defs unless **-c** names another. This
-    field may not be empty; see DIFFERENCES FROM GNU SHADOW.
+    field may not be empty; see DIFFERENCES FROM UPSTREAM SHADOW.
 
 *pw_uid*
 :   Empty to allocate one from the range in /etc/login.defs. On an account
@@ -88,21 +88,21 @@ surprise than a missing directory.
 **-P**, **--prefix** *PREFIX_DIR*
 :   Read and write the account files under *PREFIX_DIR* without chrooting.
 
-## DIFFERENCES FROM GNU SHADOW
+## DIFFERENCES FROM UPSTREAM SHADOW
 
 **An empty password field is refused**, before anything is written. Hashing an
 empty string produces a valid hash that a bare Enter matches -- an account
-anyone can log into, not an account with no password. GNU passes the empty
+anyone can log into, not an account with no password. upstream passes the empty
 field to PAM, which refuses it *after* the account has been created, leaving a
 half-made account behind.
 
-**A *pw_gid* naming a group that does not exist is refused.** GNU falls back to
+**A *pw_gid* naming a group that does not exist is refused.** upstream falls back to
 the user's own ID and creates no group at all, so the account is left pointing
 at a GID that is not there -- which **grpck**(8) then reports. Naming a group
 that is not there is a mistake worth reporting at the time.
 
 **A missing parent directory is created**, as **useradd**(8) does with **-b**.
-GNU's **newusers** fails there, which makes it behave differently from GNU's
+upstream's **newusers** fails there, which makes it behave differently from upstream's
 own **useradd** for the same home path.
 
 **-c NONE**, **-c MD5** and **-c DES** are refused, as they are by

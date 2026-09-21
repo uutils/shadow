@@ -106,7 +106,7 @@ A login is *hushed* — no message of the day — when the file named by
 **HUSHLOGIN_FILE** exists in the home directory, or /etc/hushlogins lists the
 user or their shell.
 
-## DIFFERENCES FROM THE GNU TOOLS
+## DIFFERENCES FROM THE UPSTREAM TOOLS
 
 **-r** is refused rather than implemented. rlogin has been off every system
 that matters for two decades.
