@@ -212,7 +212,7 @@ fn test_explicit_scheme_overrides() {
     assert!(field(&dir, "gshadow", "staff").starts_with("$5$"));
 }
 
-/// GNU accepts `-c NONE` and stores the password as clear text. A readable
+/// upstream accepts `-c NONE` and stores the password as clear text. A readable
 /// group password is worth no more than none at all, so it is refused -- and
 /// the refusal must leave the file alone.
 #[test]
@@ -349,14 +349,14 @@ fn test_help_exits_zero() {
         .assert_stdout_contains("Usage:");
 }
 
-/// An unknown scheme is a usage error, exit 2, matching the GNU tool.
+/// An unknown scheme is a usage error, exit 2, matching the upstream tool.
 #[test]
 fn test_unknown_scheme_is_a_usage_error() {
     let dir = prefix(GROUP, Some(GSHADOW), None);
     chgpasswd(&dir, &["-c", "BOGUS"], "staff:secret\n").assert_code(2);
 }
 
-/// MD5 is accepted by the GNU tool and refused here, deliberately.
+/// MD5 is accepted by the upstream tool and refused here, deliberately.
 #[test]
 fn test_md5_is_refused() {
     if skip_unless_root() {

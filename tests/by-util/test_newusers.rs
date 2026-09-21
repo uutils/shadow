@@ -176,7 +176,7 @@ fn test_a_named_group_is_used() {
     assert_eq!(record(&dir, "passwd", "alice")[3], "2000");
 }
 
-/// GNU quietly falls back to the user's own ID here and creates no group,
+/// upstream quietly falls back to the user's own ID here and creates no group,
 /// leaving the account pointing at a GID that does not exist. Naming a group
 /// that is not there is a mistake worth reporting.
 #[test]
@@ -297,7 +297,7 @@ fn test_wrong_field_count_is_refused() {
 }
 
 /// An empty password would be hashed into something a bare Enter matches.
-/// GNU hands it to PAM, which refuses it *after* creating the account.
+/// upstream hands it to PAM, which refuses it *after* creating the account.
 #[test]
 fn test_an_empty_password_is_refused_before_anything_is_written() {
     if skip_unless_root() {

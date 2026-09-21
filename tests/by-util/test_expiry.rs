@@ -38,7 +38,7 @@ fn test_help_and_usage() {
     run("expiry", &["--help"])
         .assert_code(0)
         .assert_stdout_contains("Usage:");
-    // Nothing asked, nothing done: usage, exit 2, as the GNU tool.
+    // Nothing asked, nothing done: usage, exit 2, as the upstream tool.
     run("expiry", &[]).assert_code(2);
 }
 

@@ -681,7 +681,7 @@ fn test_system_account_has_no_home_and_no_aging() {
     }
 
     // useradd(8): -r creates no home "regardless of CREATE_HOME" and leaves
-    // "no aging information in /etc/shadow" (both verified against GNU).
+    // "no aging information in /etc/shadow" (both verified against upstream).
     let dir = setup_root_dir();
     let etc = dir.path().join("etc");
     let defs = std::fs::read_to_string(etc.join("login.defs")).unwrap();

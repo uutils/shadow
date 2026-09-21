@@ -79,7 +79,7 @@ fn edit_with(which: &str, dir: &tempfile::TempDir, args: &[&str], env: &[(&str, 
 
 /// The core promise: what the editor saved is what is installed, with the
 /// file's mode intact and the working copy gone. The editor here returns
-/// within the second the copy was made -- the GNU tool would discard this
+/// within the second the copy was made -- the upstream tool would discard this
 /// edit, because it compares timestamps in whole seconds.
 #[test]
 fn test_an_edit_is_installed_and_the_mode_kept() {
@@ -213,7 +213,7 @@ fn test_a_failing_editor_installs_nothing() {
     assert!(!edit_copy_exists(&dir, "passwd"));
 }
 
-/// The deliberate divergence from GNU, which installs whatever the editor
+/// The deliberate divergence from upstream, which installs whatever the editor
 /// saved: a file the suite cannot parse is refused -- and the edit is kept,
 /// so the refusal costs the administrator nothing but a second look.
 #[test]
