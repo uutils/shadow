@@ -387,6 +387,36 @@ pub fn execve(path: &CStr, argv: &[&CStr], envp: &[&CStr]) -> io::Error {
 }
 
 // ---------------------------------------------------------------------------
+// Environment
+// ---------------------------------------------------------------------------
+
+/// Replace the whole process environment with `keep`.
+///
+/// Everything the caller exported is dropped, then each pair of `keep` is
+/// set. This is what lets a setuid tool present a known environment to the
+/// code that runs inside it -- the PAM stack, the NSS modules, the crypt
+/// library -- and not only to the children it spawns.
+///
+/// Must be called while the process is still single-threaded, which is why
+/// [`crate::hardening::harden_process`] calls it first thing: `clearenv(3)`
+/// and `setenv(3)` are not safe against a concurrent `getenv(3)`, and that is
+/// the whole reason `std::env::set_var` is `unsafe` in edition 2024.
+pub fn replace_environment(keep: &[(String, String)]) {
+    // SAFETY: the caller guarantees no other thread exists (see above), so
+    // nothing can be reading the environment while it is rewritten.
+    // `clearenv` has no other preconditions; `set_var` rejects a key or
+    // value with an interior NUL or an `=` in the key by panicking, and
+    // every pair here was read out of a valid environment, so neither can
+    // occur.
+    unsafe {
+        libc::clearenv();
+        for (k, v) in keep {
+            std::env::set_var(k, v);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Signal blocking (per-thread via libc sigprocmask)
 // ---------------------------------------------------------------------------
 

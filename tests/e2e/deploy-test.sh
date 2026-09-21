@@ -474,8 +474,25 @@ test_pam_auth() {
     # pam_unix end to end — authenticate with the current password through
     # the unprivileged helper, then rewrite /etc/shadow with the privilege the
     # setuid bit provides.
+    # What the PAM stack sees is the tool's own environment, not the caller's.
+    # pam_envprobe.so (tests/e2e/pam_envprobe.c, built into this image) runs
+    # inside the password change and writes the process environment out.
+    # pam_exec would not do: it gives its child the PAM environment, never the
+    # calling process's, so it sees nothing either way.
+    cp /etc/pam.d/passwd /tmp/pam.d-passwd.bak
+    sed -i '1i password optional pam_envprobe.so' /etc/pam.d/passwd
+    rm -f /tmp/pam-envprobe.out
+    # Exported for the one call: `su` without `-` passes them on to passwd.
+    export SHADOW_ENV_CANARY=leaked SHADOW_ENV_CANARY_2=leaked
     assert_ok "pamtest_user changes own password with passwd" \
         change_own_password pamtest_user PamPass789 NewPass456
+    unset SHADOW_ENV_CANARY SHADOW_ENV_CANARY_2
+    cp /tmp/pam.d-passwd.bak /etc/pam.d/passwd
+    assert_ok "the PAM probe ran" test -s /tmp/pam-envprobe.out
+    assert_ok "a variable the caller exported never reached the PAM stack" \
+        bash -c '! grep -q "^SHADOW_ENV_CANARY" /tmp/pam-envprobe.out'
+    assert_file_contains "and PATH is the fixed one" /tmp/pam-envprobe.out '^PATH=/usr/bin:/bin:/usr/sbin:/sbin$'
+    rm -f /tmp/pam-envprobe.out /tmp/pam.d-passwd.bak
     assert_ok "new password authenticates" \
         su_as_testrunner pamtest_user NewPass456
     assert_fail "old password no longer authenticates" \
