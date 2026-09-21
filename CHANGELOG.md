@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Every tool that calls `harden_process` now replaces its own environment
+  before anything else runs, not only the environment of what it spawns. The
+  PAM stack, the NSS modules and the crypt library run inside the tool and
+  read the environment themselves, and until now they read the caller's.
+  What stays: `TERM`, `NO_COLOR`, `LANG`, `LANGUAGE`, `LC_*`, `VISUAL`,
+  `EDITOR`, and `TZ` when it names a zone rather than a file; `PATH` is
+  fixed. The deployment suite runs a `pam_exec` probe inside a real password
+  change and checks that a variable the caller exported is not there (#314)
+
 - The documentation no longer calls the upstream suite "GNU shadow-utils" nor
   says it is GPL-2.0+. shadow-maint/shadow is not a GNU project, and its tree
   is mostly BSD-3-Clause with GPL-2.0-or-later files among it, as Debian's

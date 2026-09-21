@@ -27,6 +27,11 @@ COPY . .
 # symlinks. Its build target enables `pam`.
 RUN make install-multicall DESTDIR=/install PREFIX=/usr
 
+# A PAM module for one test: it records the environment the PAM stack runs
+# in, which is the tool's own. Built here because the runtime image has no
+# compiler; installed below where Linux-PAM looks for modules.
+RUN gcc -shared -fPIC -O2 -Wall -Werror -o /install/pam_envprobe.so tests/e2e/pam_envprobe.c
+
 # ── Stage 2: runtime with tests ────────────────────────────────────
 FROM debian:13
 
@@ -43,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # not on a normal user's PATH.
 COPY --from=builder /install/usr/sbin/ /usr/sbin/
 COPY --from=builder /install/usr/bin/ /usr/bin/
+COPY --from=builder /install/pam_envprobe.so /lib/x86_64-linux-gnu/security/pam_envprobe.so
 
 # Setuid-root — chmod on symlink sets the bit on the target binary
 RUN chmod 4755 /usr/sbin/shadow-rs

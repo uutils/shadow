@@ -128,6 +128,14 @@ Techniques adopted from OpenBSD and best practices for setuid-root tools.
       builds it explicitly rather than passing the caller's through
 - [x] Absolute paths for subprocess execution (`/usr/sbin/nscd`)
 - [x] Environment sanitization for spawned children (#40 — `sanitized_env()`)
+- [x] The tool's own environment is replaced before anything else runs
+      (#314). `harden_process()` keeps `TERM`, `NO_COLOR`, `LANG`,
+      `LANGUAGE`, `LC_*`, `VISUAL`, `EDITOR`, and `TZ` when it names a zone
+      rather than a file, fixes `PATH`, and drops the rest -- so the PAM
+      stack, the NSS modules and the crypt library, which run in-process and
+      read the environment themselves, see the tool's environment and not
+      the caller's. The deployment suite proves it with a `pam_exec` probe
+      run from inside a real password change
 - [x] Targeted hardening in `newgrp` (no `RLIMIT_FSIZE` leak to the exec'd shell)
 - [x] Centralized hardening in `shadow_core::hardening` (deduplicated across
       tools)
@@ -138,13 +146,6 @@ Techniques adopted from OpenBSD and best practices for setuid-root tools.
 
 Restrict syscalls to only what `passwd` needs after initialization. Complex but
 effective — sudo-rs uses this approach.
-
-### Process environment
-
-`harden_process()` does not modify the process's own environment: in-process
-PAM and NSS modules still see the caller's. It no longer *claims* to — it used
-to return a sanitized environment that all thirteen callers discarded. Children
-are given a clean environment where they are spawned. Tracked in #314.
 
 ## References
 
