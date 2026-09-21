@@ -291,9 +291,9 @@ uutils infrastructure via [`uucore`](https://crates.io/crates/uucore) (MIT).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-**Important**: uutils/shadow is an independent implementation, developed
-under a clean-room policy. Do **not** read, reference, or feed into an LLM any
-code from [shadow-maint/shadow](https://github.com/shadow-maint/shadow).
+**Important**: uutils/shadow is an independent implementation, developed under a clean-room policy. Do
+**not** read, reference, or feed into an LLM any code from
+[shadow-maint/shadow](https://github.com/shadow-maint/shadow).
 Reference only: POSIX specs, man pages, BSD-licensed implementations (FreeBSD,
 OpenBSD, musl), and sudo-rs.
 
