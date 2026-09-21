@@ -320,7 +320,7 @@ fn test_a_line_without_a_password_is_refused() {
 
 /// Only the first colon separates the group from the password, so a field
 /// containing colons is parsed as one value -- and then refused, because a
-/// colon in a gshadow field would split the line and corrupt the file. The GNU
+/// colon in a gshadow field would split the line and corrupt the file. The upstream
 /// tool refuses it too, and likewise leaves the file untouched.
 #[test]
 fn test_a_colon_in_the_password_is_refused_without_corrupting_the_file() {
