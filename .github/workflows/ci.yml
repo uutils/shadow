@@ -39,8 +39,12 @@ jobs:
       - name: Check commits, PR text and added lines
         env:
           # Passed through the environment; never interpolated into the shell.
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
+          # A bot's title and body are not checked: Renovate pastes the
+          # release notes of whatever it bumps, and uucore 0.12's named a
+          # code-review tool, which failed a dependency update over text
+          # nobody here wrote. Its commits and diff are still checked.
+          PR_TITLE: ${{ github.event.pull_request.user.type != 'Bot' && github.event.pull_request.title || '' }}
+          PR_BODY: ${{ github.event.pull_request.user.type != 'Bot' && github.event.pull_request.body || '' }}
         run: |
           git fetch --no-tags origin "${{ github.base_ref }}"
           .github/scripts/no-ai-traces.sh FETCH_HEAD

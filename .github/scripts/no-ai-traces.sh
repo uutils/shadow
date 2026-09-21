@@ -8,7 +8,8 @@
 # and unrelated files are not scanned.
 #
 # Usage: no-ai-traces.sh [BASE_REF]        (default: origin/main)
-#        PR_TITLE / PR_BODY may be set in the environment to also check them.
+#        PR_TITLE / PR_BODY may be set in the environment to also check them
+#        (the workflow leaves them empty for a bot's pull request).
 
 set -uo pipefail
 
