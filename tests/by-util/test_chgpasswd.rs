@@ -212,7 +212,7 @@ fn test_explicit_scheme_overrides() {
     assert!(field(&dir, "gshadow", "staff").starts_with("$5$"));
 }
 
-/// GNU accepts `-c NONE` and stores the password as clear text. A readable
+/// upstream accepts `-c NONE` and stores the password as clear text. A readable
 /// group password is worth no more than none at all, so it is refused -- and
 /// the refusal must leave the file alone.
 #[test]
@@ -320,7 +320,7 @@ fn test_a_line_without_a_password_is_refused() {
 
 /// Only the first colon separates the group from the password, so a field
 /// containing colons is parsed as one value -- and then refused, because a
-/// colon in a gshadow field would split the line and corrupt the file. The GNU
+/// colon in a gshadow field would split the line and corrupt the file. The upstream
 /// tool refuses it too, and likewise leaves the file untouched.
 #[test]
 fn test_a_colon_in_the_password_is_refused_without_corrupting_the_file() {
@@ -349,14 +349,14 @@ fn test_help_exits_zero() {
         .assert_stdout_contains("Usage:");
 }
 
-/// An unknown scheme is a usage error, exit 2, matching the GNU tool.
+/// An unknown scheme is a usage error, exit 2, matching the upstream tool.
 #[test]
 fn test_unknown_scheme_is_a_usage_error() {
     let dir = prefix(GROUP, Some(GSHADOW), None);
     chgpasswd(&dir, &["-c", "BOGUS"], "staff:secret\n").assert_code(2);
 }
 
-/// MD5 is accepted by the GNU tool and refused here, deliberately.
+/// MD5 is accepted by the upstream tool and refused here, deliberately.
 #[test]
 fn test_md5_is_refused() {
     if skip_unless_root() {

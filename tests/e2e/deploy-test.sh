@@ -2,7 +2,7 @@
 # shadow-rs end-to-end deployment tests
 #
 # Runs ~100 assertions validating that shadow-rs works as a drop-in
-# replacement for GNU shadow-utils when installed system-wide.
+# replacement for the upstream shadow-utils when installed system-wide.
 #
 # Usage:
 #   docker compose run --rm e2e              # run all tests
@@ -104,7 +104,7 @@ TOOLS="passwd pwck useradd userdel usermod chpasswd chgpasswd newusers chage gro
 SETUID_TOOLS="passwd chfn chsh newgrp gpasswd sg newuidmap newgidmap"
 
 # The tools an unprivileged user runs are installed in bin, the rest in sbin,
-# which is the split the GNU package uses: sbin is not on a normal user's
+# which is the split the upstream package uses: sbin is not on a normal user's
 # PATH, so `passwd` there would be "command not found".
 USER_TOOLS="$SETUID_TOOLS chage login expiry"
 BINDIR="/usr/sbin"
@@ -810,7 +810,7 @@ test_root_option() {
     assert_ok "no group leaked onto the host" \
         bash -c "! grep -q '^rooted_grp' /etc/group"
 
-    # pwck and grpck have no --prefix, matching GNU, so --root is the only way
+    # pwck and grpck have no --prefix, matching upstream, so --root is the only way
     # to point them at another tree.
     assert_ok "grpck -r reads the tree" grpck -r -R "$tree"
     assert_ok "pwck -r reads the tree" \
@@ -1119,7 +1119,7 @@ test_vipw() {
 
     # An "editor" that appends a line, and one that sleeps so a race can be
     # arranged. Both come back within the same second as the copy was made,
-    # which the GNU tool would misread as "unchanged".
+    # which the upstream tool would misread as "unchanged".
     cat > /usr/local/bin/ed-append <<'E'
 #!/bin/sh
 printf '%s\n' "$APPEND" >> "$1"

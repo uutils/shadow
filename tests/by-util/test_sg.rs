@@ -34,7 +34,7 @@ fn test_help_exits_zero() {
     assert_eq!(run_in_process(&["sg", "--help"]), 0, "--help should exit 0");
 }
 
-/// GNU's wording, which scripts match on.
+/// upstream's wording, which scripts match on.
 #[test]
 fn test_unknown_group_is_refused() {
     run("sg", &["nonexistent_group_99999", "-c", "true"])
@@ -65,7 +65,7 @@ fn test_runs_the_command_in_the_target_group() {
 }
 
 /// `-c` is optional: `sg staff 'id -gn'` is the same request as
-/// `sg staff -c 'id -gn'`, and the GNU tool accepts both.
+/// `sg staff -c 'id -gn'`, and the upstream tool accepts both.
 #[test]
 fn test_dash_c_is_optional() {
     if skip_unless_root() {
@@ -122,7 +122,7 @@ fn test_supplementary_groups_are_kept() {
     out.assert_code(0).assert_stdout_contains("root");
 }
 
-/// `sg` and `newgrp` are one implementation on a GNU system, where `sg` is a
+/// `sg` and `newgrp` are one implementation on a system with the upstream suite, where `sg` is a
 /// symlink. Both must reach the same code here too.
 #[test]
 fn test_sg_and_newgrp_agree_on_an_unknown_group() {

@@ -11,13 +11,16 @@ Before you start, also check:
 - [SECURITY.md](./SECURITY.md) for vulnerability reporting
 
 > [!WARNING]
-> shadow-rs is original code and **cannot contain any code from GNU
-> shadow-utils** or other GPL-licensed implementations. This means that
-> **we cannot accept any changes based on the
-> [shadow-maint/shadow](https://github.com/shadow-maint/shadow) source
-> code** (GPL-2.0+). To make sure that cannot happen, **you must not read
-> or link to the GNU source code**. This includes paraphrasing or
-> translating their logic, and feeding it into an LLM for translation.
+> shadow-rs is original code and **cannot contain any code from the upstream
+> shadow-utils suite**, [shadow-maint/shadow](https://github.com/shadow-maint/shadow).
+> That tree is mostly BSD-3-Clause with GPL-2.0-or-later files among it
+> (`su.c`, `vipw.c`, contributed scripts, some manuals); copying from the first
+> part carries attribution terms this MIT project does not take on, and from
+> the second would make this a derivative work. Rather than sort files by
+> licence, **we accept no change based on that source code at all**, and to
+> make sure that cannot happen, **you must not read or link to it**. This
+> includes paraphrasing or translating its logic, and feeding it into an LLM
+> for translation. It is not a GNU project, whatever older text here said.
 
 ## Safe Reference Sources
 
@@ -55,7 +58,7 @@ The hooks are deliberately small. `pre-commit` checks formatting and runs
 clippy; `pre-push` runs `make test` once, on Debian, and skips entirely for a
 push that carries no new commits (a tag, a deletion, a branch the remote
 already has). Everything else — MSRV, cargo-deny, the static musl archive, the
-three-distro matrix as root, the GNU output comparison and the end-to-end
+three-distro matrix as root, the upstream output comparison and the end-to-end
 deployment image — runs in CI on the pull request, in parallel and with
 retries. A hook that tried to match CI took minutes on every push and was
 routed around with `--no-verify`, which protects nothing.
@@ -73,7 +76,7 @@ container; do not build on the host.
 
 ```shell
 docker compose run --rm debian make check           # everything CI gates on
-docker compose run --rm debian make test-gnu-compat # compare against GNU
+docker compose run --rm debian make test-upstream-compat # compare against upstream
 docker compose run --rm debian make test-arm64      # cross-build arm64 and run it
 
 docker compose run --rm debian cargo build          # build
@@ -131,7 +134,7 @@ docker compose run --rm debian cargo fmt --all --check
 ## Design Goals
 
 - **Drop-in replacement**: same flags, same exit codes, same output format as
-  GNU shadow-utils. Differences with GNU are treated as bugs.
+  the upstream shadow-utils suite. Differences with it are treated as bugs.
 - **uutils compatible**: tools use `uucore` (`UResult<()>`, `#[uucore::main]`,
   `show_error!`) so they can be merged into the uutils ecosystem.
 - **Memory safe**: no `.unwrap()`, no `panic!`, no `std::process::exit` in

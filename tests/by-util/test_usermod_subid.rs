@@ -103,7 +103,7 @@ fn test_repeated_and_absent_ranges() {
     assert_eq!(lines(&dir, "subuid", "alice").len(), 3);
 }
 
-/// An invalid range is exit 3 with the GNU wording, before anything changes.
+/// An invalid range is exit 3 with the upstream wording, before anything changes.
 #[test]
 fn test_invalid_range_is_refused() {
     if skip_unless_root() {

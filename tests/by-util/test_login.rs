@@ -173,7 +173,7 @@ const PASSWORD: &str = "pw-for-login-tests";
 /// which makes `userdel` refuse and `useradd` report the name in use.
 ///
 /// Under the full suite the account files are contended by dozens of tests
-/// at once, and `useradd` gives up after the same 15 seconds the GNU tool
+/// at once, and `useradd` gives up after the same 15 seconds the upstream tool
 /// does. That timeout is right for a tool and wrong for a harness that only
 /// wants an account to exist, so the wait is repeated -- on that failure and
 /// no other.

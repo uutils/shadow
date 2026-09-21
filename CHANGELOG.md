@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The documentation no longer calls the upstream suite "GNU shadow-utils" nor
+  says it is GPL-2.0+. shadow-maint/shadow is not a GNU project, and its tree
+  is mostly BSD-3-Clause with GPL-2.0-or-later files among it, as Debian's
+  copyright file and Fedora's package licence both record. The clean-room
+  policy stands on the accurate ground: an independent MIT implementation
+  that copies from neither part. `make test-gnu-compat` is
+  `make test-upstream-compat`, and the man pages' section is *Differences
+  from upstream shadow*. Reported in #320
+
 - The shared library crate is named `uu_shadow_core` in its manifest, which is
   the name it was published under (0.2.1) and the only one it can be published
   under: `shadow-core` on crates.io belongs to an unrelated project. Its Rust

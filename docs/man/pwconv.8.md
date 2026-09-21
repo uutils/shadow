@@ -58,7 +58,7 @@ starts with the membership /etc/group records and no administrators.
 Every account with a shadow line gets that line's hash back in /etc/passwd.
 An account with no shadow line keeps whatever /etc/passwd holds. Then
 /etc/shadow is removed. Aging information has nowhere to go in /etc/passwd
-and is lost, as it is with the GNU tool. A system with no /etc/shadow is
+and is lost, as it is with the upstream tool. A system with no /etc/shadow is
 already in the requested state and is left alone.
 
 **grpunconv** behaves the same way for the group files.

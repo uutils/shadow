@@ -114,7 +114,7 @@ fn test_negative_aging_values_are_rejected() {
 }
 
 /// An unknown login is an ordinary failure. chage(1) reserves 15 for "can't
-/// find the shadow password file", and GNU exits 1 here.
+/// find the shadow password file", and upstream exits 1 here.
 #[test]
 fn test_unknown_login_exits_one() {
     if crate::common::skip_unless_root() {
@@ -192,7 +192,7 @@ fn test_impossible_dates_are_rejected() {
 // ---------------------------------------------------------------------------
 // The -l output
 //
-// The expected text is GNU shadow 4.17's. Scripts parse these lines, so the
+// The expected text is upstream shadow 4.17's. Scripts parse these lines, so the
 // wording and the thresholds are part of the contract.
 // ---------------------------------------------------------------------------
 

@@ -64,7 +64,7 @@ membership /etc/group already records.
     is cleared.
 
 **-m**, **--md5**
-:   Rejected. See DIFFERENCES FROM GNU SHADOW below.
+:   Rejected. See DIFFERENCES FROM UPSTREAM SHADOW below.
 
 **-R**, **--root** *CHROOT_DIR*
 :   Apply changes in *CHROOT_DIR* and use its configuration files.
@@ -77,13 +77,13 @@ membership /etc/group already records.
 **-P**, **--prefix** *PREFIX_DIR*
 :   Read and write the account files under *PREFIX_DIR* without chrooting.
 
-## DIFFERENCES FROM GNU SHADOW
+## DIFFERENCES FROM UPSTREAM SHADOW
 
 **-m** and **-c MD5**, and **-c DES**, are refused rather than honoured. Both
 schemes are broken, and a group password hashed with either is worth little
 more than none at all.
 
-**-c NONE** is refused. GNU accepts it and stores the password as clear text
+**-c NONE** is refused. upstream accepts it and stores the password as clear text
 in /etc/gshadow. If a field really is to be written verbatim, **-e** does that
 explicitly.
 

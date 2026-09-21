@@ -72,7 +72,7 @@ fn test_status_output_format() {
     if crate::common::skip_unless_root() {
         return;
     }
-    // Verify the status line matches the expected GNU format:
+    // Verify the status line matches the expected upstream format:
     //   username STATUS YYYY-MM-DD min max warn inactive
     let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
     let code = run_with_prefix(&dir, &["-S", "testuser"]);
@@ -162,7 +162,7 @@ fn test_nonexistent_user_fails() {
     }
     let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
     let code = run_with_prefix(&dir, &["-S", "nosuchuser"]);
-    // GNU passwd exits 1 for an unknown login (verified against shadow 4.17);
+    // upstream passwd exits 1 for an unknown login (verified against upstream shadow 4.17);
     // 3 is reserved for an unexpected failure the caller did not ask for.
     assert_eq!(code, 1, "nonexistent user should exit 1");
 }
@@ -386,12 +386,12 @@ fn test_concurrent_lock_operations() {
 }
 
 // ---------------------------------------------------------------------------
-// GNU compatibility tests — verify output matches GNU passwd
+// upstream compatibility tests — verify output matches upstream passwd
 // ---------------------------------------------------------------------------
 
-/// Compare shadow-rs output with GNU passwd output for -S.
+/// Compare shadow-rs output with upstream passwd output for -S.
 ///
-/// Runs both our passwd and GNU passwd with -S on the same users,
+/// Runs both our passwd and upstream passwd with -S on the same users,
 /// verifies the output format is identical.
 #[test]
 fn test_gnu_compat_status_output() {
@@ -399,19 +399,19 @@ fn test_gnu_compat_status_output() {
         return;
     }
 
-    // Run GNU passwd -S
+    // Run upstream passwd -S
     let gnu_output = std::process::Command::new("/usr/bin/passwd")
         .args(["-S", "root"])
         .output();
 
     let Ok(gnu) = gnu_output else {
-        // GNU passwd not available (e.g., Alpine uses busybox)
-        eprintln!("skipping: GNU passwd not available");
+        // upstream passwd not available (e.g., Alpine uses busybox)
+        eprintln!("skipping: upstream passwd not available");
         return;
     };
 
     if !gnu.status.success() {
-        eprintln!("skipping: GNU passwd -S root failed");
+        eprintln!("skipping: upstream passwd -S root failed");
         return;
     }
 
@@ -422,10 +422,10 @@ fn test_gnu_compat_status_output() {
     // Instead, compare field-by-field.
     let gnu_fields: Vec<&str> = gnu_stdout.split_whitespace().collect();
 
-    // GNU format: "root L 2026-03-16 0 99999 7 -1"
+    // upstream format: "root L 2026-03-16 0 99999 7 -1"
     assert!(
         gnu_fields.len() >= 7,
-        "GNU output should have 7 fields: {gnu_stdout}"
+        "upstream output should have 7 fields: {gnu_stdout}"
     );
 
     // Verify our format matches by parsing a shadow entry and formatting it
@@ -436,13 +436,13 @@ fn test_gnu_compat_status_output() {
         let our_status = entry.status_char();
         assert_eq!(
             our_status, gnu_fields[1],
-            "status char mismatch: ours={our_status}, GNU={}",
+            "status char mismatch: ours={our_status}, upstream={}",
             gnu_fields[1]
         );
     }
 }
 
-/// Compare lock/unlock cycle results with GNU passwd.
+/// Compare lock/unlock cycle results with upstream passwd.
 #[test]
 fn test_gnu_compat_lock_unlock() {
     if crate::common::skip_unless_root() {

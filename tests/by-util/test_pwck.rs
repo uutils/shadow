@@ -19,7 +19,7 @@ use std::ffi::OsString;
 ///
 /// `--root` performs a real chroot(2), so it cannot be exercised in-process:
 /// the test binary itself would end up inside the tree, and every later test
-/// would fail looking for /tmp. pwck has no `--prefix`, matching GNU, so a
+/// would fail looking for /tmp. pwck has no `--prefix`, matching upstream, so a
 /// child is the only way to reach these paths.
 fn pwck_rooted(dir: &tempfile::TempDir, args: &[&str]) -> crate::common::Output {
     let mut cmd = crate::common::tool("pwck");
@@ -221,7 +221,7 @@ fn test_duplicate_username() {
 
 /// A duplicate UID is not itself a fault. Two accounts may deliberately share
 /// one -- `useradd -o` exists for that -- so `pwck` reports nothing and exits
-/// clean, which is what GNU shadow 4.17 does. A duplicate *name* is a fault,
+/// clean, which is what upstream shadow 4.17 does. A duplicate *name* is a fault,
 /// because a lookup by name then has two answers.
 #[test]
 fn test_duplicate_uid_is_not_an_error_but_a_duplicate_name_is() {

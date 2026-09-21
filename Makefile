@@ -13,7 +13,7 @@ ROOT_TOOLS = useradd userdel usermod chpasswd chgpasswd newusers \
 
 # Tools an ordinary user runs, and which therefore go in bin rather than sbin:
 # sbin is not on a normal user's PATH, so `passwd` there is `command not
-# found`. This is where GNU shadow puts them -- verified against the Debian
+# found`. This is where upstream shadow puts them -- verified against the Debian
 # package, which ships passwd, chage, chfn, chsh and newgrp in /usr/bin and
 # everything else in /usr/sbin.
 # login lives in bin, and is root-only without being setuid: getty runs it as
@@ -22,13 +22,13 @@ USER_BIN_TOOLS = login
 # Tools a user runs on their own account that have to read /etc/shadow for
 # it: expiry reads the caller's line to judge it, chage -l reads it to print
 # it. Neither writes anything for a caller who is not root -- both check the
-# real uid -- so the GNU suite ships them setgid shadow, enough to read the
+# real uid -- so the upstream suite ships them setgid shadow, enough to read the
 # file and no more.
 SETGID_SHADOW_TOOLS = expiry chage
 
 # The group allowed to read /etc/shadow. Debian and Ubuntu have one, `shadow`,
 # and that is what the tools above are made setgid to. Fedora and Arch have no
-# such group: /etc/shadow there is readable by root alone, and the GNU tool
+# such group: /etc/shadow there is readable by root alone, and the upstream tool
 # that reads it on a user's behalf, chage, is setuid root instead. Where the
 # group does not exist at install time -- those systems, or a packager's
 # chroot -- the tools above follow that convention and are installed setuid
@@ -47,7 +47,7 @@ USER_TOOLS = $(SETUID_TOOLS) $(USER_BIN_TOOLS) $(SETGID_SHADOW_TOOLS)
 
 ALL_TOOLS = $(SETUID_TOOLS) $(ROOT_TOOLS) $(USER_BIN_TOOLS) $(SETGID_SHADOW_TOOLS)
 
-.PHONY: all build build-multicall build-arm64 dist-musl check test test-gnu-compat test-unprivileged test-arm64 verify-release install install-multicall uninstall clean
+.PHONY: all build build-multicall build-arm64 dist-musl check test test-upstream-compat test-unprivileged test-arm64 verify-release install install-multicall uninstall clean
 
 all: build
 
@@ -163,13 +163,14 @@ test-unprivileged:
 	done < /tmp/test-binaries; \
 	exit $$fail
 
-# Compare our output and exit codes against the GNU tools installed alongside.
-# Needs root and the GNU shadow package, so it belongs in a container.
-test-gnu-compat:
-	bash tests/gnu-compat.sh
+# Compare our output and exit codes against the upstream tools installed
+# alongside. Needs root and the distribution's shadow package, so it belongs
+# in a container.
+test-upstream-compat:
+	bash tests/upstream-compat.sh
 
 # Default install: 28 standalone per-tool binaries, with the setuid layout and
-# the bin/sbin split GNU shadow-utils uses. Only $(SETUID_TOOLS) are setuid.
+# the bin/sbin split the upstream package uses. Only $(SETUID_TOOLS) are setuid.
 install: build
 	@for tool in $(SETUID_TOOLS); do \
 		install -Dm4755 target/release/$$tool $(DESTDIR)$(BINDIR)/$$tool || exit 1; \

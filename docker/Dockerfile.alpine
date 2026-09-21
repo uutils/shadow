@@ -5,7 +5,7 @@
 # Default shell: /bin/ash (busybox)
 # Shadow-utils package: shadow
 # Note: musl libc — different from glibc. Tests NSS/getpwent differences.
-#       No SELinux. Busybox shadow-utils may differ from GNU shadow-utils.
+#       No SELinux. Busybox's tools may differ from the upstream shadow-utils.
 
 # Pinned: see the note in Dockerfile.debian.
 FROM rust:1.98-alpine3.23

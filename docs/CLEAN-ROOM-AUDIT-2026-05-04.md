@@ -1,5 +1,11 @@
 # Clean-room compliance audit — 2026-05-04
 
+> Erratum (2026-09-21): this record calls the upstream suite "GNU
+> shadow-utils (GPL-2.0+)". It is neither: shadow-maint/shadow is not a GNU
+> project, and its tree is mostly BSD-3-Clause with GPL-2.0-or-later files
+> among it. The audit's method and findings are unaffected; the text below is
+> kept as it was run.
+
 This document records the results of an automated clean-room audit run
 against `src/uu/**/*.rs` and `src/shadow-core/**/*.rs`. It is preserved as
 evidence of the project's clean-room posture against GNU shadow-utils
