@@ -34,7 +34,7 @@ Before anything is written:
 
 - The command line must be a target followed by one or more triples of
   plain decimal numbers. A count of zero is refused as an overflow, as the
-  GNU helper words it.
+  upstream helper words it.
 - Every requested outside range [*loweruid*, *loweruid*+*count*) must lie
   inside one range granted to the caller in /etc/subuid — an entry naming the
   caller by login name or by numeric UID — **or** be the caller's own ID

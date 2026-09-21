@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# GNU compatibility suite for shadow-rs.
+# Upstream compatibility suite for shadow-rs.
 #
 # Runs our tool and the upstream tool on the same input and compares what they
-# produce. This is the only check that compares against GNU directly; the Rust
+# produce. This is the only check that compares against upstream directly; the Rust
 # suite asserts against expectations written down by hand, which can drift from
-# what GNU actually does.
+# what upstream actually does.
 #
 # It compares two different things, deliberately:
 #
@@ -16,7 +16,7 @@
 # `--help` output is *not* compared: ours comes from clap and is intentionally
 # different. Only that both accept the flag.
 #
-# Usage: docker compose run --rm debian bash tests/gnu-compat.sh
+# Usage: docker compose run --rm debian bash tests/upstream-compat.sh
 # Requires: root, and the distribution's shadow package installed alongside our build.
 
 set -uo pipefail
@@ -63,9 +63,9 @@ expect_difference() {
     eval "$ours" >/dev/null 2>&1 || our_rc=$?
     eval "$gnu" >/dev/null 2>&1 || gnu_rc=$?
     if [ "$our_rc" = "$want_our" ] && [ "$gnu_rc" = "$want_gnu" ]; then
-        pass "$name (ours=$our_rc, GNU=$gnu_rc, by design: $why)"
+        pass "$name (ours=$our_rc, upstream=$gnu_rc, by design: $why)"
     else
-        fail "$name: expected ours=$want_our GNU=$want_gnu, got ours=$our_rc GNU=$gnu_rc"
+        fail "$name: expected ours=$want_our upstream=$want_gnu, got ours=$our_rc upstream=$gnu_rc"
     fi
 }
 
@@ -78,7 +78,7 @@ compare_exit() {
     if [ "$our_rc" = "$gnu_rc" ]; then
         pass "$name (exit $our_rc)"
     else
-        fail "$name (ours=$our_rc, GNU=$gnu_rc)"
+        fail "$name (ours=$our_rc, upstream=$gnu_rc)"
     fi
 }
 
@@ -197,7 +197,7 @@ compare_exit "chpasswd -e with -c" \
 # ── Deliberate differences ──────────────────────────────────────────
 
 echo "=== deliberate differences ==="
-# GNU parses dates leniently and rolls them over: `chage -d 2025-02-29` stores
+# Upstream parses dates leniently and rolls them over: `chage -d 2025-02-29` stores
 # 1 March, and `-d 2025-13-01` stores 1 January 2026. An administrator who
 # typed one of those made a mistake, and silently storing a different date than
 # the one they wrote is a poor answer for a field that governs when an account
@@ -242,7 +242,7 @@ for pair in \
     compare_exit "$tool --help" "$RS/$tool --help" "$gnu --help"
 done
 
-# The GNU id mappers take no --help: any bad command line is the usage text
+# The upstream id mappers take no --help: any bad command line is the usage text
 # and exit 1, ours answers --help with 0. What the two share is what happens
 # to a caller who gets the operands wrong, so that is what is compared.
 echo "=== newuidmap / newgidmap refuse the same bad command lines ==="

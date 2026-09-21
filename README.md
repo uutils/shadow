@@ -54,8 +54,8 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
 
 | Tool | Status |
 |------|--------|
-| `passwd` | **All 16 flags implemented.** Drop-in for GNU passwd. PAM password change, Landlock sandboxing, `--root`, `--quiet`, `--stdin`. Output bit-for-bit identical with GNU. |
-| `pwck` | **All checks implemented.** Drop-in for GNU pwck. Bit-for-bit identical output. |
+| `passwd` | **All 16 flags implemented.** Drop-in for upstream passwd. PAM password change, Landlock sandboxing, `--root`, `--quiet`, `--stdin`. Output bit-for-bit identical with GNU. |
+| `pwck` | **All checks implemented.** Drop-in for upstream pwck. Bit-for-bit identical output. |
 | `useradd` | **Implemented.** UID/GID allocation, home dir + skel, shadow entry, group creation. |
 | `userdel` | **Implemented.** Remove from all system files, optional home/mail cleanup. |
 | `usermod` | **Implemented.** Modify all properties, group membership, lock/unlock, set pre-hashed password. |
