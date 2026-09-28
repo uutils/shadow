@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Two Alpine nightly runs crashed with `SIGSEGV` inside unit tests that call
+  a tool's entry point in-process. Since the tool replaces its environment
+  first thing, that meant `clearenv(3)` on a process whose other threads
+  were reading the environment, and musl's `clearenv` frees the entries it
+  once allocated while a `getenv(3)` on another thread may still be walking
+  them. The environment is now replaced by pointing `environ` at a fresh
+  array and leaving the old one intact and unfreed: one pointer store, and
+  a concurrent reader sees one array or the other. What the tool ends up
+  with is unchanged; the deployment suite's PAM probe still proves it
+
 ### Changed
 
 - Every tool that calls `harden_process` now replaces its own environment

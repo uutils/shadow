@@ -159,8 +159,11 @@ pub fn apply_landlock(
 /// Run all standard hardening steps for a setuid-root tool.
 ///
 /// Call at the top of `uumain`, before any argument parsing and before
-/// anything could start a thread: the environment is rewritten in place,
-/// which is only sound while the process is single-threaded.
+/// anything starts a thread: the environment is swapped out from under the
+/// C library, which takes no lock around it. The swap is a single pointer
+/// store that frees nothing (see [`crate::process::replace_environment`]),
+/// so a thread that reads the environment at the same moment -- a test
+/// harness does -- sees the old array or the new one, never a freed one.
 ///
 /// After this the process environment is exactly what [`own_environment`]
 /// allows, so the PAM stack, the NSS modules and the crypt library -- which

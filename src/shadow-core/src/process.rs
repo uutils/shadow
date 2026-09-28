@@ -390,29 +390,56 @@ pub fn execve(path: &CStr, argv: &[&CStr], envp: &[&CStr]) -> io::Error {
 // Environment
 // ---------------------------------------------------------------------------
 
+// The C library's environment pointer. The libc crate does not declare it
+// for Linux; POSIX does (environ(7)).
+unsafe extern "C" {
+    static mut environ: *const *const libc::c_char;
+}
+
 /// Replace the whole process environment with `keep`.
 ///
-/// Everything the caller exported is dropped, then each pair of `keep` is
-/// set. This is what lets a setuid tool present a known environment to the
-/// code that runs inside it -- the PAM stack, the NSS modules, the crypt
-/// library -- and not only to the children it spawns.
+/// Everything the caller exported is dropped and `keep` is what remains.
+/// This is what lets a setuid tool present a known environment to the code
+/// that runs inside it -- the PAM stack, the NSS modules, the crypt library
+/// -- and not only to the children it spawns.
 ///
-/// Must be called while the process is still single-threaded, which is why
-/// [`crate::hardening::harden_process`] calls it first thing: `clearenv(3)`
-/// and `setenv(3)` are not safe against a concurrent `getenv(3)`, and that is
-/// the whole reason `std::env::set_var` is `unsafe` in edition 2024.
+/// The replacement is one pointer store: a fresh, NUL-terminated array of
+/// fresh `KEY=value` strings is built, and `environ` is pointed at it. The
+/// array the process started with is left where it is, unfreed, and so are
+/// its strings. That is deliberate. `clearenv(3)` followed by `setenv(3)`
+/// would release the storage of every entry that had been set with
+/// `setenv` -- musl's `clearenv` hands each one to its `__env_rm_add`, which
+/// frees what it once allocated -- while any other thread in a `getenv(3)`
+/// may still be walking that array; the Alpine test runs, where a test
+/// harness thread does exactly that, crashed with `SIGSEGV` twice in a week.
+/// A reader now sees either the old array or the new one, both intact. The
+/// old array is at most a few kilobytes, leaked once per process.
+///
+/// `std::env::set_var` is `unsafe` in edition 2024 because the C library
+/// takes no lock around `environ`; the caller is still expected to do this
+/// before starting threads, as [`crate::hardening::harden_process`] does,
+/// and the design above is what keeps a violation of that from crashing.
 pub fn replace_environment(keep: &[(String, String)]) {
-    // SAFETY: the caller guarantees no other thread exists (see above), so
-    // nothing can be reading the environment while it is rewritten.
-    // `clearenv` has no other preconditions; `set_var` rejects a key or
-    // value with an interior NUL or an `=` in the key by panicking, and
-    // every pair here was read out of a valid environment, so neither can
-    // occur.
+    let mut entries: Vec<*mut libc::c_char> = keep
+        .iter()
+        .filter_map(|(k, v)| std::ffi::CString::new(format!("{k}={v}")).ok())
+        .map(std::ffi::CString::into_raw)
+        .collect();
+    entries.push(std::ptr::null_mut());
+    // Leaked on purpose: `environ` must point at it for the rest of the
+    // process, and freeing it later would be the hazard described above.
+    let array: *mut *mut libc::c_char = Box::leak(entries.into_boxed_slice()).as_mut_ptr();
+
+    // SAFETY: `environ` is the C library's own variable, and assigning it a
+    // new NUL-terminated array of NUL-terminated strings is how POSIX says a
+    // program replaces its environment; every libc `setenv`/`getenv` accepts
+    // an array it did not allocate. The store is a single aligned pointer
+    // write, and nothing the old array or its strings point at is released.
     unsafe {
-        libc::clearenv();
-        for (k, v) in keep {
-            std::env::set_var(k, v);
-        }
+        std::ptr::write(
+            &raw mut environ,
+            array.cast::<*const libc::c_char>().cast_const(),
+        );
     }
 }
 
