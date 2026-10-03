@@ -8,7 +8,7 @@
 #       No SELinux. Busybox's tools may differ from the upstream shadow-utils.
 
 # Pinned: see the note in Dockerfile.debian.
-FROM rust:1.98-alpine3.23
+FROM rust:1.99-alpine3.23
 
 RUN apk add --no-cache \
     musl-dev \
