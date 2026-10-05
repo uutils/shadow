@@ -34,7 +34,7 @@ mod tests {
         // Non-empty, and the bare OS text — not Rust's "... (os error 13)"
         // rendering (the regression that suffix-stripping prevents). We assert
         // the shape, not the exact wording, since libc may localize it.
-        assert!(!msg.is_empty());
+        assert!(!msg.is_empty(), "{msg:?}");
         assert!(!msg.contains("(os error"), "got: {msg:?}");
     }
 }

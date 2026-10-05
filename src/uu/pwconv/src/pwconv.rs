@@ -598,7 +598,7 @@ mod tests {
         reconcile_gshadow(&mut gr, &mut gs);
         assert_eq!(gr[0].passwd, "x");
         assert_eq!(gs[0].passwd, "$6$t$t");
-        assert!(gs[0].admins.is_empty());
+        assert!(gs[0].admins.is_empty(), "{:?}", gs[0].admins);
         assert_eq!(gs[0].members, vec!["alice".to_string(), "bob".to_string()]);
     }
 

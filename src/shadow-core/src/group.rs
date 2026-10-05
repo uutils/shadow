@@ -146,7 +146,7 @@ mod tests {
         assert_eq!(entry.name, "root");
         assert_eq!(entry.passwd, "x");
         assert_eq!(entry.gid, 0);
-        assert!(entry.members.is_empty());
+        assert!(entry.members.is_empty(), "{:?}", entry.members);
     }
 
     #[test]
@@ -225,7 +225,7 @@ mod tests {
         let path = dir.path().join("group");
         std::fs::write(&path, "").unwrap();
         let entries = read_group_file(&path).unwrap();
-        assert!(entries.is_empty());
+        assert!(entries.is_empty(), "{entries:?}");
     }
 
     use proptest::prelude::*;

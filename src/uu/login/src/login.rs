@@ -852,7 +852,7 @@ mod tests {
         assert_eq!(c.tty_perm, 0o600);
         assert_eq!(c.tty_group, "tty");
         assert!(c.default_home);
-        assert!(c.motd_files.is_empty());
+        assert!(c.motd_files.is_empty(), "{:?}", c.motd_files);
 
         let c = Config::from_defs(&defs(
             "LOGIN_RETRIES 5\nLOGIN_TIMEOUT 0\nTTYPERM 0620\nDEFAULT_HOME no\nMOTD_FILE /etc/motd:/run/motd\nLOGIN_PLAIN_PROMPT yes\nFAIL_DELAY 4\n",

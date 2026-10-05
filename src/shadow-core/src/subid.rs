@@ -203,7 +203,7 @@ mod tests {
         let path = dir.path().join("subuid");
         std::fs::write(&path, "").unwrap();
         let entries = read_subid_file(&path).unwrap();
-        assert!(entries.is_empty());
+        assert!(entries.is_empty(), "{entries:?}");
     }
 
     #[test]

@@ -155,8 +155,8 @@ mod tests {
         let entry: GshadowEntry = "root:*::".parse().unwrap();
         assert_eq!(entry.name, "root");
         assert_eq!(entry.passwd, "*");
-        assert!(entry.admins.is_empty());
-        assert!(entry.members.is_empty());
+        assert!(entry.admins.is_empty(), "{:?}", entry.admins);
+        assert!(entry.members.is_empty(), "{:?}", entry.members);
     }
 
     #[test]
@@ -172,13 +172,13 @@ mod tests {
     fn test_parse_admins_only() {
         let entry: GshadowEntry = "wheel:!:root:".parse().unwrap();
         assert_eq!(entry.admins, vec!["root"]);
-        assert!(entry.members.is_empty());
+        assert!(entry.members.is_empty(), "{:?}", entry.members);
     }
 
     #[test]
     fn test_parse_members_only() {
         let entry: GshadowEntry = "docker:!::deploy,ci".parse().unwrap();
-        assert!(entry.admins.is_empty());
+        assert!(entry.admins.is_empty(), "{:?}", entry.admins);
         assert_eq!(entry.members, vec!["deploy", "ci"]);
     }
 
@@ -239,7 +239,7 @@ mod tests {
         let path = dir.path().join("gshadow");
         std::fs::write(&path, "").unwrap();
         let entries = read_gshadow_file(&path).unwrap();
-        assert!(entries.is_empty());
+        assert!(entries.is_empty(), "{entries:?}");
     }
 
     #[test]
