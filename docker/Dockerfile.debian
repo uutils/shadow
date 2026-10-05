@@ -8,7 +8,7 @@
 
 # Pinned: an unpinned tag lands a new toolchain on main with no PR signal,
 # and clippy gains lints between releases. Renovate proposes the bump.
-FROM rust:1.98-trixie
+FROM rust:1.99-trixie
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpam0g-dev \

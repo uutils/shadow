@@ -604,7 +604,7 @@ mod tests {
         assert_eq!(entries[0].passwd, "$6$new");
         // The new line inherits the membership /etc/group already records.
         assert_eq!(entries[0].members, members);
-        assert!(entries[0].admins.is_empty());
+        assert!(entries[0].admins.is_empty(), "{:?}", entries[0].admins);
     }
 
     // -----------------------------------------------------------------------

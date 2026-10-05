@@ -428,7 +428,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("nonexistent");
         let shells = read_shells(&path).expect("read_shells");
-        assert!(shells.is_empty());
+        assert!(shells.is_empty(), "{shells:?}");
     }
 
     #[test]
@@ -437,7 +437,7 @@ mod tests {
         let path = dir.path().join("shells");
         std::fs::write(&path, "").expect("write");
         let shells = read_shells(&path).expect("read_shells");
-        assert!(shells.is_empty());
+        assert!(shells.is_empty(), "{shells:?}");
     }
 
     // -----------------------------------------------------------------------

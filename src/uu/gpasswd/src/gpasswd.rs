@@ -689,8 +689,12 @@ mod tests {
             parse_user_list("a, b ,c"),
             vec!["a".to_string(), "b".to_string(), "c".to_string()]
         );
-        assert!(parse_user_list("").is_empty());
-        assert!(parse_user_list(",,").is_empty());
+        assert!(parse_user_list("").is_empty(), "{:?}", parse_user_list(""));
+        assert!(
+            parse_user_list(",,").is_empty(),
+            "{:?}",
+            parse_user_list(",,")
+        );
     }
 
     #[test]

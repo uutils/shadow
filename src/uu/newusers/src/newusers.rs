@@ -625,9 +625,9 @@ mod tests {
     fn test_all_optional_fields_may_be_empty() {
         let line = parse_line("alice:pw:::::", 1).expect("parses");
         assert_eq!(line.name, "alice");
-        assert!(line.uid.is_empty());
-        assert!(line.gid.is_empty());
-        assert!(line.home.is_empty());
+        assert!(line.uid.is_empty(), "{:?}", line.uid);
+        assert!(line.gid.is_empty(), "{:?}", line.gid);
+        assert!(line.home.is_empty(), "{:?}", line.home);
     }
 
     fn line(spec: &str) -> Line {

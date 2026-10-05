@@ -47,8 +47,8 @@ CI runs the full suite on three images:
 
 | Image | Base | libc | PAM | SELinux |
 |---|---|---|---|---|
-| `debian` | `rust:1.98-trixie` | glibc | Linux-PAM | headers |
-| `alpine` | `rust:1.98-alpine3.23` | musl (dynamic) | Linux-PAM | none |
+| `debian` | `rust:1.99-trixie` | glibc | Linux-PAM | headers |
+| `alpine` | `rust:1.99-alpine3.23` | musl (dynamic) | Linux-PAM | none |
 | `fedora` | `fedora:44` | glibc | Linux-PAM | enforcing |
 
 The base images are pinned. An unpinned tag lands a new toolchain on `main`

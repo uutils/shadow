@@ -565,7 +565,7 @@ mod tests {
         let path = dir.path().join("shadow");
         std::fs::write(&path, "").unwrap();
         let entries = read_shadow_file(&path).unwrap();
-        assert!(entries.is_empty());
+        assert!(entries.is_empty(), "{entries:?}");
     }
 
     // -------------------------------------------------------------------

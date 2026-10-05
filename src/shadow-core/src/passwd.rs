@@ -359,7 +359,7 @@ mod tests {
         let path = dir.path().join("passwd");
         std::fs::write(&path, "").unwrap();
         let entries = read_passwd_file(&path).unwrap();
-        assert!(entries.is_empty());
+        assert!(entries.is_empty(), "{entries:?}");
     }
 
     // -------------------------------------------------------------------
