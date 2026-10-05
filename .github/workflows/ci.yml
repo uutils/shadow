@@ -49,29 +49,54 @@ jobs:
           git fetch --no-tags origin "${{ github.base_ref }}"
           .github/scripts/no-ai-traces.sh FETCH_HEAD
 
+  # Format and Clippy run in the pinned debian image, not on the runner's own
+  # toolchain. The runner lags the image by a release or two, and rustfmt and
+  # clippy both change between releases: a Rust image bump once passed every
+  # job here while `make check` in the rebuilt image failed on a new lint.
+  # This way the lint CI applies is the one a contributor runs.
   fmt:
     name: Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - run: cargo fmt --all --check
+      - name: Build debian image
+        run: |
+          for attempt in 1 2 3; do
+            docker compose build debian && exit 0
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::debian image build attempt $attempt failed (likely a registry timeout); retrying in 30s"
+              sleep 30
+            fi
+          done
+          exit 1
+      - run: docker compose run --rm debian sh -c 'rustc --version && cargo fmt --all --check'
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      # pre-installed tools: https://github.com/actions/runner-images/blob/main/images/ubuntu/
-      - run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libselinux1-dev libaudit-dev libcrypt-dev
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      # Release binaries are built with `pam` (see dist-workspace.toml), so the
-      # PAM code path has to be linted too — it is invisible to the run above.
-      - run: cargo clippy --workspace --all-targets --features pam -- -D warnings
-      # Every optional module compiled at once. `completions` and the
-      # shadow-core feature gates are otherwise built by nobody, so a lint or a
-      # compile error in them reaches main unnoticed.
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Build debian image
+        run: |
+          for attempt in 1 2 3; do
+            docker compose build debian && exit 0
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::debian image build attempt $attempt failed (likely a registry timeout); retrying in 30s"
+              sleep 30
+            fi
+          done
+          exit 1
+      # The same three passes `make check` runs: default features, the `pam`
+      # build the release ships, and every optional module at once -- the
+      # shadow-core feature gates and `completions` are otherwise built by
+      # nobody, so a lint error in them reaches main unnoticed.
+      - run: |
+          docker compose run --rm -e CARGO_NET_RETRY debian sh -c '
+            set -e
+            rustc --version
+            cargo clippy --workspace --all-targets -- -D warnings
+            cargo clippy --workspace --all-targets --features pam -- -D warnings
+            cargo clippy --workspace --all-targets --all-features -- -D warnings'
 
   test:
     name: Test

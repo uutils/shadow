@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CI's Format and Clippy jobs run in the pinned Debian image rather than on
+  the runner's own toolchain, so the lints CI applies are the ones `make
+  check` applies. The runner lags the images by a release or two; the move
+  to Rust 1.99 passed every CI job while `make check` in the rebuilt image
+  failed on a lint new in 1.99
+
 ### Fixed
 
 - Two Alpine nightly runs crashed with `SIGSEGV` inside unit tests that call
