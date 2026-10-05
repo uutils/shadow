@@ -105,11 +105,7 @@ fn test_locked_is_silent() {
     let dir = prefix("root:!$6$x$y:0:0:1:7:::");
     let out = expiry(&dir, &["-c"]);
     out.assert_code(0);
-    assert!(
-        out.stdout.is_empty(),
-        "{}",
-        String::from_utf8_lossy(&out.stdout)
-    );
+    assert!(out.stdout.is_empty(), "{:?}", out.stdout);
 }
 
 /// No shadow line for the caller: no policy to enforce.
