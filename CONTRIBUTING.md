@@ -109,27 +109,33 @@ that.
 
 ### Publishing to crates.io
 
-The crates are owned by @sylvestre on crates.io; publishing needs an owner's
-token. The library is published as `uu_shadow_core` (its Rust name stays
-`shadow_core`; `shadow-core` on crates.io is somebody else's crate). Order
-matters, since each crate's dependencies must already be on the registry at
-the same version:
+Publishing is part of the release pipeline. When a tag is pushed, dist builds
+the archives, creates the GitHub release, then calls
+`.github/workflows/publish-crates-io.yml`, which runs
+`.github/scripts/publish-crates.sh`: every workspace crate whose version is
+not on crates.io yet is published, in dependency order, by
+`cargo publish --workspace`. Crates already at that version are skipped, so a
+run that stopped halfway can simply be rerun.
 
-1. `uu_shadow_core`
-2. every `uu_<tool>` crate that depends only on it
-3. `uu_vigr`, `uu_pwunconv`, `uu_grpconv`, `uu_grpunconv`, `uu_newgidmap`,
-   which each wrap another tool's crate
-4. `uu_shadow`, the multicall binary, which depends on all of them
+Authentication is crates.io Trusted Publishing: the job exchanges GitHub's
+OIDC token for a short-lived crates.io token, and no secret is stored in the
+repository. For that to work, each crate must trust this repository in its
+crates.io settings (Trusted Publishing: GitHub, repository owner `uutils`,
+repository name `shadow`, workflow filename `release.yml`, no environment).
+Only a crate owner can set that up, and only for a crate that already exists:
+a brand-new crate is published once by hand, with an owner's token, then
+configured. The library is published as `uu_shadow_core` (its Rust name stays
+`shadow_core`; `shadow-core` on crates.io is somebody else's crate).
 
-`cargo publish --dry-run -p uu_shadow_core` works from a checkout; the others
-can only be dry-run once their dependencies are published.
-
-### Linting
+To publish by hand, from the tag's tree, with `CARGO_REGISTRY_TOKEN` set:
 
 ```shell
-docker compose run --rm debian cargo clippy --workspace --all-targets -- -D warnings
-docker compose run --rm debian cargo fmt --all --check
+.github/scripts/publish-crates.sh --dry-run
+.github/scripts/publish-crates.sh
 ```
+
+crates.io rate-limits brand-new crates to a burst of five, then one every ten
+minutes; the script stops at the limit and can be rerun once it lifts.
 
 ## Design Goals
 

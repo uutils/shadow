@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A release now publishes the workspace to crates.io by itself. Once dist has
+  built the archives and created the GitHub release, it calls a reusable
+  workflow that publishes every crate whose version is not on crates.io yet,
+  in dependency order, authenticated through crates.io Trusted Publishing --
+  no token stored anywhere. Each crate has to trust the repository in its
+  crates.io settings first. The same script publishes by hand
+
 ## [0.6.0] - 2026-10-13
 
 ### Changed

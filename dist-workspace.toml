@@ -30,6 +30,13 @@ pr-run-mode = "skip"
 # .github/workflows as a workflow, and a bare list of steps is not one -- it
 # showed up as a failing workflow on every push.
 github-build-setup = "setup/build-setup.yml"
+# After the archives are built and the GitHub release exists, publish the
+# workspace to crates.io through the reusable workflow in
+# .github/workflows/publish-crates-io.yml (crates.io Trusted Publishing, no
+# stored token). It cannot be a workflow of its own triggered by the release
+# event: dist creates the release with GITHUB_TOKEN, and GitHub does not run
+# workflows for events that token causes.
+publish-jobs = ["./publish-crates-io"]
 
 # Ship only the multicall binary. `shadow-rs-completions` is a build-time
 # helper behind `required-features = ["completions"]`, so it is not part of a

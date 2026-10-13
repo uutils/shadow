@@ -1,0 +1,42 @@
+# Publish the workspace to crates.io. Not a workflow of its own: dist calls it
+# from release.yml (publish-jobs in dist-workspace.toml) once the archives are
+# built and the GitHub release exists, on a real tag only. It could not be
+# triggered by the release event itself, because dist creates the release
+# with GITHUB_TOKEN and GitHub runs no workflow for what that token does.
+#
+# Authentication is crates.io Trusted Publishing: the job presents GitHub's
+# OIDC token and gets a short-lived crates.io token back, so no secret is
+# stored anywhere. Each crate has to trust this repository first, in its
+# crates.io settings (Trusted Publishing: GitHub, owner uutils, repository
+# shadow, workflow release.yml -- the calling workflow, which is what
+# crates.io checks). A crate that does not yet trust us fails with 403 and
+# the run stops there; the next run skips what was published and resumes.
+name: Publish to crates.io
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        description: dist's release plan, as JSON (unused here)
+        required: true
+        type: string
+
+jobs:
+  publish:
+    name: crates.io
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        id: auth
+      # cargo publish builds every crate once more to verify it; the same
+      # system libraries the Test job installs.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpam0g-dev libselinux1-dev libaudit-dev libcrypt-dev
+      - run: .github/scripts/publish-crates.sh
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
