@@ -762,7 +762,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uu_chage"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -773,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "uu_chfn"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -784,7 +784,7 @@ dependencies = [
 
 [[package]]
 name = "uu_chgpasswd"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "tempfile",
@@ -795,7 +795,7 @@ dependencies = [
 
 [[package]]
 name = "uu_chpasswd"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -807,7 +807,7 @@ dependencies = [
 
 [[package]]
 name = "uu_chsh"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -818,7 +818,7 @@ dependencies = [
 
 [[package]]
 name = "uu_expiry"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -829,7 +829,7 @@ dependencies = [
 
 [[package]]
 name = "uu_gpasswd"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -841,7 +841,7 @@ dependencies = [
 
 [[package]]
 name = "uu_groupadd"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -852,7 +852,7 @@ dependencies = [
 
 [[package]]
 name = "uu_groupdel"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -863,7 +863,7 @@ dependencies = [
 
 [[package]]
 name = "uu_groupmod"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -874,7 +874,7 @@ dependencies = [
 
 [[package]]
 name = "uu_grpck"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "tempfile",
@@ -884,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "uu_grpconv"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "uu_pwconv",
@@ -893,7 +893,7 @@ dependencies = [
 
 [[package]]
 name = "uu_grpunconv"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "uu_pwconv",
@@ -902,7 +902,7 @@ dependencies = [
 
 [[package]]
 name = "uu_login"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -914,7 +914,7 @@ dependencies = [
 
 [[package]]
 name = "uu_newgidmap"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "uu_newuidmap",
@@ -923,7 +923,7 @@ dependencies = [
 
 [[package]]
 name = "uu_newgrp"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -933,7 +933,7 @@ dependencies = [
 
 [[package]]
 name = "uu_newuidmap"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -944,7 +944,7 @@ dependencies = [
 
 [[package]]
 name = "uu_newusers"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "tempfile",
@@ -955,7 +955,7 @@ dependencies = [
 
 [[package]]
 name = "uu_passwd"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -966,7 +966,7 @@ dependencies = [
 
 [[package]]
 name = "uu_pwck"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "tempfile",
@@ -976,7 +976,7 @@ dependencies = [
 
 [[package]]
 name = "uu_pwconv"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -987,7 +987,7 @@ dependencies = [
 
 [[package]]
 name = "uu_pwunconv"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "uu_pwconv",
@@ -996,7 +996,7 @@ dependencies = [
 
 [[package]]
 name = "uu_sg"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "uu_shadow_core",
@@ -1005,7 +1005,7 @@ dependencies = [
 
 [[package]]
 name = "uu_shadow"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "clap_complete",
@@ -1044,7 +1044,7 @@ dependencies = [
 
 [[package]]
 name = "uu_shadow_core"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "landlock",
@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "uu_useradd"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -1071,7 +1071,7 @@ dependencies = [
 
 [[package]]
 name = "uu_userdel"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -1082,7 +1082,7 @@ dependencies = [
 
 [[package]]
 name = "uu_usermod"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",
@@ -1093,7 +1093,7 @@ dependencies = [
 
 [[package]]
 name = "uu_vigr"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "uu_vipw",
@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "uu_vipw"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rustix",

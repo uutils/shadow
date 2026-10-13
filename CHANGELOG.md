@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-13
+
 ### Changed
 
 - CI's Format and Clippy jobs run in the pinned Debian image rather than on
@@ -14,20 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   check` applies. The runner lags the images by a release or two; the move
   to Rust 1.99 passed every CI job while `make check` in the rebuilt image
   failed on a lint new in 1.99
-
-### Fixed
-
-- Two Alpine nightly runs crashed with `SIGSEGV` inside unit tests that call
-  a tool's entry point in-process. Since the tool replaces its environment
-  first thing, that meant `clearenv(3)` on a process whose other threads
-  were reading the environment, and musl's `clearenv` frees the entries it
-  once allocated while a `getenv(3)` on another thread may still be walking
-  them. The environment is now replaced by pointing `environ` at a fresh
-  array and leaving the old one intact and unfreed: one pointer store, and
-  a concurrent reader sees one array or the other. What the tool ends up
-  with is unchanged; the deployment suite's PAM probe still proves it
-
-### Changed
 
 - Every tool that calls `harden_process` now replaces its own environment
   before anything else runs, not only the environment of what it spawns. The
@@ -52,6 +40,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under: `shadow-core` on crates.io belongs to an unrelated project. Its Rust
   name stays `shadow_core`, so no code changes; `cargo test -p` and the like
   take the new package name
+
+### Fixed
+
+- Two Alpine nightly runs crashed with `SIGSEGV` inside unit tests that call
+  a tool's entry point in-process. Since the tool replaces its environment
+  first thing, that meant `clearenv(3)` on a process whose other threads
+  were reading the environment, and musl's `clearenv` frees the entries it
+  once allocated while a `getenv(3)` on another thread may still be walking
+  them. The environment is now replaced by pointing `environ` at a fresh
+  array and leaving the old one intact and unfreed: one pointer store, and
+  a concurrent reader sees one array or the other. What the tool ends up
+  with is unchanged; the deployment suite's PAM probe still proves it
 
 ## [0.5.1] - 2026-09-15
 
