@@ -511,6 +511,28 @@ fn test_create_user_with_key_long_option() {
 }
 
 #[test]
+fn test_user_group_flag_wins_over_usergroups_enab_no() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    let defs = dir.path().join("etc/login.defs");
+    let content = std::fs::read_to_string(&defs).expect("read login.defs");
+    std::fs::write(
+        &defs,
+        content.replace("USERGROUPS_ENAB yes", "USERGROUPS_ENAB no"),
+    )
+    .expect("write login.defs");
+
+    // USERGROUPS_ENAB only sets the default; -U asks for the group explicitly
+    assert_eq!(run_with_root(&dir, &["-U", "ugu"]), 0);
+    let group = read_group(&dir);
+    assert!(group.contains("ugu:x:1000:"), "got: {group}");
+    assert!(read_passwd(&dir).contains("ugu:x:1000:1000:"));
+}
+
+#[test]
 fn test_create_system_user_with_key_sys_uid_range() {
     if crate::common::skip_unless_root() {
         return;

@@ -511,7 +511,9 @@ fn parse_options(matches: &clap::ArgMatches) -> Result<UseraddOptions, UseraddEr
     let explicit_no_user_group = matches.get_flag(options::NO_USER_GROUP);
     let create_user_group = if explicit_no_user_group {
         false
-    } else if explicit_user_group || gid.is_none() {
+    } else if explicit_user_group {
+        true
+    } else if gid.is_none() {
         // Default behavior: create user group when no -g specified.
         // USERGROUPS_ENAB in login.defs controls this default.
         let usergroups_enab = defs.get("USERGROUPS_ENAB").unwrap_or("yes");
@@ -1191,6 +1193,7 @@ pub fn uu_app() -> Command {
                 .short('U')
                 .long("user-group")
                 .action(ArgAction::SetTrue)
+                .conflicts_with(options::GID)
                 .help("Also create a matching user-private group (default)"),
         )
         .arg(
@@ -1400,6 +1403,12 @@ mod tests {
     #[test]
     fn test_clap_user_group_conflict() {
         let result = uu_app().try_get_matches_from(["useradd", "-U", "-N", "user"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_clap_user_group_conflicts_with_gid() {
+        let result = uu_app().try_get_matches_from(["useradd", "-U", "-g", "100", "user"]);
         assert!(result.is_err());
     }
 
