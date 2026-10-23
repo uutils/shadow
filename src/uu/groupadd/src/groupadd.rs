@@ -292,7 +292,7 @@ fn allocate_gid(
 ) -> Result<u32, GroupaddError> {
     // -K overrides were already merged into `defs` by the caller.
     let (min, max) = uid_alloc::gid_range(defs, system);
-    uid_alloc::next_gid(existing, min, max, scope)
+    uid_alloc::next_gid(existing, min, max, system, scope)
         .map_err(|e| GroupaddError::BadArgument(format!("cannot allocate GID: {e}")))
 }
 

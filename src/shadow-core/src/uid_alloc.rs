@@ -5,8 +5,9 @@
 
 //! UID and GID allocation from ranges defined in `/etc/login.defs`.
 //!
-//! Finds the next available UID or GID by scanning existing entries and
-//! returning the lowest unused value in the configured range. Range
+//! Finds the next available UID or GID by scanning existing entries: one past
+//! the highest in use for regular accounts, one below the lowest in use for
+//! system accounts. Range
 //! boundaries come from `login.defs` keys (`UID_MIN`, `UID_MAX`,
 //! `SYS_UID_MIN`, `SYS_UID_MAX`, and the GID equivalents).
 //!
@@ -53,7 +54,8 @@ impl Scope {
     }
 }
 
-/// Find the next available UID in the given range.
+/// Find the next available UID in the given range, counting down from the
+/// top for a system account.
 ///
 /// # Errors
 ///
@@ -62,17 +64,19 @@ pub fn next_uid(
     existing: &[PasswdEntry],
     min: u32,
     max: u32,
+    system: bool,
     scope: Scope,
 ) -> Result<u32, ShadowError> {
     let used: HashSet<u32> = existing.iter().map(|e| e.uid).collect();
     let taken = |uid: u32| {
         scope == Scope::IncludingNameService && matches!(crate::process::getpwuid(uid), Ok(Some(_)))
     };
-    next_free_checked(&used, min, max, &taken)
+    next_free_checked(&used, min, max, system, &taken)
         .ok_or_else(|| ShadowError::Other(format!("no available UID in range {min}-{max}").into()))
 }
 
-/// Find the next available GID in the given range.
+/// Find the next available GID in the given range, counting down from the
+/// top for a system group.
 ///
 /// # Errors
 ///
@@ -81,30 +85,37 @@ pub fn next_gid(
     existing: &[GroupEntry],
     min: u32,
     max: u32,
+    system: bool,
     scope: Scope,
 ) -> Result<u32, ShadowError> {
     let used: HashSet<u32> = existing.iter().map(|e| e.gid).collect();
     let taken = |gid: u32| {
         scope == Scope::IncludingNameService && matches!(crate::process::gid_exists(gid), Ok(true))
     };
-    next_free_checked(&used, min, max, &taken)
+    next_free_checked(&used, min, max, system, &taken)
         .ok_or_else(|| ShadowError::Other(format!("no available GID in range {min}-{max}").into()))
 }
 
 /// The ID to hand out next: one past the highest already in use within the
 /// range, and only once the range is exhausted that way, the lowest free ID.
+/// System IDs go the other way: one below the lowest in use, starting at the
+/// top of the range, then the highest free ID.
 ///
 /// Handing out the lowest free ID would reuse the ID of a deleted account, so
 /// the new user would inherit any files the old one left behind. Verified
 /// against shadow-utils: creating a, then b, deleting a, then creating c gives
-/// c the ID after b's, not a's.
-fn next_free(used: &HashSet<u32>, min: u32, max: u32) -> Option<u32> {
-    let highest = used
-        .iter()
-        .copied()
-        .filter(|id| (min..=max).contains(id))
-        .max();
-    if let Some(highest) = highest
+/// c the ID after b's, not a's. With `-r` the first three accounts get 999,
+/// 998 and 997.
+fn next_free(used: &HashSet<u32>, min: u32, max: u32, system: bool) -> Option<u32> {
+    let in_range = used.iter().copied().filter(|id| (min..=max).contains(id));
+    if system {
+        let next = match in_range.min() {
+            Some(lowest) => lowest.checked_sub(1).filter(|id| *id >= min),
+            None => Some(max),
+        };
+        return next.or_else(|| (min..=max).rev().find(|id| !used.contains(id)));
+    }
+    if let Some(highest) = in_range.max()
         && let Some(next) = highest.checked_add(1)
         && next <= max
     {
@@ -127,11 +138,12 @@ fn next_free_checked(
     used: &HashSet<u32>,
     min: u32,
     max: u32,
+    system: bool,
     taken: &dyn Fn(u32) -> bool,
 ) -> Option<u32> {
     let mut used = used.clone();
     loop {
-        let candidate = next_free(&used, min, max)?;
+        let candidate = next_free(&used, min, max, system)?;
         if !taken(candidate) {
             return Some(candidate);
         }
@@ -227,7 +239,7 @@ mod tests {
 
     #[test]
     fn test_next_free_empty_range_starts_at_the_minimum() {
-        assert_eq!(next_free(&HashSet::new(), 1000, 1005), Some(1000));
+        assert_eq!(next_free(&HashSet::new(), 1000, 1005, false), Some(1000));
     }
 
     // Not the gap at 1002: reusing a deleted account's UID would hand the new
@@ -235,7 +247,7 @@ mod tests {
     #[test]
     fn test_next_free_goes_past_the_highest_in_use() {
         assert_eq!(
-            next_free(&used_uids(&[1000, 1001, 1003]), 1000, 1005),
+            next_free(&used_uids(&[1000, 1001, 1003]), 1000, 1005, false),
             Some(1004)
         );
     }
@@ -244,7 +256,12 @@ mod tests {
     #[test]
     fn test_next_free_falls_back_to_a_gap_when_the_range_top_is_used() {
         assert_eq!(
-            next_free(&used_uids(&[1000, 1001, 1003, 1004, 1005]), 1000, 1005),
+            next_free(
+                &used_uids(&[1000, 1001, 1003, 1004, 1005]),
+                1000,
+                1005,
+                false
+            ),
             Some(1002)
         );
     }
@@ -253,30 +270,72 @@ mod tests {
     #[test]
     fn test_next_free_ignores_ids_outside_the_range() {
         assert_eq!(
-            next_free(&used_uids(&[0, 65534, 1000]), 1000, 1005),
+            next_free(&used_uids(&[0, 65534, 1000]), 1000, 1005, false),
             Some(1001)
         );
     }
 
     #[test]
     fn test_next_free_exhausted_range() {
-        assert_eq!(next_free(&used_uids(&[100, 101, 102]), 100, 102), None);
-        assert_eq!(next_free(&used_uids(&[500]), 500, 500), None);
+        assert_eq!(
+            next_free(&used_uids(&[100, 101, 102]), 100, 102, false),
+            None
+        );
+        assert_eq!(next_free(&used_uids(&[500]), 500, 500, false), None);
     }
 
     #[test]
     fn test_next_free_single_value_range() {
-        assert_eq!(next_free(&HashSet::new(), 500, 500), Some(500));
+        assert_eq!(next_free(&HashSet::new(), 500, 500, false), Some(500));
+    }
+
+    #[test]
+    fn test_next_free_system_counts_down_from_the_top() {
+        assert_eq!(next_free(&HashSet::new(), 101, 999, true), Some(999));
+        assert_eq!(
+            next_free(&used_uids(&[0, 65534, 999]), 101, 999, true),
+            Some(998)
+        );
+        // one below the lowest in use, so a deleted account's ID is not reused
+        assert_eq!(
+            next_free(&used_uids(&[997, 998]), 101, 999, true),
+            Some(996)
+        );
+        assert_eq!(next_free(&used_uids(&[500]), 101, 999, true), Some(499));
+    }
+
+    #[test]
+    fn test_next_free_system_falls_back_to_the_highest_gap() {
+        assert_eq!(
+            next_free(&used_uids(&[101, 102, 104]), 101, 105, true),
+            Some(105)
+        );
+        assert_eq!(
+            next_free(&used_uids(&[101, 102, 104, 105]), 101, 105, true),
+            Some(103)
+        );
+        assert_eq!(
+            next_free(&used_uids(&[101, 102, 103]), 101, 103, true),
+            None
+        );
     }
 
     #[test]
     fn test_next_free_applies_to_gids_the_same_way() {
-        assert_eq!(next_free(&used_gids(&[1000, 1002]), 1000, 1005), Some(1003));
         assert_eq!(
-            next_free(&used_gids(&[1000, 1002, 1003, 1004, 1005]), 1000, 1005),
+            next_free(&used_gids(&[1000, 1002]), 1000, 1005, false),
+            Some(1003)
+        );
+        assert_eq!(
+            next_free(
+                &used_gids(&[1000, 1002, 1003, 1004, 1005]),
+                1000,
+                1005,
+                false
+            ),
             Some(1001)
         );
-        assert_eq!(next_free(&used_gids(&[10, 11, 12]), 10, 12), None);
+        assert_eq!(next_free(&used_gids(&[10, 11, 12]), 10, 12, false), None);
     }
 
     // --- allocation against the live system ---
@@ -287,7 +346,7 @@ mod tests {
     fn test_next_uid_returns_an_id_nobody_holds() {
         let entries = make_passwd_entries(&[1000]);
         let (min, max) = (60_100, 60_200);
-        let uid = next_uid(&entries, min, max, Scope::IncludingNameService)
+        let uid = next_uid(&entries, min, max, false, Scope::IncludingNameService)
             .expect("a free UID in an unused range");
         assert!((min..=max).contains(&uid));
         assert!(
@@ -300,7 +359,7 @@ mod tests {
     fn test_next_gid_returns_an_id_nobody_holds() {
         let entries = make_group_entries(&[1000]);
         let (min, max) = (60_100, 60_200);
-        let gid = next_gid(&entries, min, max, Scope::IncludingNameService)
+        let gid = next_gid(&entries, min, max, false, Scope::IncludingNameService)
             .expect("a free GID in an unused range");
         assert!((min..=max).contains(&gid));
         assert!(
@@ -383,21 +442,24 @@ mod tests {
         let used: HashSet<u32> = [1000].into_iter().collect();
         // 1001 and 1002 exist in a directory but not in the local file.
         let directory = |id: u32| id == 1001 || id == 1002;
-        assert_eq!(next_free_checked(&used, 1000, 1005, &directory), Some(1003));
+        assert_eq!(
+            next_free_checked(&used, 1000, 1005, false, &directory),
+            Some(1003)
+        );
     }
 
     #[test]
     fn test_allocation_fails_when_the_directory_claims_the_range() {
         let used: HashSet<u32> = HashSet::new();
-        assert_eq!(next_free_checked(&used, 1000, 1002, &|_| true), None);
+        assert_eq!(next_free_checked(&used, 1000, 1002, false, &|_| true), None);
     }
 
     #[test]
     fn test_allocation_without_a_directory_matches_the_plain_policy() {
         let used: HashSet<u32> = [1000, 1001, 1003].into_iter().collect();
         assert_eq!(
-            next_free_checked(&used, 1000, 1005, &|_| false),
-            next_free(&used, 1000, 1005)
+            next_free_checked(&used, 1000, 1005, false, &|_| false),
+            next_free(&used, 1000, 1005, false)
         );
     }
 
@@ -408,8 +470,11 @@ mod tests {
         // uid 0 exists in NSS on any system, so IncludingNameService would
         // have to skip it while FilesOnly hands it out.
         let entries = make_passwd_entries(&[]);
-        assert_eq!(next_uid(&entries, 0, 0, Scope::FilesOnly).expect("uid"), 0);
-        assert!(next_uid(&entries, 0, 0, Scope::IncludingNameService).is_err());
+        assert_eq!(
+            next_uid(&entries, 0, 0, false, Scope::FilesOnly).expect("uid"),
+            0
+        );
+        assert!(next_uid(&entries, 0, 0, false, Scope::IncludingNameService).is_err());
     }
 
     #[test]

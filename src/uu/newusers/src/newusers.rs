@@ -340,13 +340,13 @@ fn apply(
             // An empty field on an existing account keeps the ID it has;
             // reallocating would orphan every file the account owns.
             ("", Some(i)) => passwd.entries()[i].uid,
-            ("", None) => uid_alloc::next_uid(passwd.entries(), uid_min, uid_max, scope)
+            ("", None) => uid_alloc::next_uid(passwd.entries(), uid_min, uid_max, system, scope)
                 .map_err(|e| line_error(line, &e.to_string()))?,
             (given, _) => parse_id(given)
                 .ok_or_else(|| line_error(line, &format!("invalid user ID '{given}'")))?,
         };
 
-        let gid = resolve_gid(&mut group, line, uid, gid_min, gid_max, scope)?;
+        let gid = resolve_gid(&mut group, line, uid, gid_min, gid_max, system, scope)?;
 
         match existing {
             Some(i) => {
@@ -422,6 +422,7 @@ fn resolve_gid(
     uid: u32,
     gid_min: u32,
     gid_max: u32,
+    system: bool,
     scope: Scope,
 ) -> Result<u32, NewusersError> {
     // A number names a group directly. If no group has it, one is created
@@ -459,7 +460,7 @@ fn resolve_gid(
     // is the convention every distribution follows; falling back to the
     // allocator when it is taken keeps that a preference, not a requirement.
     let gid = if group.entries().iter().any(|g| g.gid == uid) {
-        uid_alloc::next_gid(group.entries(), gid_min, gid_max, scope)
+        uid_alloc::next_gid(group.entries(), gid_min, gid_max, system, scope)
             .map_err(|e| line_error(line, &e.to_string()))?
     } else {
         uid

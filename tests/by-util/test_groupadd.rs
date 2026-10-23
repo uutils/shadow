@@ -253,6 +253,21 @@ fn test_key_override_wins_over_login_defs() {
 }
 
 #[test]
+fn test_system_groups_count_down_from_sys_gid_max() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_prefix("root:x:0:\n", "SYS_GID_MIN 100\nSYS_GID_MAX 999\n");
+    assert_eq!(run_with_prefix(&dir, &["-r", "sysa"]), 0);
+    assert_eq!(run_with_prefix(&dir, &["-r", "sysb"]), 0);
+
+    // shadow-utils hands out system IDs from the top of the range down
+    let content = read_group(&dir);
+    assert!(content.contains("sysa:x:999:"), "got: {content}");
+    assert!(content.contains("sysb:x:998:"), "got: {content}");
+}
+
+#[test]
 fn test_key_sys_range_override_for_system_group() {
     if crate::common::skip_unless_root() {
         return;

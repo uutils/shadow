@@ -511,6 +511,31 @@ fn test_create_user_with_key_long_option() {
 }
 
 #[test]
+fn test_system_users_count_down_from_sys_uid_max() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    let keys = ["-K", "SYS_UID_MIN=200", "-K", "SYS_UID_MAX=299", "-M", "-N"];
+    for name in ["sysa", "sysb"] {
+        let mut args = vec!["-r"];
+        args.extend(keys);
+        args.push(name);
+        assert_eq!(
+            run_with_root(&dir, &args),
+            0,
+            "useradd -r {name} should exit 0"
+        );
+    }
+
+    // shadow-utils hands out system IDs from the top of the range down
+    let passwd = read_passwd(&dir);
+    assert!(passwd.contains("sysa:x:299:"), "got: {passwd}");
+    assert!(passwd.contains("sysb:x:298:"), "got: {passwd}");
+}
+
+#[test]
 fn test_create_system_user_with_key_sys_uid_range() {
     if crate::common::skip_unless_root() {
         return;
