@@ -163,8 +163,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         return Err(UsermodError::UserNotFound(format!("user '{login}' does not exist")).into());
     };
 
-    // Save the old UID and home dir before mutation so we can chown if needed.
+    // Save the old UID, GID and home dir before mutation so we can chown if needed.
     let old_uid = entries[idx].uid;
+    let old_primary_gid = entries[idx].gid;
     let home_for_chown = entries[idx].home.clone();
     let home_is_changing = matches.get_one::<String>(options::HOME).is_some();
 
@@ -224,6 +225,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     }
 
     let new_uid = entries[idx].uid;
+    let new_primary_gid = entries[idx].gid;
 
     passwd_file
         .commit()
@@ -232,14 +234,25 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // Restore signals before potentially long-running recursive chown.
     drop(signals);
 
-    // If the UID changed and the home directory was not explicitly moved,
-    // recursively chown the existing home directory to the new UID.
-    // Only files owned by old_uid are touched (files owned by other users
-    // are left alone, matching GNU shadow-utils behavior).
-    if new_uid != old_uid && !home_is_changing && !home_for_chown.is_empty() {
+    // If the UID or the primary group changed and the home directory was not
+    // explicitly moved, recursively chown the existing home directory.
+    // usermod(8): only files owned by the old UID get the new UID, and only
+    // files in the old primary group get the new group.
+    if (new_uid != old_uid || new_primary_gid != old_primary_gid)
+        && !home_is_changing
+        && !home_for_chown.is_empty()
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        // Like GNU, only a home directory the user owns is walked, and a
+        // symlinked home is not followed.
         let home_path = root.resolve(&home_for_chown);
-        if home_path.exists() {
-            recursive_chown(&home_path, old_uid, new_uid);
+        if std::fs::symlink_metadata(&home_path).is_ok_and(|m| m.is_dir() && m.uid() == old_uid) {
+            recursive_chown(
+                &home_path,
+                (old_uid, new_uid),
+                (old_primary_gid, new_primary_gid),
+            );
         }
     }
 
@@ -507,42 +520,47 @@ fn apply_subid_changes(
     Ok(())
 }
 
-/// Recursively chown all files and directories under `path` that are owned by
-/// `old_uid` to `new_uid`. Files owned by other users are left untouched.
+/// Recursively chown all files and directories under `path`: those owned by
+/// the old UID get the new UID, and those whose group is the old GID get the
+/// new GID. Other owners and groups are left untouched.
 ///
 /// Uses `fchownat` with `AT_SYMLINK_NOFOLLOW` so symlinks themselves are
 /// re-owned without following them.
-fn recursive_chown(path: &Path, old_uid: u32, new_uid: u32) {
-    use std::os::unix::fs::MetadataExt;
-
+fn recursive_chown(path: &Path, owner: (u32, u32), group: (u32, u32)) {
     if let Ok(entries) = std::fs::read_dir(path) {
         for entry in entries.flatten() {
             let entry_path = entry.path();
             if let Ok(meta) = std::fs::symlink_metadata(&entry_path) {
-                if meta.uid() == old_uid {
-                    let _ = rustix::fs::chownat(
-                        rustix::fs::CWD,
-                        &entry_path,
-                        Some(rustix::process::Uid::from_raw(new_uid)),
-                        None,
-                        rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
-                    );
-                }
+                chown_matching(&entry_path, &meta, owner, group);
                 if meta.is_dir() {
-                    recursive_chown(&entry_path, old_uid, new_uid);
+                    recursive_chown(&entry_path, owner, group);
                 }
             }
         }
     }
     // Also chown the directory itself.
-    if let Ok(meta) = std::fs::symlink_metadata(path)
-        && meta.uid() == old_uid
-    {
+    if let Ok(meta) = std::fs::symlink_metadata(path) {
+        chown_matching(path, &meta, owner, group);
+    }
+}
+
+/// Give `path` the new UID if it has the old one, and the new GID if it has
+/// the old one.
+fn chown_matching(path: &Path, meta: &std::fs::Metadata, owner: (u32, u32), group: (u32, u32)) {
+    use std::os::unix::fs::MetadataExt;
+
+    let (old_owner, new_owner) = owner;
+    let (old_group, new_group) = group;
+    let set_owner = (old_owner != new_owner && meta.uid() == old_owner)
+        .then(|| rustix::process::Uid::from_raw(new_owner));
+    let set_group = (old_group != new_group && meta.gid() == old_group)
+        .then(|| rustix::process::Gid::from_raw(new_group));
+    if set_owner.is_some() || set_group.is_some() {
         let _ = rustix::fs::chownat(
             rustix::fs::CWD,
             path,
-            Some(rustix::process::Uid::from_raw(new_uid)),
-            None,
+            set_owner,
+            set_group,
             rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
         );
     }
