@@ -209,6 +209,203 @@ fn test_change_uid() {
     );
 }
 
+/// Owner and group of `path`, without following a symlink.
+fn owner_of(path: &std::path::Path) -> (u32, u32) {
+    use std::os::unix::fs::MetadataExt;
+
+    let meta = std::fs::symlink_metadata(path).expect("stat failed");
+    (meta.uid(), meta.gid())
+}
+
+/// A prefix with testuser (1000:1000) and group dev (2000). The home holds a
+/// file of testuser's, a root-owned file in the old group, a file in another
+/// group, and a symlink in the old group to a file outside the home.
+fn setup_home_with_files() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "testuser:x:1000:\ndev:x:2000:\n",
+    );
+    let home = dir.path().join("home/testuser");
+    std::fs::create_dir_all(home.join("sub")).expect("failed to create home");
+    for (path, uid, gid) in [
+        (home.join("mine"), 1000, 1000),
+        (home.join("root-owned"), 0, 1000),
+        (home.join("other-group"), 1000, 0),
+        (dir.path().join("outside"), 1000, 1000),
+    ] {
+        std::fs::write(&path, "").expect("failed to write file");
+        std::os::unix::fs::chown(&path, Some(uid), Some(gid)).expect("chown failed");
+    }
+    std::os::unix::fs::symlink(dir.path().join("outside"), home.join("link"))
+        .expect("failed to create symlink");
+    std::os::unix::fs::lchown(home.join("link"), Some(1000), Some(1000)).expect("chown failed");
+    std::os::unix::fs::chown(&home, Some(1000), Some(1000)).expect("chown failed");
+    std::os::unix::fs::chown(home.join("sub"), Some(1000), Some(1000)).expect("chown failed");
+    (dir, home)
+}
+
+#[test]
+fn test_change_gid_regroups_home_files() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let (dir, home) = setup_home_with_files();
+    let code = run_with_prefix(&dir, &["-g", "dev", "testuser"]);
+    assert_eq!(code, 0, "changing the primary group should succeed");
+
+    for (name, expected) in [
+        ("", (1000, 2000)),
+        ("sub", (1000, 2000)),
+        ("mine", (1000, 2000)),
+        ("root-owned", (0, 2000)),
+        ("other-group", (1000, 0)),
+        ("link", (1000, 2000)),
+    ] {
+        assert_eq!(owner_of(&home.join(name)), expected, "home entry '{name}'");
+    }
+    assert_eq!(
+        owner_of(&dir.path().join("outside")),
+        (1000, 1000),
+        "the symlink target outside the home should be left alone"
+    );
+}
+
+#[test]
+fn test_change_uid_and_gid_rechowns_home_files() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let (dir, home) = setup_home_with_files();
+    let code = run_with_prefix(&dir, &["-u", "1500", "-g", "dev", "testuser"]);
+    assert_eq!(code, 0, "changing the UID and primary group should succeed");
+
+    for (name, expected) in [
+        ("", (1500, 2000)),
+        ("sub", (1500, 2000)),
+        ("mine", (1500, 2000)),
+        ("root-owned", (0, 2000)),
+        ("other-group", (1500, 0)),
+        ("link", (1500, 2000)),
+    ] {
+        assert_eq!(owner_of(&home.join(name)), expected, "home entry '{name}'");
+    }
+    assert_eq!(
+        owner_of(&dir.path().join("outside")),
+        (1000, 1000),
+        "the symlink target outside the home should be left alone"
+    );
+}
+
+#[test]
+fn test_home_not_owned_by_user_is_left_alone() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    for args in [["-g", "dev"], ["-u", "1500"]] {
+        for symlinked in [false, true] {
+            let dir = setup_prefix(
+                "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+                "testuser:$6$hash:19500:0:99999:7:::\n",
+                "testuser:x:1000:\ndev:x:2000:\n",
+            );
+            let home = dir.path().join("home/testuser");
+            // A symlinked home points at a real directory the user owns.
+            let real = if symlinked {
+                dir.path().join("real-home")
+            } else {
+                home.clone()
+            };
+            std::fs::create_dir_all(&real).expect("failed to create home");
+            std::fs::write(real.join("mine"), "").expect("failed to write file");
+            std::os::unix::fs::chown(real.join("mine"), Some(1000), Some(1000))
+                .expect("chown failed");
+            let real_owner = if symlinked { 1000 } else { 0 };
+            std::os::unix::fs::chown(&real, Some(real_owner), Some(1000)).expect("chown failed");
+            if symlinked {
+                std::fs::create_dir_all(home.parent().expect("home has a parent"))
+                    .expect("failed to create /home");
+                std::os::unix::fs::symlink(&real, &home).expect("failed to create symlink");
+            }
+
+            let code = run_with_prefix(&dir, &[args[0], args[1], "testuser"]);
+            // GNU exits 12 for a symlinked home: #351.
+            if !symlinked {
+                assert_eq!(code, 0, "{args:?} should succeed");
+            }
+            assert_eq!(
+                owner_of(&real),
+                (real_owner, 1000),
+                "{args:?}, symlinked {symlinked}: home should be left alone"
+            );
+            assert_eq!(
+                owner_of(&real.join("mine")),
+                (1000, 1000),
+                "{args:?}, symlinked {symlinked}: files under it should be left alone"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_move_home_requires_home() {
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "testuser:x:1000:\n",
+    );
+    assert_eq!(run_with_prefix(&dir, &["-m", "testuser"]), 2);
+}
+
+#[test]
+fn test_move_home() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "testuser:x:1000:\n",
+    );
+    let old = dir.path().join("home/testuser");
+    std::fs::create_dir_all(old.join("sub")).expect("failed to create home");
+    std::fs::write(old.join("sub/f"), "data").expect("failed to write file");
+
+    let code = run_with_prefix(&dir, &["-d", "/home/moved", "-m", "testuser"]);
+    assert_eq!(code, 0, "moving the home directory should succeed");
+
+    assert!(!old.exists(), "old home should be gone");
+    let moved = dir.path().join("home/moved/sub/f");
+    assert_eq!(std::fs::read_to_string(moved).expect("moved file"), "data");
+    assert!(read_passwd(&dir).contains(":/home/moved:"));
+}
+
+#[test]
+fn test_move_home_onto_existing_directory_fails() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "testuser:x:1000:\n",
+    );
+    std::fs::create_dir_all(dir.path().join("home/testuser")).expect("failed to create home");
+    std::fs::create_dir_all(dir.path().join("home/taken")).expect("failed to create dir");
+
+    let code = run_with_prefix(&dir, &["-d", "/home/taken", "-m", "testuser"]);
+    assert_eq!(code, 12, "a move onto an existing directory should exit 12");
+    assert!(
+        dir.path().join("home/testuser").is_dir(),
+        "old home should stay"
+    );
+}
+
 #[test]
 fn test_add_to_groups() {
     if crate::common::skip_unless_root() {
