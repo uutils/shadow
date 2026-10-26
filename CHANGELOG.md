@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no token stored anywhere. Each crate has to trust the repository in its
   crates.io settings first. The same script publishes by hand
 
+### Fixed
+
+- A variable whose name or value is not valid UTF-8 no longer makes every
+  tool abort. The environment was read in a way that panics on the first
+  such entry, before arguments were parsed, so one stray export broke all
+  of them, `--help` included. Such an entry is now dropped; with `login -p`
+  it is not carried into the session (#346)
+
 ## [0.6.0] - 2026-10-13
 
 ### Changed
