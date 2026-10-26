@@ -118,7 +118,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     }
 
     // Block signals for the passwd lock→write critical section only.
-    // Dropped before recursive_chown so long-running operations remain interruptible.
+    // Dropped before the home walk so long-running operations remain interruptible.
     let signals = shadow_core::hardening::SignalBlocker::block_critical()
         .map_err(|e| UsermodError::CantUpdate(format!("cannot block signals: {e}")))?;
 
@@ -243,18 +243,11 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         && !home_is_changing
         && !home_for_chown.is_empty()
     {
-        use std::os::unix::fs::MetadataExt;
-
-        // Like GNU, only a home directory the user owns is walked, and a
-        // symlinked home is not followed.
-        let home_path = root.resolve(&home_for_chown);
-        if std::fs::symlink_metadata(&home_path).is_ok_and(|m| m.is_dir() && m.uid() == old_uid) {
-            recursive_chown(
-                &home_path,
-                (old_uid, new_uid),
-                (old_primary_gid, new_primary_gid),
-            );
-        }
+        rechown_home(
+            &root.resolve(&home_for_chown),
+            (old_uid, new_uid),
+            (old_primary_gid, new_primary_gid),
+        );
     }
 
     // Shadow modifications.
@@ -515,48 +508,101 @@ fn apply_subid_changes(
     Ok(())
 }
 
-/// Recursively chown all files and directories under `path`: those owned by
-/// the old UID get the new UID, and those whose group is the old GID get the
-/// new GID. Other owners and groups are left untouched.
+/// Re-own a home directory after a UID or primary group change: entries
+/// owned by the old UID get the new one, entries in the old group get the
+/// new group, anything else is left alone.
 ///
-/// Uses `fchownat` with `AT_SYMLINK_NOFOLLOW` so symlinks themselves are
-/// re-owned without following them.
-fn recursive_chown(path: &Path, owner: (u32, u32), group: (u32, u32)) {
-    if let Ok(entries) = std::fs::read_dir(path) {
-        for entry in entries.flatten() {
-            let entry_path = entry.path();
-            if let Ok(meta) = std::fs::symlink_metadata(&entry_path) {
-                chown_matching(&entry_path, &meta, owner, group);
-                if meta.is_dir() {
-                    recursive_chown(&entry_path, owner, group);
-                }
-            }
-        }
+/// Like GNU, only a home the user owns is walked, and a symlinked home is not
+/// followed. The user owns the tree and can rename, replace or re-link
+/// entries in it while this runs as root, so the walk never resolves a path
+/// below `home`: each directory is opened relative to its parent's descriptor
+/// with `O_NOFOLLOW`, each other entry with `O_PATH | O_NOFOLLOW`, and the
+/// ownership test and the change both go through that one descriptor. A
+/// symlink swapped in mid-walk is re-owned itself and never followed, and the
+/// inode that was checked is the inode that changes.
+fn rechown_home(home: &Path, owner: (u32, u32), group: (u32, u32)) {
+    use std::rc::Rc;
+    use uucore::safe_traversal::{DirFd, SymlinkBehavior};
+
+    let Ok(top) = DirFd::open(home, SymlinkBehavior::NoFollow) else {
+        return;
+    };
+    if !rustix::fs::fstat(&top).is_ok_and(|st| st.st_uid == owner.0) {
+        return;
     }
-    // Also chown the directory itself.
-    if let Ok(meta) = std::fs::symlink_metadata(path) {
-        chown_matching(path, &meta, owner, group);
+    chown_matching(&top, owner, group);
+
+    // Directories still to read, by name under a parent held open. A parent
+    // stays open only while children of it wait, so the descriptors held
+    // follow the depth of the tree, not its width, and nothing recurses.
+    let mut pending: Vec<(Rc<DirFd>, std::ffi::OsString)> = Vec::new();
+    queue_entries(&Rc::new(top), &mut pending, owner, group);
+    while let Some((parent, name)) = pending.pop() {
+        let Ok(dir) = parent.open_subdir(&name, SymlinkBehavior::NoFollow) else {
+            continue;
+        };
+        drop(parent);
+        chown_matching(&dir, owner, group);
+        queue_entries(&Rc::new(dir), &mut pending, owner, group);
     }
 }
 
-/// Give `path` the new UID if it has the old one, and the new GID if it has
-/// the old one.
-fn chown_matching(path: &Path, meta: &std::fs::Metadata, owner: (u32, u32), group: (u32, u32)) {
-    use std::os::unix::fs::MetadataExt;
+/// Re-own every entry of `dir` that is not a directory, and queue the
+/// directories: they are re-owned once opened as directories themselves.
+fn queue_entries(
+    dir: &std::rc::Rc<uucore::safe_traversal::DirFd>,
+    pending: &mut Vec<(
+        std::rc::Rc<uucore::safe_traversal::DirFd>,
+        std::ffi::OsString,
+    )>,
+    owner: (u32, u32),
+    group: (u32, u32),
+) {
+    use rustix::fs::{FileType, Mode, OFlags};
 
+    let Ok(names) = dir.read_dir() else {
+        return;
+    };
+    for name in names {
+        let Ok(entry) = rustix::fs::openat(
+            &**dir,
+            name.as_os_str(),
+            OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) else {
+            continue;
+        };
+        let is_dir = rustix::fs::fstat(&entry)
+            .is_ok_and(|st| FileType::from_raw_mode(st.st_mode) == FileType::Directory);
+        if is_dir {
+            pending.push((std::rc::Rc::clone(dir), name));
+        } else {
+            chown_matching(&entry, owner, group);
+        }
+    }
+}
+
+/// Give the file behind `fd` the new UID if it has the old one, and the new
+/// GID if it has the old one. `fd` may be an `O_PATH` descriptor, so the
+/// change goes through `fchownat` with `AT_EMPTY_PATH`, which works on one
+/// and, for a symlink, changes the link itself.
+fn chown_matching(fd: impl rustix::fd::AsFd, owner: (u32, u32), group: (u32, u32)) {
+    let Ok(st) = rustix::fs::fstat(&fd) else {
+        return;
+    };
     let (old_owner, new_owner) = owner;
     let (old_group, new_group) = group;
-    let set_owner = (old_owner != new_owner && meta.uid() == old_owner)
+    let set_owner = (old_owner != new_owner && st.st_uid == old_owner)
         .then(|| rustix::process::Uid::from_raw(new_owner));
-    let set_group = (old_group != new_group && meta.gid() == old_group)
+    let set_group = (old_group != new_group && st.st_gid == old_group)
         .then(|| rustix::process::Gid::from_raw(new_group));
     if set_owner.is_some() || set_group.is_some() {
         let _ = rustix::fs::chownat(
-            rustix::fs::CWD,
-            path,
+            &fd,
+            c"",
             set_owner,
             set_group,
-            rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+            rustix::fs::AtFlags::EMPTY_PATH,
         );
     }
 }

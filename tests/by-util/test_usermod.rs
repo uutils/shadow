@@ -808,3 +808,86 @@ fn test_rename_with_groups_uses_the_new_login() {
         "gshadow must follow the group file, got: {gshadow}"
     );
 }
+
+/// The user owns the home and can swap entries while root walks it. Here a
+/// thread keeps exchanging subdirectories with symlinks to a directory
+/// outside the home, atomically, for the whole run. A walk that checks an
+/// entry by path and then opens it by path can be steered through the link
+/// and re-own the file outside; the walk must never touch it.
+#[test]
+fn test_rechown_never_follows_an_entry_swapped_mid_walk() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    const PAIRS: usize = 32;
+
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    for round in 0..40 {
+        let dir = setup_prefix(
+            "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+            "testuser:$6$hash:19500:0:99999:7:::\n",
+            "testuser:x:1000:\n",
+        );
+        let home = dir.path().join("home/testuser");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).expect("failed to create outside dir");
+        std::fs::write(outside.join("victim"), "").expect("failed to write victim");
+        std::os::unix::fs::chown(outside.join("victim"), Some(1000), Some(1000))
+            .expect("chown failed");
+        std::fs::create_dir_all(&home).expect("failed to create home");
+        for i in 0..PAIRS {
+            let sub = home.join(format!("d{i}"));
+            std::fs::create_dir(&sub).expect("failed to create subdir");
+            std::fs::write(sub.join("f"), "").expect("failed to write file");
+            std::os::unix::fs::symlink(&outside, home.join(format!("l{i}")))
+                .expect("failed to create symlink");
+        }
+        // chown -R by hand: everything in the home is the user's.
+        for entry in std::fs::read_dir(&home).expect("read home") {
+            let path = entry.expect("entry").path();
+            std::os::unix::fs::lchown(&path, Some(1000), Some(1000)).expect("chown failed");
+            if path.is_dir() && !path.is_symlink() {
+                std::os::unix::fs::chown(path.join("f"), Some(1000), Some(1000))
+                    .expect("chown failed");
+            }
+        }
+        std::os::unix::fs::chown(&home, Some(1000), Some(1000)).expect("chown failed");
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let swapper = {
+            let stop = Arc::clone(&stop);
+            let home = home.clone();
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    for i in 0..PAIRS {
+                        let _ = rustix::fs::renameat_with(
+                            rustix::fs::CWD,
+                            home.join(format!("d{i}")),
+                            rustix::fs::CWD,
+                            home.join(format!("l{i}")),
+                            rustix::fs::RenameFlags::EXCHANGE,
+                        );
+                    }
+                }
+            })
+        };
+        let code = run_with_prefix(&dir, &["-u", "1500", "testuser"]);
+        stop.store(true, Ordering::Relaxed);
+        swapper.join().expect("swapper thread panicked");
+
+        assert_eq!(code, 0, "round {round}: changing the UID should succeed");
+        assert_eq!(
+            owner_of(&outside.join("victim")),
+            (1000, 1000),
+            "round {round}: a file outside the home was re-owned through a swapped symlink"
+        );
+        assert_eq!(
+            owner_of(&outside),
+            (0, 0),
+            "round {round}: outside dir re-owned"
+        );
+    }
+}
