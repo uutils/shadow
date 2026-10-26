@@ -14,9 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workflow that publishes every crate whose version is not on crates.io yet,
   in dependency order, authenticated through crates.io Trusted Publishing --
   no token stored anywhere. Each crate has to trust the repository in its
-  crates.io settings first. The same script publishes by hand
+  crates.io settings first. The same script publishes by hand when the
+  pipeline cannot (see CONTRIBUTING)
 
 ### Fixed
+
+- The pinned Rust toolchains now apply. A `rust-toolchain.toml` asking for
+  the `stable` channel overrode them: every run in the Debian and Alpine
+  images downloaded the latest stable over the image's own toolchain, and
+  the MSRV job installed 1.94 and then checked the runner's stable. The file
+  is gone, the workspace was checked on 1.94.0 and builds, and CI now fails
+  if a job is not running the toolchain it names
 
 - A variable whose name or value is not valid UTF-8 no longer makes every
   tool abort. The environment was read in a way that panics on the first
