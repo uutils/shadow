@@ -32,6 +32,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of them, `--help` included. Such an entry is now dropped; with `login -p`
   it is not carried into the session (#346)
 
+### Security
+
+- `usermod -u` and `usermod -g` re-own the home directory without resolving
+  a path inside it. The walk checked each entry by path and then opened it by
+  path, so the user, who owns the tree, could swap a directory for a symlink
+  in between and have root re-own files outside the home that carried the
+  user's old UID or old primary group. Each directory is now opened from its
+  parent's descriptor with `O_NOFOLLOW`, and each entry is checked and
+  re-owned through one descriptor. A test swaps directories and symlinks
+  for the whole run; the old walk re-owned a file outside the home within
+  two rounds
+
 ## [0.6.0] - 2026-10-13
 
 ### Changed
