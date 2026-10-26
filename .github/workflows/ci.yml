@@ -69,7 +69,9 @@ jobs:
             fi
           done
           exit 1
-      - run: docker compose run --rm debian sh -c 'rustc --version && cargo fmt --all --check'
+      # The guard fails the job if anything swaps the image's toolchain for
+      # another: a rust-toolchain.toml naming a channel once did, silently.
+      - run: docker compose run --rm debian sh -c 'rustc --version && [ "$(rustc --version | cut -d" " -f2)" = "$RUST_VERSION" ] || { echo "::error::rustc is not the image toolchain $RUST_VERSION"; exit 1; } && cargo fmt --all --check'
 
   clippy:
     name: Clippy
@@ -94,6 +96,7 @@ jobs:
           docker compose run --rm -e CARGO_NET_RETRY debian sh -c '
             set -e
             rustc --version
+            [ "$(rustc --version | cut -d" " -f2)" = "$RUST_VERSION" ] || { echo "::error::rustc is not the image toolchain $RUST_VERSION"; exit 1; }
             cargo clippy --workspace --all-targets -- -D warnings
             cargo clippy --workspace --all-targets --features pam -- -D warnings
             cargo clippy --workspace --all-targets --all-features -- -D warnings'
@@ -185,6 +188,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@fef00d40025f7fd8f1ec759cbbb0f577ddfc3133 # 1.94.0
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libselinux1-dev libaudit-dev libcrypt-dev
+      # Until a rust-toolchain.toml naming `stable` was removed, it overrode
+      # the toolchain installed above and this job checked the runner's
+      # stable, never 1.94. Fail rather than check the wrong compiler again.
+      - run: |
+          rustc --version
+          rustc --version | grep -q '^rustc 1\.94\.0 ' || { echo "::error::MSRV job is not running rustc 1.94.0"; exit 1; }
       - run: cargo check --workspace --all-targets
 
   deny:

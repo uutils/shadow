@@ -55,6 +55,13 @@ The base images are pinned. An unpinned tag lands a new toolchain on `main`
 with no pull request to run it against, and clippy gains lints between Rust
 releases; Renovate proposes the bumps instead.
 
+The repository has no `rust-toolchain.toml`, on purpose. A toolchain file
+naming a channel overrides the toolchain an image ships: with `stable` in
+it, every container run downloaded the latest stable over the pinned one,
+and the MSRV job checked the runner's stable instead of 1.94. CI's Format
+and Clippy jobs now fail if `rustc` in the image is not the image's own
+version, and the MSRV job fails if it is not running 1.94.0.
+
 The `alpine` image links musl dynamically and therefore *does* have PAM; it
 tests musl's libc behaviour (no NSS, no yescrypt), not the static archive. The
 static archive has its own job, `Static musl archive`, which on every pull
