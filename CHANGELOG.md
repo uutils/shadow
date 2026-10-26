@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of them, `--help` included. Such an entry is now dropped; with `login -p`
   it is not carried into the session (#346)
 
+- `usermod -u` and `-g` exit 12 with "Failed to change ownership of the home
+  directory" when the home is the user's but is a symlink or not a
+  directory, as GNU does, after writing the account files. They exited 0
+  (#351)
+
 ### Security
 
 - `usermod -u` and `usermod -g` re-own the home directory without resolving
