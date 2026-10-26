@@ -56,6 +56,7 @@ enum UsermodError {
     NameInUse(String),
     GroupNotFound(String),
     CantUpdateGroup(String),
+    CantChownHome(String),
 }
 
 impl fmt::Display for UsermodError {
@@ -67,7 +68,8 @@ impl fmt::Display for UsermodError {
             | Self::UidInUse(msg)
             | Self::NameInUse(msg)
             | Self::GroupNotFound(msg)
-            | Self::CantUpdateGroup(msg) => f.write_str(msg),
+            | Self::CantUpdateGroup(msg)
+            | Self::CantChownHome(msg) => f.write_str(msg),
         }
     }
 }
@@ -86,6 +88,8 @@ impl UError for UsermodError {
             Self::NameInUse(_) => 9,
             // usermod(8): 10 = can't update the group file.
             Self::CantUpdateGroup(_) => 10,
+            // usermod(8): 12 = unable to complete the home directory change.
+            Self::CantChownHome(_) => 12,
         }
     }
 }
@@ -239,7 +243,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // explicitly moved, recursively chown the existing home directory.
     // usermod(8): only files owned by the old UID get the new UID, and only
     // files in the old primary group get the new group.
-    if (new_uid != old_uid || new_primary_gid != old_primary_gid)
+    // A home that cannot be walked is reported at the end, like GNU: the
+    // account files are written regardless.
+    let home_chown = if (new_uid != old_uid || new_primary_gid != old_primary_gid)
         && !home_is_changing
         && !home_for_chown.is_empty()
     {
@@ -247,8 +253,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             &root.resolve(&home_for_chown),
             (old_uid, new_uid),
             (old_primary_gid, new_primary_gid),
-        );
-    }
+        )
+    } else {
+        Ok(())
+    };
 
     // Shadow modifications.
     let shadow_path = root.shadow_path();
@@ -429,7 +437,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     audit::log_user_event("MOD_USER", login, new_uid, true);
 
-    Ok(())
+    home_chown.map_err(Into::into)
 }
 
 /// One requested change to `/etc/subuid` or `/etc/subgid`.
@@ -512,23 +520,32 @@ fn apply_subid_changes(
 /// owned by the old UID get the new one, entries in the old group get the
 /// new group, anything else is left alone.
 ///
-/// Like GNU, only a home the user owns is walked, and a symlinked home is not
-/// followed. The user owns the tree and can rename, replace or re-link
+/// Like GNU, whether the home is the user's is decided through a symlink,
+/// and a home that is the user's but is a symlink or not a directory is not
+/// walked: that is an error, exit 12, raised after the account files are
+/// written. A home that is missing or not the user's is left alone. The user
+/// owns the tree and can rename, replace or re-link
 /// entries in it while this runs as root, so the walk never resolves a path
 /// below `home`: each directory is opened relative to its parent's descriptor
 /// with `O_NOFOLLOW`, each other entry with `O_PATH | O_NOFOLLOW`, and the
 /// ownership test and the change both go through that one descriptor. A
 /// symlink swapped in mid-walk is re-owned itself and never followed, and the
 /// inode that was checked is the inode that changes.
-fn rechown_home(home: &Path, owner: (u32, u32), group: (u32, u32)) {
+fn rechown_home(home: &Path, owner: (u32, u32), group: (u32, u32)) -> Result<(), UsermodError> {
     use std::rc::Rc;
     use uucore::safe_traversal::{DirFd, SymlinkBehavior};
 
+    if !rustix::fs::stat(home).is_ok_and(|st| st.st_uid == owner.0) {
+        return Ok(());
+    }
     let Ok(top) = DirFd::open(home, SymlinkBehavior::NoFollow) else {
-        return;
+        return Err(UsermodError::CantChownHome(
+            "Failed to change ownership of the home directory".into(),
+        ));
     };
+    // Swapped for something else since the check: not the user's any more.
     if !rustix::fs::fstat(&top).is_ok_and(|st| st.st_uid == owner.0) {
-        return;
+        return Ok(());
     }
     chown_matching(&top, owner, group);
 
@@ -545,6 +562,7 @@ fn rechown_home(home: &Path, owner: (u32, u32), group: (u32, u32)) {
         chown_matching(&dir, owner, group);
         queue_entries(&Rc::new(dir), &mut pending, owner, group);
     }
+    Ok(())
 }
 
 /// Re-own every entry of `dir` that is not a directory, and queue the

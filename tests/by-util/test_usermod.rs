@@ -332,10 +332,23 @@ fn test_home_not_owned_by_user_is_left_alone() {
             }
 
             let code = run_with_prefix(&dir, &[args[0], args[1], "testuser"]);
-            // GNU exits 12 for a symlinked home: #351.
-            if !symlinked {
-                assert_eq!(code, 0, "{args:?} should succeed");
-            }
+            // GNU: a home that is the user's through a symlink is not walked,
+            // and that is exit 12, with /etc/passwd written all the same.
+            assert_eq!(
+                code,
+                if symlinked { 12 } else { 0 },
+                "{args:?}, symlinked {symlinked}"
+            );
+            let passwd = read_passwd(&dir);
+            let expected = if args[0] == "-u" {
+                "testuser:x:1500:1000:"
+            } else {
+                "testuser:x:1000:2000:"
+            };
+            assert!(
+                passwd.contains(expected),
+                "{args:?}, symlinked {symlinked}: {passwd}"
+            );
             assert_eq!(
                 owner_of(&real),
                 (real_owner, 1000),
@@ -888,6 +901,56 @@ fn test_rechown_never_follows_an_entry_swapped_mid_walk() {
             owner_of(&outside),
             (0, 0),
             "round {round}: outside dir re-owned"
+        );
+    }
+}
+
+/// GNU decides whether the home is the user's through a symlink. A home the
+/// user owns that cannot be walked without following a link, or that is not
+/// a directory, is exit 12; a home that is not the user's, missing, or a
+/// dangling link, is left alone with exit 0.
+#[test]
+fn test_rechown_home_that_cannot_be_walked() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    // (setup, expected exit code)
+    let cases: [(&str, i32); 4] = [
+        ("regular file owned by the user", 12),
+        ("symlink to a root-owned directory", 0),
+        ("dangling symlink", 0),
+        ("missing", 0),
+    ];
+    for (case, expected) in cases {
+        let dir = setup_prefix(
+            "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+            "testuser:$6$hash:19500:0:99999:7:::\n",
+            "testuser:x:1000:\n",
+        );
+        let home = dir.path().join("home/testuser");
+        std::fs::create_dir_all(dir.path().join("home")).expect("failed to create /home");
+        match case {
+            "regular file owned by the user" => {
+                std::fs::write(&home, "").expect("failed to write file");
+                std::os::unix::fs::chown(&home, Some(1000), Some(1000)).expect("chown failed");
+            }
+            "symlink to a root-owned directory" => {
+                let real = dir.path().join("real");
+                std::fs::create_dir(&real).expect("failed to create dir");
+                std::os::unix::fs::symlink(&real, &home).expect("failed to create symlink");
+            }
+            "dangling symlink" => {
+                std::os::unix::fs::symlink(dir.path().join("nowhere"), &home)
+                    .expect("failed to create symlink");
+            }
+            _ => {}
+        }
+        let code = run_with_prefix(&dir, &["-u", "1500", "testuser"]);
+        assert_eq!(code, expected, "home is a {case}");
+        assert!(
+            read_passwd(&dir).contains("testuser:x:1500:"),
+            "home is a {case}: /etc/passwd should be updated"
         );
     }
 }
