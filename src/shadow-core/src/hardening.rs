@@ -49,6 +49,19 @@ pub fn raise_file_size_limit() {
 /// The fixed `PATH` every tool runs with, and hands to what it spawns.
 pub const SAFE_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 
+/// The caller's environment, minus every entry that is not UTF-8.
+///
+/// [`std::env::vars`] panics on the first variable whose name or value is
+/// not valid UTF-8, and a caller can export one by accident or on purpose:
+/// a setuid tool that reads its environment that way dies before parsing
+/// its arguments, `--help` included. Every reader in this workspace goes
+/// through here instead. An entry that is not UTF-8 is dropped, not
+/// repaired: no variable a tool keeps has a reason to carry such bytes, and
+/// passing fewer variables on is the safe direction.
+pub fn utf8_vars() -> impl Iterator<Item = (String, String)> {
+    std::env::vars_os().filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
+}
+
 /// Decide which of the caller's variables the tool itself keeps.
 ///
 /// The process starts with whatever the caller exported, and a setuid tool
@@ -99,7 +112,7 @@ where
 /// it filtering the caller's full environment.
 pub fn sanitized_env() -> Vec<(String, String)> {
     let mut env = vec![("PATH".to_string(), SAFE_PATH.to_string())];
-    for (k, v) in std::env::vars() {
+    for (k, v) in utf8_vars() {
         if k == "TERM" || k == "LANG" || k.starts_with("LC_") {
             env.push((k, v));
         }
@@ -173,7 +186,7 @@ pub fn apply_landlock(
 pub fn harden_process() {
     suppress_core_dumps();
     raise_file_size_limit();
-    let keep = own_environment(std::env::vars());
+    let keep = own_environment(utf8_vars());
     crate::process::replace_environment(&keep);
 }
 
@@ -288,6 +301,7 @@ impl Drop for SignalBlocker {
 mod tests {
     use super::*;
     use std::io::Write as _;
+    use std::os::unix::ffi::OsStrExt as _;
 
     fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
         list.iter()
@@ -371,8 +385,17 @@ mod tests {
             .env("TERM", "vt100")
             .env("TZ", ":/etc/shadow")
             .env("LC_ALL", "C")
+            // Not UTF-8, in a name and in the value of a kept variable: the
+            // child must not panic on them, and must not keep them.
+            .env(std::ffi::OsStr::from_bytes(b"JUNK_\xff"), "1")
+            .env("LANG", std::ffi::OsStr::from_bytes(b"C\xff"))
             .output()
             .expect("re-run the test binary");
+        assert!(
+            output.status.success(),
+            "child failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         let seen = String::from_utf8_lossy(&output.stdout);
         let lines: Vec<&str> = seen.lines().collect();
         assert!(
@@ -393,6 +416,12 @@ mod tests {
         );
         assert!(lines.contains(&"TERM=vt100"), "{seen}");
         assert!(lines.contains(&"LC_ALL=C"), "{seen}");
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.starts_with("LANG=") || l.starts_with("JUNK_")),
+            "an entry that is not UTF-8 survived: {seen}"
+        );
     }
 
     #[test]

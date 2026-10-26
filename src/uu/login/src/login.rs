@@ -390,7 +390,8 @@ fn run(request: &Request) -> UResult<()> {
     let config = Config::from_defs(&defs);
 
     // The caller's environment, captured before anything below can change it.
-    let caller_env: Vec<(String, String)> = std::env::vars().collect();
+    // An entry that is not UTF-8 is not carried into the session, `-p` or not.
+    let caller_env: Vec<(String, String)> = shadow_core::hardening::utf8_vars().collect();
 
     if config.timeout > 0 {
         shadow_core::process::exit_after(config.timeout, "Login timed out.");

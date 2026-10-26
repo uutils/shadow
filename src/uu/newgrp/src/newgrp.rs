@@ -183,7 +183,7 @@ fn login_environment(session: &Session) -> Vec<String> {
         format!("LOGNAME={username}"),
         "PATH=/usr/local/bin:/usr/bin:/bin".to_string(),
     ];
-    for (k, v) in std::env::vars() {
+    for (k, v) in shadow_core::hardening::utf8_vars() {
         if k == "TERM" || k == "LANG" || k.starts_with("LC_") {
             env.push(format!("{k}={v}"));
         }

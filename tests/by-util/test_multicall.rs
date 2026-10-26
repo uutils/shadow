@@ -99,6 +99,30 @@ fn test_help_is_identical_through_both_entry_points() {
     }
 }
 
+/// A variable whose bytes are not UTF-8 is legal in an environment, and
+/// reading the environment as `String`s panics on the first one. Every tool
+/// reads it before parsing arguments, so one stray export broke all of them,
+/// `--help` included. The junk name and the junk `LANG` value cover both
+/// halves of an entry; `LANG` is also on the list a tool keeps.
+#[test]
+fn test_every_tool_survives_an_environment_that_is_not_utf8() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    for tool in TOOLS {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_shadow-rs"));
+        cmd.env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env(OsStr::from_bytes(b"JUNK_\xff"), "1")
+            .env("SHADOW_TEST_JUNK", OsStr::from_bytes(b"\xff\xfe"))
+            .env("LANG", OsStr::from_bytes(b"C\xff"))
+            .args([tool, "--help"]);
+        let out = run_cmd(&mut cmd);
+        out.assert_code(0);
+        out.assert_stdout_contains("Usage:");
+    }
+}
+
 #[test]
 fn test_unknown_applet_is_refused() {
     multicall(&["no-such-tool"])
