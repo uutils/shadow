@@ -19,8 +19,8 @@ You may not remove the primary group of any existing user, unless you use
 ## OPTIONS
 
 **-f**, **--force**
-:   Delete the group even if it is a user's primary group, and exit 0 if it does
-    not exist.
+:   Delete the group even if it is a user's primary group. A group that does not
+    exist is still exit status 6.
 
 **-P**, **--prefix** *PREFIX_DIR*
 :   Use *PREFIX_DIR* as a prefix for system file paths.
@@ -44,10 +44,6 @@ You may not remove the primary group of any existing user, unless you use
 
 **10**
 :   Cannot update group file.
-
-## DIFFERENCES FROM UPSTREAM SHADOW
-
-**-f** on a group that does not exist exits 0, where upstream exits 6.
 
 ## FILES
 

@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `groupdel -f` and `userdel -f` on a name that does not exist exit 6, as upstream
+  does. They exited 0, and `userdel -f` also cleaned the name out of `shadow`, the
+  group lists and the subordinate ID files, which upstream leaves alone
+
 - `groupmod -U` and `groupadd -U` check their names, as upstream does: a name
   that is not a user is exit 10 and changes nothing, where it was written to the
   member list. Users from the name service count, and with `-P` the ones under

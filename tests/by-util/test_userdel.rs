@@ -347,12 +347,43 @@ fn test_missing_user_exits_6() {
     }
     let dir = setup_root_dir();
     assert_eq!(run_with_root(&dir, &["ghost"]), 6, "missing user is exit 6");
-    // -f makes it tolerant.
-    assert_eq!(
-        run_with_root(&dir, &["-f", "ghost"]),
-        0,
-        "-f tolerates absence"
-    );
+    // Ubuntu 26.04's userdel: -f does not change that.
+    for args in [
+        &["-f", "ghost"][..],
+        &["--force", "ghost"][..],
+        &["-r", "-f", "ghost"][..],
+    ] {
+        assert_eq!(run_with_root(&dir, args), 6, "{args:?}");
+    }
+}
+
+// Ubuntu 26.04's userdel -f leaves what a name not in passwd left behind alone:
+// its shadow row, its group memberships, its subordinate ids.
+#[test]
+fn test_force_on_a_missing_user_touches_nothing() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_private_group_dir();
+    let etc = dir.path().join("etc");
+    std::fs::write(
+        etc.join("shadow"),
+        "priv:!:19000:0:99999:7:::\ngone:!:19000:0:99999:7:::\n",
+    )
+    .unwrap();
+    std::fs::write(
+        etc.join("group"),
+        "root:x:0:gone\npriv:x:1000:\ngone:x:1001:\n",
+    )
+    .unwrap();
+    std::fs::write(etc.join("gshadow"), "root:*::gone\npriv:!::\ngone:!::\n").unwrap();
+    std::fs::write(etc.join("subuid"), "gone:100000:65536\n").unwrap();
+    let read = |name: &str| std::fs::read_to_string(etc.join(name)).unwrap();
+    let before = ["shadow", "group", "gshadow", "subuid"].map(read);
+
+    assert_eq!(run_with_root(&dir, &["-f", "gone"]), 6);
+
+    assert_eq!(["shadow", "group", "gshadow", "subuid"].map(read), before);
 }
 
 #[test]

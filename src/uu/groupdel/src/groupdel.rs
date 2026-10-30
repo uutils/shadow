@@ -117,10 +117,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let force = matches.get_flag(options::FORCE);
 
     let Some(target) = groups.find(group_name) else {
-        // groupdel(8) -f: "succeed even if the group does not exist".
-        if force {
-            return Ok(());
-        }
         return Err(
             GroupdelError::GroupNotFound(format!("group '{group_name}' does not exist")).into(),
         );
@@ -185,7 +181,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::FORCE)
                 .short('f')
                 .long("force")
-                .help("Delete even if it is a user's primary group, and succeed if it is missing")
+                .help("Delete even if it is a user's primary group")
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
