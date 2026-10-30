@@ -54,6 +54,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `passwd -d`, `-l` and `-u` can be combined, as upstream's can, and `-e` with them.
+  They are applied as delete, unlock, lock, whatever the order on the command line,
+  so `-d -l` removes the hash and leaves the account locked. They were refused,
+  exit 2. Who may run them has not changed: root, and anyone else gets exit 1
+
+- `passwd -r` with anything but `files` exits 6, as upstream does, before anything
+  else is looked at. It was accepted and ignored, so a change meant for another
+  repository was made to the local files
+
+- `passwd -d` with no login exits 2, as upstream does, and so do `-l`, `-u`, `-e` and
+  the aging options. They acted on the account of whoever ran them, so root typing
+  `passwd -d` deleted root's password
+
+- `passwd` refuses more of what upstream refuses, exit 2: `-S` or `-k` with an option
+  that changes the account, `-a` with one or with a login, and more than one login
+
 - `pwck` and `grpck` report on standard output, as upstream does, in upstream's
   words where it uses one line: `user 'alice': no group 1000`. They used standard
   error. A file that cannot be opened stays on standard error

@@ -208,6 +208,22 @@ test_setuid() {
     assert_fail "testrunner cannot passwd root" \
         su -s /bin/bash testrunner -c "echo 'root:hacked' | $BINDIR/chpasswd -e"
 
+    # Options that can be combined are still for root alone, on any account and on
+    # the caller's own, and -r refusing early must not open anything. The setuid
+    # binary is what is being tested: it runs as root until it decides.
+    shadow_sum=$(sha256sum /etc/shadow)
+    for args in "-d -l root" "-l -u root" "-d -l testrunner" "-e -d testrunner" \
+        "-d -l" "-r files -d -l root" "-r other -d root"; do
+        assert_fail "testrunner cannot run passwd $args" \
+            su -s /bin/bash testrunner -c "$USER_BINDIR/passwd $args </dev/null"
+    done
+    assert_ok "passwd -r other exits 6 for a user, on someone else's account" \
+        bash -c "su -s /bin/bash testrunner -c '$USER_BINDIR/passwd -r other root </dev/null' >/dev/null 2>&1; [ \"\$?\" -eq 6 ]"
+    assert_ok "passwd -d -l root exits 1 for a user" \
+        bash -c "su -s /bin/bash testrunner -c '$USER_BINDIR/passwd -d -l root </dev/null' >/dev/null 2>&1; [ \"\$?\" -eq 1 ]"
+    assert_ok "/etc/shadow untouched by all of that" \
+        test "$(sha256sum /etc/shadow)" = "$shadow_sum"
+
     # The binary is setuid for the four self-service tools only; every other
     # applet must run with the caller's own privileges. An unprivileged
     # `pwck -s` or `grpck -s` must neither rewrite a file nor change its owner.

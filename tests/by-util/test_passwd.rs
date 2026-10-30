@@ -58,8 +58,8 @@ fn test_unknown_flag_exits_six() {
 
 #[test]
 fn test_conflicting_flags_exits_two() {
-    // -l and -u conflict; clap reports ArgumentConflict which maps to exit 2.
-    let code = run(&["passwd", "-l", "-u", "someuser"]);
+    // -S and -l conflict, whoever is asking.
+    let code = run(&["passwd", "-S", "-l", "someuser"]);
     assert_eq!(code, 2, "conflicting flags should exit 2");
 }
 
@@ -565,4 +565,173 @@ fn test_negative_aging_values_are_rejected() {
         );
     }
     assert_eq!(read_shadow(&dir), before, "nothing may be written");
+}
+
+/// Run one option list on one password field, and return the code and the field.
+fn run_on_field(field: &str, args: &[&str]) -> (i32, String) {
+    let dir = setup_prefix(&format!("testuser:{field}:19500:0:99999:7:::\n"));
+    let code = run_with_prefix(&dir, args);
+    let content = read_shadow(&dir);
+    let after = content.split(':').nth(1).unwrap_or_default().to_owned();
+    (code, after)
+}
+
+// Ubuntu 26.04's passwd takes -d, -u and -l together, in any order, and applies
+// them as delete, then unlock, then lock, in one write. So -d -l leaves "!": the
+// hash is gone and the account is locked, which opens nothing.
+#[test]
+fn test_delete_unlock_lock_combine_like_upstream() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    for (field, args, code, after) in [
+        ("abc", &["-d", "-l"][..], 0, "!"),
+        ("abc", &["-l", "-d"], 0, "!"),
+        ("!abc", &["-d", "-l"], 0, "!"),
+        ("", &["-d", "-l"], 0, "!"),
+        ("abc", &["-d", "-u"], 0, ""),
+        ("abc", &["-u", "-d"], 0, ""),
+        ("!", &["-d", "-u"], 0, ""),
+        ("abc", &["-l", "-u"], 0, "!abc"),
+        ("abc", &["-u", "-l"], 0, "!abc"),
+        ("!abc", &["-l", "-u"], 0, "!abc"),
+        ("!!abc", &["-l", "-u"], 0, "!abc"),
+        ("!!", &["-l", "-u"], 0, "!"),
+        ("", &["-l", "-u"], 0, "!"),
+        ("*", &["-l", "-u"], 0, "!*"),
+        ("abc", &["-d", "-l", "-u"], 0, "!"),
+        ("!", &["-d", "-l", "-u"], 0, "!"),
+        // Unlocking a bare "!" would open the account, so all of it is refused,
+        // whatever came with it, and nothing is written.
+        ("!", &["-l", "-u"], 3, "!"),
+        ("!", &["-u", "-l"], 3, "!"),
+        ("!", &["-e", "-u"], 3, "!"),
+    ] {
+        let mut full = args.to_vec();
+        full.push("testuser");
+        assert_eq!(
+            run_on_field(field, &full),
+            (code, after.to_owned()),
+            "{field:?} {args:?}"
+        );
+    }
+}
+
+// -e goes with the others on Ubuntu 26.04 too, and with the aging options.
+#[test]
+fn test_expire_combines_with_the_rest() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    for (args, field) in [
+        (&["-e", "-d", "testuser"][..], ""),
+        (&["-e", "-l", "testuser"], "!abc"),
+        (&["-e", "-u", "testuser"], "abc"),
+    ] {
+        let dir = setup_prefix("testuser:abc:19500:0:99999:7:::\n");
+        assert_eq!(run_with_prefix(&dir, args), 0, "{args:?}");
+        assert_eq!(
+            read_shadow(&dir),
+            format!("testuser:{field}:0:0:99999:7:::\n"),
+            "{args:?}"
+        );
+    }
+}
+
+// Probed on Ubuntu 26.04: all usage errors, exit 2, and nothing written.
+#[test]
+fn test_options_that_exclude_each_other_exit_2() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    for args in [
+        &["-S", "-d", "testuser"][..],
+        &["-S", "-l", "testuser"],
+        &["-S", "-u", "testuser"],
+        &["-S", "-e", "testuser"],
+        &["-S", "-n", "1", "testuser"],
+        &["-S", "-x", "1", "testuser"],
+        &["-S", "-w", "1", "testuser"],
+        &["-S", "-i", "1", "testuser"],
+        &["-S", "-k", "testuser"],
+        &["-k", "-d", "testuser"],
+        &["-k", "-l", "testuser"],
+        &["-k", "-u", "testuser"],
+        &["-k", "-e", "testuser"],
+        &["-k", "-n", "1", "testuser"],
+        &["-k", "-x", "1", "testuser"],
+        &["-k", "-w", "1", "testuser"],
+        &["-k", "-i", "1", "testuser"],
+        &["-a", "testuser"],
+        &["-a", "-d", "testuser"],
+        &["-a", "-l", "testuser"],
+        &["-a", "-S", "testuser"],
+        &["testuser", "other"],
+    ] {
+        assert_eq!(run_on_field("abc", args), (2, "abc".to_owned()), "{args:?}");
+    }
+}
+
+// Ubuntu 26.04's passwd will not guess the account for an option that changes
+// it: exit 2, for root as well. A bare `passwd -d` here used to delete the
+// password of whoever typed it.
+#[test]
+fn test_changes_need_a_login() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    for args in [
+        &["-d"][..],
+        &["-l"],
+        &["-u"],
+        &["-e"],
+        &["-d", "-l"],
+        &["-n", "1"],
+        &["-x", "1"],
+        &["-w", "1"],
+        &["-i", "1"],
+    ] {
+        assert_eq!(run_on_field("abc", args), (2, "abc".to_owned()), "{args:?}");
+    }
+}
+
+// Only the local files exist. Anything else is refused before anything else
+// happens: exit 6, for any caller, and no file is looked at, so it says nothing
+// about whether a login exists.
+#[test]
+fn test_repository_other_than_files_exits_6() {
+    for repository in [
+        "other", "nis", "ldap", "", "NIS", "Files", "files ", "usrfiles",
+    ] {
+        for args in [
+            &["-r", repository, "testuser"][..],
+            &["-r", repository],
+            &["-r", repository, "-d", "testuser"],
+            &["-r", repository, "-l", "no_such_user_9f3a"],
+            &["-r", repository, "-S"],
+            &["-r", repository, "-S", "-a"],
+            &["-r", repository, "-d", "-S", "testuser"],
+        ] {
+            let mut full = vec!["passwd"];
+            full.extend_from_slice(args);
+            assert_eq!(run(&full), 6, "{args:?}");
+        }
+    }
+    assert_eq!(run(&["passwd", "--repository", "other", "testuser"]), 6);
+    assert_eq!(run(&["passwd", "-r"]), 6, "a missing value is exit 6 too");
+}
+
+#[test]
+fn test_repository_files_changes_nothing_about_the_command() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    assert_eq!(
+        run_on_field("abc", &["-r", "files", "-l", "testuser"]),
+        (0, "!abc".to_owned())
+    );
+    assert_eq!(
+        run_on_field("abc", &["-r", "files", "-d", "-S", "testuser"]),
+        (2, "abc".to_owned())
+    );
 }
