@@ -272,7 +272,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 entry.lock();
             } else if has_unlock {
                 if !entry.unlock() {
-                    return Err("cannot unlock: password is not set or would remain locked".into());
+                    return Err(
+                        "unlocking the password would result in a passwordless account".into(),
+                    );
                 }
             } else if has_delete {
                 entry.delete_password();
@@ -1158,14 +1160,15 @@ mod tests {
     }
 
     #[test]
-    fn test_unlock_empty_password_fails() {
+    fn test_unlock_empty_password_changes_nothing() {
         if skip_unless_root() {
             return;
         }
-        // Cannot unlock an account with no hash — unlock returns false.
+        // Nothing to take off, and nothing opened that was not open already.
         let dir = setup_prefix("testuser::19500:0:99999:7:::\n");
         let code = run_with_prefix(&dir, &["-u", "testuser"]);
-        assert_ne!(code, 0, "unlocking empty password should fail");
+        assert_eq!(code, 0);
+        assert!(read_shadow(&dir).contains("testuser::19500:"));
     }
 
     #[test]

@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use clap::{Arg, ArgAction, Command};
@@ -52,6 +53,7 @@ mod options {
 #[derive(Debug)]
 enum UsermodError {
     CantUpdate(String),
+    BadSyntax(String),
     BadArgument(String),
     UserNotFound(String),
     UidInUse(String),
@@ -66,6 +68,7 @@ impl fmt::Display for UsermodError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::CantUpdate(msg)
+            | Self::BadSyntax(msg)
             | Self::BadArgument(msg)
             | Self::UserNotFound(msg)
             | Self::UidInUse(msg)
@@ -84,6 +87,7 @@ impl UError for UsermodError {
     fn code(&self) -> i32 {
         match self {
             Self::CantUpdate(_) => 1,
+            Self::BadSyntax(_) => 2,
             Self::BadArgument(_) => 3,
             // usermod(8): 6 covers both "user doesn't exist" and
             // "specified group doesn't exist".
@@ -103,7 +107,12 @@ impl UError for UsermodError {
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     shadow_core::hardening::harden_process();
 
-    let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 2)? else {
+    // usermod(8): 2 for bad syntax, 3 for an argument to an option that is wrong.
+    let parse_failure = |e: &clap::Error| match e.kind() {
+        clap::error::ErrorKind::ValueValidation => 3,
+        _ => 2,
+    };
+    let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, parse_failure)? else {
         return Ok(());
     };
 
@@ -136,7 +145,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         ("comment", options::COMMENT),
         ("home directory", options::HOME),
         ("shell", options::SHELL),
-        ("password hash", options::PASSWORD),
     ] {
         if let Some(value) = matches.get_one::<String>(key) {
             validate::validate_field(what, value)
@@ -180,6 +188,21 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let Some(idx) = entries.iter().position(|e| e.name == *login) else {
         return Err(UsermodError::UserNotFound(format!("user '{login}' does not exist")).into());
     };
+
+    // These come after the lookup, in upstream's order: the first thing a caller
+    // hears about is a login that does not exist.
+    check_flag_combinations(&matches)?;
+
+    // A hash that would add a field or a record to /etc/shadow. Upstream fails
+    // on it when it writes that file, so with the code of a failed write, after
+    // it has already written /etc/passwd. Refusing it here writes nothing.
+    if let Some(hash) = matches.get_one::<String>(options::PASSWORD) {
+        validate::validate_field("password hash", hash)
+            .map_err(|e| UsermodError::CantUpdate(e.to_string()))?;
+    }
+
+    // What the account looked like, to tell afterwards if anything changed.
+    let before = entries[idx].clone();
 
     // Save the old UID and GID before mutation so we can chown if needed.
     let old_uid = entries[idx].uid;
@@ -252,6 +275,19 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let new_primary_gid = entries[idx].gid;
     let home_for_chown = entries[idx].home.clone();
 
+    // Upstream drops an option whose value is what the account has already, and
+    // says so if none is left. These ones it keeps, whatever their value. A home
+    // spelled with a trailing slash counts as a different home.
+    let mut changing = entries[idx] != before
+        || matches
+            .get_one::<String>(options::HOME)
+            .is_some_and(|home| *home != before.home)
+        || !subid_changes.is_empty()
+        || matches.contains_id(options::GROUPS)
+        || matches.contains_id(options::PASSWORD)
+        || matches.get_flag(options::LOCK)
+        || matches.get_flag(options::UNLOCK);
+
     passwd_file
         .commit()
         .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
@@ -318,16 +354,21 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             s.lock();
         }
         if do_unlock && !s.unlock() {
-            return Err(UsermodError::BadArgument(format!(
-                "unlocking '{login}' would leave the account without a password"
-            ))
-            .into());
+            // Like upstream: the account stays locked, which is the point of
+            // refusing, and whatever else was asked for still happens.
+            uucore::show_error!(
+                "unlocking the user's password would result in a passwordless account.\n\
+                 You should set a password with usermod -p to unlock this user's password."
+            );
         }
         if let Some(parsed) = expire_date {
+            changing |= s.expire_date != parsed;
             s.expire_date = parsed;
         }
         if let Some(&i) = inactive {
-            s.inactive_days = if i < 0 { None } else { Some(i) };
+            let days = if i < 0 { None } else { Some(i) };
+            changing |= s.inactive_days != days;
+            s.inactive_days = days;
         }
         if let Some(pw) = new_password {
             s.passwd.clone_from(pw);
@@ -473,6 +514,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         home_chown
     };
 
+    if !changing {
+        let _ = writeln!(std::io::stdout(), "{}: no changes", uucore::util_name());
+    }
+
     nscd::invalidate_cache("passwd");
     nscd::invalidate_cache("group");
 
@@ -481,6 +526,44 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     audit::log_user_event("MOD_USER", login, new_uid, home_change.is_ok());
 
     home_change.map_err(Into::into)
+}
+
+/// Refuse options that need another one, or exclude one another, and a command
+/// line with nothing on it but the login. `-P` and `-R` count as options here,
+/// as they do upstream, which answers them with "no changes".
+fn check_flag_combinations(matches: &clap::ArgMatches) -> Result<(), UsermodError> {
+    let syntax = |msg: &str| Err(UsermodError::BadSyntax(msg.to_owned()));
+    let has_groups = matches.contains_id(options::GROUPS);
+    let append = matches.get_flag(options::APPEND);
+    let remove = matches.get_flag(options::REMOVE);
+
+    if !matches.ids().any(|id| {
+        id != options::USER
+            && matches.value_source(id.as_str()) == Some(clap::parser::ValueSource::CommandLine)
+    }) {
+        return syntax("no options");
+    }
+    if append && !has_groups {
+        return syntax("-a flag is only allowed with the -G flag");
+    }
+    if remove && !has_groups {
+        return syntax("-r flag is only allowed with the -G flag");
+    }
+    if append && remove {
+        return syntax("-r and -a are mutually exclusive flags");
+    }
+    let exclusive = [
+        matches.get_flag(options::LOCK),
+        matches.get_flag(options::UNLOCK),
+        matches.contains_id(options::PASSWORD),
+    ];
+    if exclusive.iter().filter(|set| **set).count() > 1 {
+        return syntax("the -L, -p, and -U flags are exclusive");
+    }
+    if matches.get_flag(options::MOVE_HOME) && !matches.contains_id(options::HOME) {
+        return syntax("-m flag is only allowed with the -d flag");
+    }
+    Ok(())
 }
 
 /// One requested change to `/etc/subuid` or `/etc/subgid`.
@@ -1264,7 +1347,6 @@ pub fn uu_app() -> Command {
                 .short('m')
                 .long("move-home")
                 .help("Move the contents of the home directory to the new location (use only with -d)")
-                .requires(options::HOME)
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -1302,7 +1384,6 @@ pub fn uu_app() -> Command {
             Arg::new(options::APPEND)
                 .short('a')
                 .long("append")
-                .requires(options::GROUPS)
                 .help("Add to the supplementary groups instead of replacing them (only effective with -G)")
                 .action(ArgAction::SetTrue),
         )
@@ -1310,8 +1391,6 @@ pub fn uu_app() -> Command {
             Arg::new(options::REMOVE)
                 .short('r')
                 .long("remove")
-                .requires(options::GROUPS)
-                .conflicts_with(options::APPEND)
                 .help("Remove from the supplementary groups given with -G only")
                 .action(ArgAction::SetTrue),
         )
@@ -1320,7 +1399,6 @@ pub fn uu_app() -> Command {
                 .short('L')
                 .long("lock")
                 .help("Disable login by locking the password")
-                .conflicts_with(options::UNLOCK)
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -1428,15 +1506,6 @@ mod tests {
     }
 
     #[test]
-    fn test_lock_unlock_conflict() {
-        assert!(
-            uu_app()
-                .try_get_matches_from(["usermod", "-L", "-U", "u"])
-                .is_err()
-        );
-    }
-
-    #[test]
     fn test_negative_one_inactive_and_expiredate() {
         let m = uu_app()
             .try_get_matches_from(["usermod", "-f", "-1", "-e", "-1", "u"])
@@ -1457,25 +1526,6 @@ mod tests {
         assert_eq!(
             m.get_one::<String>(options::GROUPS).map(String::as_str),
             Some("sudo,docker")
-        );
-    }
-
-    #[test]
-    fn test_remove_needs_groups_and_excludes_append() {
-        assert!(
-            uu_app()
-                .try_get_matches_from(["usermod", "-r", "-G", "sudo", "u"])
-                .is_ok()
-        );
-        assert!(
-            uu_app()
-                .try_get_matches_from(["usermod", "-r", "u"])
-                .is_err()
-        );
-        assert!(
-            uu_app()
-                .try_get_matches_from(["usermod", "-a", "-r", "-G", "sudo", "u"])
-                .is_err()
         );
     }
 
