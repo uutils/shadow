@@ -1073,3 +1073,58 @@ fn test_audit_records_a_failed_home_rechown_as_failed() {
     let line = listener.line_about("auditok");
     assert!(line.contains("res=success"), "{line}");
 }
+
+/// `O_NOFOLLOW` only looks at the last component, and with a trailing slash
+/// that component is empty: the kernel resolves a symlink before it. A home
+/// spelled with one must not reach the walk through a link that the same home
+/// spelled without one is refused for.
+#[test]
+fn test_rechown_trailing_slash_on_a_symlinked_home() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    for spelling in ["testuser", "testuser/", "testuser//", "testuser/."] {
+        let dir = setup_prefix(
+            &format!("testuser:x:1000:1000:Test:/home/{spelling}:/bin/bash\n"),
+            "testuser:$6$hash:19500:0:99999:7:::\n",
+            "testuser:x:1000:\n",
+        );
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).expect("failed to create dir");
+        std::fs::write(real.join("file"), "").expect("failed to write file");
+        std::os::unix::fs::chown(real.join("file"), Some(1000), Some(1000)).expect("chown failed");
+        std::os::unix::fs::chown(&real, Some(1000), Some(1000)).expect("chown failed");
+        std::fs::create_dir_all(dir.path().join("home")).expect("failed to create /home");
+        std::os::unix::fs::symlink(&real, dir.path().join("home/testuser"))
+            .expect("failed to create symlink");
+
+        let code = run_with_prefix(&dir, &["-u", "1500", "testuser"]);
+        assert_eq!(code, 12, "home spelled {spelling}");
+        assert_eq!(owner_of(&real), (1000, 1000), "home spelled {spelling}");
+        assert_eq!(
+            owner_of(&real.join("file")),
+            (1000, 1000),
+            "home spelled {spelling}"
+        );
+        assert!(
+            read_passwd(&dir).contains("testuser:x:1500:"),
+            "home spelled {spelling}: /etc/passwd should be updated"
+        );
+    }
+
+    // The real directory reached with a trailing slash is walked as usual.
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser/:/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "testuser:x:1000:\n",
+    );
+    let home = dir.path().join("home/testuser");
+    std::fs::create_dir_all(&home).expect("failed to create home");
+    std::fs::write(home.join("file"), "").expect("failed to write file");
+    std::os::unix::fs::chown(home.join("file"), Some(1000), Some(1000)).expect("chown failed");
+    std::os::unix::fs::chown(&home, Some(1000), Some(1000)).expect("chown failed");
+    assert_eq!(run_with_prefix(&dir, &["-u", "1500", "testuser"]), 0);
+    assert_eq!(owner_of(&home), (1500, 1000));
+    assert_eq!(owner_of(&home.join("file")), (1500, 1000));
+}

@@ -537,10 +537,15 @@ fn rechown_home(home: &Path, owner: (u32, u32), group: (u32, u32)) -> Result<(),
     use std::rc::Rc;
     use uucore::safe_traversal::{DirFd, SymlinkBehavior};
 
-    if !rustix::fs::stat(home).is_ok_and(|st| st.st_uid == owner.0) {
+    // O_NOFOLLOW only looks at the last component. In "home/" or "home/." that
+    // is not the link, so the kernel would resolve it and the walk would start
+    // wherever it points. components() drops those spellings.
+    let home: std::path::PathBuf = home.components().collect();
+
+    if !rustix::fs::stat(&home).is_ok_and(|st| st.st_uid == owner.0) {
         return Ok(());
     }
-    let Ok(top) = DirFd::open(home, SymlinkBehavior::NoFollow) else {
+    let Ok(top) = DirFd::open(&home, SymlinkBehavior::NoFollow) else {
         return Err(UsermodError::CantChownHome(
             "Failed to change ownership of the home directory".into(),
         ));
