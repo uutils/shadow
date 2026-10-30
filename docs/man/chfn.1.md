@@ -27,6 +27,8 @@ keeps the current value; an empty run makes no change and exits successfully.
 Supply a field option to change one field without being prompted for the
 others, or an empty argument (for example **-r** '') to clear a field.
 
+A successful change prints nothing.
+
 ## PERMISSIONS
 
 A normal user may only change their own finger information, and only the

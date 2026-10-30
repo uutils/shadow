@@ -22,7 +22,8 @@ The new group will be entered into the system files (/etc/group and
     the GID is already used (a new GID will be allocated instead).
 
 **-g**, **--gid** *GID*
-:   Use *GID* for the new group.
+:   Use *GID* for the new group. **4294967295** is refused with exit status 3:
+    it is (gid_t)-1, which **chown**(2) and **setresgid**(2) take as "no change".
 
 **-K**, **--key** *KEY=VALUE*
 :   Override /etc/login.defs defaults (GID_MIN, GID_MAX, SYS_GID_MIN,
@@ -39,10 +40,16 @@ The new group will be entered into the system files (/etc/group and
 
 **-r**, **--system**
 :   Create a system group (allocated from the system GID range defined
-    in /etc/login.defs).
+    in /etc/login.defs). GIDs are handed out from the top of the range down:
+    one below the lowest system GID in use, starting at **SYS_GID_MAX**, and the
+    highest free one when that reaches the bottom.
 
 **-R**, **--root** *CHROOT_DIR*
 :   Apply changes in the *CHROOT_DIR* directory.
+
+**-U**, **--users** *USERS*
+:   Make the listed users (comma-separated) members of the new group, in
+    /etc/group and /etc/gshadow.
 
 ## EXIT STATUS
 
@@ -63,6 +70,11 @@ The new group will be entered into the system files (/etc/group and
 
 **10**
 :   Cannot update group file.
+
+## DIFFERENCES FROM UPSTREAM SHADOW
+
+**-U** does not check its names: a user that does not exist is written to the
+member list, where upstream exits 10.
 
 ## FILES
 

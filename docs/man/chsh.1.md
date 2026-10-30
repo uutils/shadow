@@ -18,7 +18,7 @@ With no *LOGIN*, **chsh** operates on the account of the user running it.
 
 If no **-s** option is given, **chsh** prompts for the new shell, showing the
 current one in brackets. Pressing ENTER, or repeating the current value, makes
-no change and exits successfully.
+no change and exits successfully. A successful change prints nothing.
 
 An empty shell field is not an error: **login** falls back to /bin/sh when the
 field is empty, so an empty value selects the system default. Because an empty

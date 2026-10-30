@@ -38,6 +38,9 @@ the superuser.
 :   Disable the account *INACTIVE* days after its password expires. **-1**
     removes the inactivity period.
 
+**-i**, **--iso8601**
+:   With **-l**, print dates as **YYYY-MM-DD**.
+
 **-l**, **--list**
 :   Print the aging information. Cannot be combined with any field option.
 
@@ -124,6 +127,11 @@ artefact.
 **15**
 :   /etc/shadow could not be read. This code is for the *file*; a missing
     *account* is exit 1.
+
+## DIFFERENCES FROM UPSTREAM SHADOW
+
+There is no interactive mode. Given only a *LOGIN*, upstream prompts for each
+field; here that is an error, exit 3, and nothing changes.
 
 ## FILES
 

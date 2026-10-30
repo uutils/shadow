@@ -24,6 +24,11 @@ Checks performed include:
 - Valid login shell
 - Matching passwd/shadow entries
 
+Files with no problem produce no output. After an error, **pwck** prints
+*pwck: no changes* on standard output, with **-q** as well, and exits 2; the files
+are not rewritten. A warning alone does neither. There is no check on the size of
+an ID: **nobody** at 65534 is not a problem.
+
 ## OPTIONS
 
 **-q**, **--quiet**
@@ -57,6 +62,17 @@ Checks performed include:
 
 **5**
 :   Cannot update files.
+
+**6**
+:   Cannot sort files.
+
+## DIFFERENCES FROM UPSTREAM SHADOW
+
+Problems are reported on standard error, where upstream uses standard output, and
+in a shorter form: a duplicate entry gets one line, without upstream's offer to
+delete it. With **-q** a primary group that does not exist is still a problem,
+exit 2; upstream reports nothing and exits 0. **-b**/**--badname** is not
+implemented, and is refused as an unknown option, exit 1.
 
 ## FILES
 

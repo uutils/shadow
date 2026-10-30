@@ -43,7 +43,7 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
   zeroed in memory via `zeroize`.
 - **Well-tested**: unit tests, property-based tests (`proptest`), integration
   tests, fuzz targets for all parsers. Tested on Debian, Alpine (musl), and
-  Fedora (SELinux).
+  Fedora.
 - **Hardened**: Landlock filesystem sandboxing, signal blocking during
   critical sections, core dump suppression, environment sanitization,
   privilege drop during PAM.
@@ -54,16 +54,16 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
 
 | Tool | Status |
 |------|--------|
-| `passwd` | **All 16 flags implemented.** Drop-in for upstream passwd. PAM password change, Landlock sandboxing, `--root`, `--quiet`, `--stdin`. Output bit-for-bit identical with GNU. |
-| `pwck` | **All checks implemented.** Drop-in for upstream pwck. Bit-for-bit identical output. |
+| `passwd` | **All 16 flags implemented.** Drop-in for upstream passwd. PAM password change, Landlock sandboxing, `--root`, `--quiet`, `--stdin`. `-S` output and exit codes compared with the distribution's `passwd` by `make test-upstream-compat`. |
+| `pwck` | **Implemented.** Silent on clean files, `pwck: no changes` after an error. Messages go to stderr where upstream uses stdout; see `pwck(8)`. |
 | `useradd` | **Implemented.** UID/GID allocation, home dir + skel, shadow entry, group creation. |
 | `userdel` | **Implemented.** Remove from all system files, optional home/mail cleanup. |
-| `usermod` | **Implemented.** Modify all properties, group membership, lock/unlock, set pre-hashed password. |
+| `usermod` | **Implemented.** Modify account properties and group membership (`-G`, `-a`, `-r`), lock/unlock, set pre-hashed password, subordinate IDs, move the home (`-m`) and re-own it through descriptors. Not implemented: `-o`, `-b`, `-Z`, `--selinux-range`. |
 | `chpasswd` | **Implemented.** Batch password change from stdin. |
-| `chage` | **Implemented.** Password aging management; `-l` for a user's own account, setgid `shadow`. |
-| `groupadd` | **Implemented.** Auto GID allocation, system groups, force mode. |
-| `groupdel` | **Implemented.** Primary group usage check. |
-| `groupmod` | **Implemented.** GID change, rename, password. |
+| `chage` | **Implemented.** Password aging management; `-l` (with `-i` for ISO dates) for a user's own account, setgid `shadow`. No interactive mode. |
+| `groupadd` | **Implemented.** Auto GID allocation, system groups, force mode, initial members. |
+| `groupdel` | **Implemented.** Primary group usage check, force mode. |
+| `groupmod` | **Implemented.** GID change, rename, password, member list in group and gshadow. |
 | `grpck` | **Implemented.** Group/gshadow integrity verification. |
 | `chfn` | **Implemented.** GECOS sub-field modification. |
 | `chsh` | **Implemented.** Shell change with /etc/shells validation. |
@@ -88,17 +88,20 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
 The target is the set of binaries the upstream shadow suite ships, as the
 distributions package it. That set was established from package metadata and
 man pages, never from the upstream source: this project is a clean-room
-reimplementation and reads no GPL code.
+reimplementation and reads no GPL code. Behaviour is established by running the
+package: the reference is Ubuntu 26.04's `passwd` (1:4.17.4-2ubuntu3), with
+Debian as a comparison.
 
 Debian and Fedora do not ship the same set. The 22 tools they agree on are all
 implemented. Of the rest:
 
 | tool | status |
 |---|---|
-| `login` | shipped. Debian 13 and Ubuntu 25.10 take `login` from util-linux, but every release in service today — Ubuntu 20.04, 22.04 and 24.04, Debian 12 — ships shadow's, and `uutils/login` was archived pointing here. It implements the option set the two share, plus util-linux's `-H` |
+| `login` | shipped. Debian 13, Ubuntu 25.10 and Ubuntu 26.04 take `login` from util-linux, but Ubuntu 20.04, 22.04 and 24.04 and Debian 12 ship shadow's, and `uutils/login` was archived pointing here. It implements the option set the two share, plus util-linux's `-H` |
+| `newgrp`, `sg` | shipped. Debian 13 and Ubuntu 26.04 take them from util-linux; the releases above that keep shadow's `login` keep these too |
 | `expiry` | shipped |
-| `groupmems` | out of scope. Debian 13 and Fedora do not ship it; Ubuntu 24.04 does, without a `/etc/pam.d/groupmems`, so every action there fails against PAM's default — a tool one distribution ships and none can use |
-| `faillog`, `lastlog` | left the Debian package with 13; not planned |
+| `groupmems` | out of scope. Debian 13, Fedora and Ubuntu 26.04 do not ship it; Ubuntu 24.04 does, without a `/etc/pam.d/groupmems`, so every action there fails against PAM's default — a tool one distribution ships and none can use |
+| `faillog`, `lastlog` | left the Debian package with 13, and are not in Ubuntu 26.04; not planned |
 | `newuidmap`, `newgidmap` | shipped. Fedora's pair, the basis of rootless containers |
 | `shadowconfig`, `cpgr`, `cppw`, `adduser` | Debian packaging scripts and a Fedora symlink, not upstream tools; out of scope |
 
@@ -108,14 +111,15 @@ organisation, and are deliberately not duplicated here — the same rule
 
 - `nologin` is in [`uutils/util-linux`](https://github.com/uutils/util-linux). Debian has taken it from util-linux for years; shadow's copy is not shipped.
 - `su` is in [`sudo-rs`](https://github.com/trifectatechfoundation/sudo-rs).
-- `login` is here: on the installed base it is shadow's tool, whatever the newest releases do.
+- `login` is here: on much of the installed base it is shadow's tool, whatever the newest releases do.
 
 ### Where this differs from upstream shadow
 
 Differences with the upstream tools are treated as bugs, with one class of
 exceptions: a behaviour that quietly weakens the system is refused rather than
 reproduced. Each refusal is loud, names the alternative, and is documented in
-the tool's man page under *Differences from upstream shadow*. The pattern so far:
+the tool's man page under *Differences from upstream shadow*, as are the
+differences still open. The pattern so far:
 
 - Insecure hashing schemes (`-m`, `-c MD5`, `-c DES`) and unhashed storage
   (`-c NONE`) are refused by `chpasswd`, `chgpasswd` and `newusers`.
@@ -128,6 +132,11 @@ the tool's man page under *Differences from upstream shadow*. The pattern so far
   account pointing at a GID that is not there.
 - `newgrp` and `sg` prompt for a password whether or not the group has one, so
   the presence of a prompt no longer reveals which groups are worth attacking.
+- `usermod` re-owns a home through descriptors and keeps going after a failure.
+  `usermod(8)` lists what that changes: someone else's hard link keeps its group,
+  a symlinked home is refused however it is spelled, a failure does not stop the
+  walk, an entry deleted during the walk is not one, set-user-ID bits go when a
+  copied home is re-owned, and a moved home that is not the user's is not walked.
 
 Nothing falls back silently. Where the upstream tool and this one disagree on a
 result, the exit code says so.
@@ -191,8 +200,8 @@ tools:
   closed without it).
 - **No NSS.** Users from LDAP, SSSD, Active Directory or systemd-userdb are
   invisible to the eleven tools that look a user up.
-- **No yescrypt (`$y$`).** The default password hash on Debian 12+ and
-  Ubuntu 24.04 can be neither verified nor produced.
+- **No yescrypt (`$y$`).** The default password hash on Debian 12+,
+  Ubuntu 24.04 and Ubuntu 26.04 can be neither verified nor produced.
 
 If any of those matter on the host, use a glibc archive.
 [docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md) explains each gap, what
@@ -226,7 +235,7 @@ system. Three distros are tested to catch libc and PAM differences:
 ```shell
 docker compose run --rm debian cargo test --workspace    # Debian Trixie (glibc)
 docker compose run --rm alpine cargo test --workspace    # Alpine (musl libc)
-docker compose run --rm fedora cargo test --workspace    # Fedora (SELinux enforcing)
+docker compose run --rm fedora cargo test --workspace    # Fedora
 ```
 
 ### Lint
@@ -270,9 +279,13 @@ merge is frictionless.
 
 | Target | Base | libc | PAM | SELinux |
 |--------|------|------|-----|---------|
-| `debian` | `rust:latest` (Trixie) | glibc | Linux-PAM | headers |
-| `alpine` | `rust:alpine` | musl | Linux-PAM | none |
-| `fedora` | `fedora:latest` | glibc | Linux-PAM | enforcing |
+| `debian` | `rust:1.99-trixie` | glibc | Linux-PAM | headers |
+| `alpine` | `rust:1.99-alpine3.23` | musl | Linux-PAM | none |
+| `fedora` | `fedora:46` | glibc | Linux-PAM | headers |
+
+SELinux is not enforced in any of them: a container has no `/sys/fs/selinux`
+unless its host runs SELinux. These images are where the suite runs; behaviour
+is established against Ubuntu 26.04's package, as under [Scope](#scope).
 
 The `alpine` image tests musl with dynamic linking, PAM included. The static
 musl release archive is a different build — no PAM, no NSS, no yescrypt — and

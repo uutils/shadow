@@ -1,11 +1,11 @@
-# shadow-rs development image — Fedora 45
+# shadow-rs development image — Fedora 46
 #
 # PAM: pam-devel (Linux-PAM)
-# SELinux: libselinux-devel — SELinux is ENFORCING by default
+# SELinux: libselinux-devel — not enforced here: a container has no
+#          /sys/fs/selinux unless its host runs SELinux
 # Default shell: /bin/bash
 # Shadow-utils package: shadow-utils
 # Note: Fedora has different PAM stack config and login.defs defaults than Debian.
-#       SELinux is enforcing, which affects file context on /etc/passwd, /etc/shadow.
 
 # Pinned: see the note in Dockerfile.debian.
 FROM fedora:46

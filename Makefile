@@ -13,9 +13,9 @@ ROOT_TOOLS = useradd userdel usermod chpasswd chgpasswd newusers \
 
 # Tools an ordinary user runs, and which therefore go in bin rather than sbin:
 # sbin is not on a normal user's PATH, so `passwd` there is `command not
-# found`. This is where upstream shadow puts them -- verified against the Debian
-# package, which ships passwd, chage, chfn, chsh and newgrp in /usr/bin and
-# everything else in /usr/sbin.
+# found`. This is where upstream shadow puts them -- verified against the Ubuntu
+# 26.04 package, which ships passwd, chage, chfn, chsh, expiry and gpasswd in
+# /usr/bin and the other tools it has in /usr/sbin; Debian 13's does the same.
 # login lives in bin, and is root-only without being setuid: getty runs it as
 # root, and it refuses to run as anyone else.
 USER_BIN_TOOLS = login

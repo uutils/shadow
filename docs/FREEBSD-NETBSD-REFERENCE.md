@@ -51,7 +51,7 @@ differences:
 All high-value items from BSD review are already tracked:
 
 - **mlock()**: Future work (docs/SECURITY-HARDENING.md)
-- **Samba usernames**: Could add `--badname` flag (matches GNU `useradd --badname`)
+- **Samba usernames**: Could add `--badname` flag (matches upstream `useradd --badname`)
 - **Password fd input**: Low priority feature
 
 No critical security gaps found relative to FreeBSD/NetBSD implementations.

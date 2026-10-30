@@ -55,7 +55,7 @@ services:
       - target-fedora:/workspace/target
 
   # End-to-end deployment test — self-contained, no shared volumes.
-  # Builds shadow-rs from source, installs system-wide, runs ~100 assertions.
+  # Builds shadow-rs from source, installs system-wide, runs some 400 assertions.
   e2e:
     build:
       context: .

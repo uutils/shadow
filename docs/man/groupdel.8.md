@@ -13,10 +13,14 @@ groupdel - delete a group
 The **groupdel** command modifies the system account files, deleting all
 entries that refer to *GROUP*. The named group must exist.
 
-You may not remove the primary group of any existing user. You must
-remove the user before you remove the group.
+You may not remove the primary group of any existing user, unless you use
+**-f**. Otherwise you must remove the user before you remove the group.
 
 ## OPTIONS
+
+**-f**, **--force**
+:   Delete the group even if it is a user's primary group, and exit 0 if it does
+    not exist.
 
 **-P**, **--prefix** *PREFIX_DIR*
 :   Use *PREFIX_DIR* as a prefix for system file paths.
@@ -40,6 +44,10 @@ remove the user before you remove the group.
 
 **10**
 :   Cannot update group file.
+
+## DIFFERENCES FROM UPSTREAM SHADOW
+
+**-f** on a group that does not exist exits 0, where upstream exits 6.
 
 ## FILES
 
