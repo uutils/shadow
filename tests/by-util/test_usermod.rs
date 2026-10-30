@@ -1194,12 +1194,14 @@ fn test_rechown_reowns_a_directory_it_cannot_open() {
     );
     let home = home_with_a_blocked_directory(&dir);
 
-    run_without_capabilities(
+    let code = run_without_capabilities(
         &dir,
         &["-u", "1500", "testuser"],
         CapabilitySet::DAC_OVERRIDE | CapabilitySet::DAC_READ_SEARCH,
     );
 
+    assert_eq!(code, 12, "a directory was not walked, and that must show");
+    assert!(read_passwd(&dir).contains("testuser:x:1500:"));
     assert_eq!(owner_of(&home.join("blocked")), (1500, 1000));
     assert_eq!(
         owner_of(&home.join("blocked/inner")),
@@ -1210,4 +1212,171 @@ fn test_rechown_reowns_a_directory_it_cannot_open() {
     assert_eq!(owner_of(&home.join("plain")), (1500, 1000));
     assert_eq!(owner_of(&home.join("open")), (1500, 1000));
     assert_eq!(owner_of(&home.join("open/f")), (1500, 1000));
+}
+
+/// A change that fails is reported, but does not stop the walk. Without
+/// `CAP_CHOWN` root can still move a file it owns to a group it is in, and
+/// nothing else: the home and `theirs` fail, whatever order the walk finds
+/// them in, while `ours` and `ours-dir/f` change.
+#[test]
+fn test_rechown_keeps_walking_after_a_chown_fails() {
+    use rustix::thread::CapabilitySet;
+    use std::os::unix::fs::chown;
+
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "root:x:0:\ntestuser:x:1000:\n",
+    );
+    let home = dir.path().join("home/testuser");
+    std::fs::create_dir_all(home.join("ours-dir")).expect("failed to create dirs");
+    for (path, uid) in [
+        ("ours", 0),
+        ("ours-dir/f", 0),
+        ("theirs", 1000),
+        ("ours-dir/theirs", 1000),
+    ] {
+        std::fs::write(home.join(path), "").expect("failed to write file");
+        chown(home.join(path), Some(uid), Some(1000)).expect("chown failed");
+    }
+    chown(home.join("ours-dir"), Some(0), Some(1000)).expect("chown failed");
+    chown(&home, Some(1000), Some(1000)).expect("chown failed");
+
+    let code = run_without_capabilities(&dir, &["-g", "0", "testuser"], CapabilitySet::CHOWN);
+
+    assert_eq!(code, 12);
+    assert!(read_passwd(&dir).contains("testuser:x:1000:0:"));
+    assert_eq!(owner_of(&home), (1000, 1000));
+    assert_eq!(owner_of(&home.join("theirs")), (1000, 1000));
+    assert_eq!(owner_of(&home.join("ours-dir/theirs")), (1000, 1000));
+    assert_eq!(owner_of(&home.join("ours")), (0, 0));
+    assert_eq!(owner_of(&home.join("ours-dir")), (0, 0));
+    assert_eq!(owner_of(&home.join("ours-dir/f")), (0, 0));
+}
+
+/// Running out of descriptors on a deep tree must not look like success. A
+/// parent stays open while siblings of the next level wait, so depth is what
+/// uses them up; the real binary runs under a low limit, as the limit is per
+/// process. `d` is created first and the siblings are named per level, so the
+/// order `d` is reached in differs through the tree on every filesystem.
+#[test]
+fn test_rechown_at_the_descriptor_limit_exits_12() {
+    use std::os::unix::fs::{MetadataExt, chown};
+
+    const DEPTH: usize = 200;
+
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "testuser:x:1000:\n",
+    );
+    let home = dir.path().join("home/testuser");
+    let mut level = home.clone();
+    std::fs::create_dir_all(&level).expect("failed to create home");
+    chown(&level, Some(1000), Some(1000)).expect("chown failed");
+    for i in 0..DEPTH {
+        let next = level.join("d");
+        std::fs::create_dir(&next).expect("failed to create chain");
+        chown(&next, Some(1000), Some(1000)).expect("chown failed");
+        for sibling in ["a", "b", "c"] {
+            let sibling = level.join(format!("{sibling}{i}"));
+            std::fs::create_dir(&sibling).expect("failed to create sibling");
+            chown(&sibling, Some(1000), Some(1000)).expect("chown failed");
+            std::fs::write(sibling.join("f"), "").expect("failed to write file");
+            chown(sibling.join("f"), Some(1000), Some(1000)).expect("chown failed");
+        }
+        level = next;
+    }
+    std::fs::write(level.join("bottom"), "").expect("failed to write file");
+    chown(level.join("bottom"), Some(1000), Some(1000)).expect("chown failed");
+
+    let out = crate::common::run_cmd(
+        std::process::Command::new("sh")
+            .args(["-c", "ulimit -n 20; exec \"$0\" \"$@\""])
+            .arg(env!("CARGO_BIN_EXE_shadow-rs"))
+            .args(["usermod", "-P"])
+            .arg(dir.path())
+            .args(["-u", "1500", "testuser"]),
+    );
+    out.assert_code(12)
+        .assert_stderr_contains("Failed to change ownership of the home directory");
+    assert!(read_passwd(&dir).contains("testuser:x:1500:"));
+
+    // What the limit did not stop was still done: the shallow part is all
+    // re-owned, and the deep part really was out of reach.
+    assert_eq!(owner_of(&home), (1500, 1000));
+    assert_eq!(owner_of(&home.join("a0/f")), (1500, 1000));
+    assert_eq!(owner_of(&home.join("b0/f")), (1500, 1000));
+    assert_eq!(owner_of(&home.join("c0/f")), (1500, 1000));
+    assert_eq!(
+        std::fs::symlink_metadata(level.join("bottom"))
+            .expect("stat failed")
+            .uid(),
+        1000,
+        "exit 12 with nothing left behind would be wrong"
+    );
+}
+
+/// The user may delete their own files while root walks the home. What was
+/// deleted needs no new owner, so that is not a failure.
+#[test]
+fn test_rechown_entries_deleted_mid_walk_are_not_a_failure() {
+    use std::os::unix::fs::chown;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    const DIRS: usize = 64;
+    const FILES: usize = 16;
+
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    for round in 0..20 {
+        let dir = setup_prefix(
+            "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+            "testuser:$6$hash:19500:0:99999:7:::\n",
+            "testuser:x:1000:\n",
+        );
+        let home = dir.path().join("home/testuser");
+        std::fs::create_dir_all(&home).expect("failed to create home");
+        chown(&home, Some(1000), Some(1000)).expect("chown failed");
+        for d in 0..DIRS {
+            let sub = home.join(format!("d{d}"));
+            std::fs::create_dir(&sub).expect("failed to create dir");
+            chown(&sub, Some(1000), Some(1000)).expect("chown failed");
+            for f in 0..FILES {
+                let file = sub.join(format!("f{f}"));
+                std::fs::write(&file, "").expect("failed to write file");
+                chown(&file, Some(1000), Some(1000)).expect("chown failed");
+            }
+        }
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let deleter = {
+            let stop = Arc::clone(&stop);
+            let home = home.clone();
+            std::thread::spawn(move || {
+                let mut d = 0;
+                while !stop.load(Ordering::Relaxed) && d < DIRS {
+                    let _ = std::fs::remove_dir_all(home.join(format!("d{d}")));
+                    d += 1;
+                }
+            })
+        };
+        let code = run_with_prefix(&dir, &["-u", "1500", "testuser"]);
+        stop.store(true, Ordering::Relaxed);
+        deleter.join().expect("deleter thread panicked");
+
+        assert_eq!(code, 0, "round {round}");
+        assert_eq!(owner_of(&home), (1500, 1000), "round {round}");
+    }
 }

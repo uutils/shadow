@@ -546,104 +546,183 @@ fn rechown_home(home: &Path, owner: (u32, u32), group: (u32, u32)) -> Result<(),
         return Ok(());
     }
     let Ok(top) = DirFd::open(&home, SymlinkBehavior::NoFollow) else {
-        return Err(UsermodError::CantChownHome(
-            "Failed to change ownership of the home directory".into(),
-        ));
+        return Err(cant_chown_home());
     };
     let Ok(top_stat) = rustix::fs::fstat(&top) else {
-        return Err(UsermodError::CantChownHome(
-            "Failed to change ownership of the home directory".into(),
-        ));
+        return Err(cant_chown_home());
     };
     // Swapped for something else since the check: not the user's any more.
     if top_stat.st_uid != owner.0 {
         return Ok(());
     }
-    chown_matching(&top, &top_stat, owner, group);
+
+    let mut walk = HomeWalk {
+        owner,
+        group,
+        complete: true,
+    };
+    walk.chown_matching(&top, &top_stat);
 
     // Directories still to read, by name under a parent held open. A parent
     // stays open only while children of it wait, so the descriptors held
     // follow the depth of the tree, not its width, and nothing recurses.
     let mut pending: Vec<(Rc<DirFd>, std::ffi::OsString)> = Vec::new();
-    queue_entries(&Rc::new(top), &mut pending, owner, group);
+    walk.queue_entries(&Rc::new(top), &mut pending);
     while let Some((parent, name)) = pending.pop() {
-        let Ok(dir) = parent.open_subdir(&name, SymlinkBehavior::NoFollow) else {
-            continue;
+        let dir = match parent.open_subdir(&name, SymlinkBehavior::NoFollow) {
+            Ok(dir) => dir,
+            Err(e) => {
+                use rustix::io::Errno;
+                match Errno::from_io_error(&e) {
+                    // Deleted since it was listed: the user may do that.
+                    Some(Errno::NOENT) => {}
+                    // Replaced by something that is not a directory, again the
+                    // user's own doing. What is there now is re-owned and not
+                    // followed; there is nothing to walk.
+                    Some(Errno::NOTDIR | Errno::LOOP) => {
+                        walk.reown_entry(&parent, &name);
+                    }
+                    _ => walk.complete = false,
+                }
+                continue;
+            }
         };
         drop(parent);
         // Already re-owned when it was found, unless the name now holds a
         // directory that was swapped in since.
         let Ok(st) = rustix::fs::fstat(&dir) else {
+            walk.complete = false;
             continue;
         };
-        chown_matching(&dir, &st, owner, group);
-        queue_entries(&Rc::new(dir), &mut pending, owner, group);
+        walk.chown_matching(&dir, &st);
+        walk.queue_entries(&Rc::new(dir), &mut pending);
     }
-    Ok(())
+
+    if walk.complete {
+        Ok(())
+    } else {
+        Err(cant_chown_home())
+    }
 }
 
-/// Re-own every entry of `dir`, and queue the directories to be walked.
-fn queue_entries(
-    dir: &std::rc::Rc<uucore::safe_traversal::DirFd>,
-    pending: &mut Vec<(
-        std::rc::Rc<uucore::safe_traversal::DirFd>,
-        std::ffi::OsString,
-    )>,
+/// The same message for every way of leaving the home behind, as the only
+/// thing the caller can do about it is look at the home.
+fn cant_chown_home() -> UsermodError {
+    UsermodError::CantChownHome("Failed to change ownership of the home directory".into())
+}
+
+/// One run over a home. A failure does not stop it, the rest of the tree is
+/// still the user's; it is remembered in `complete` and reported at the end.
+struct HomeWalk {
     owner: (u32, u32),
     group: (u32, u32),
-) {
-    use rustix::fs::{FileType, Mode, OFlags};
+    complete: bool,
+}
 
-    let Ok(names) = dir.read_dir() else {
-        return;
-    };
-    for name in names {
-        let Ok(entry) = rustix::fs::openat(
-            &**dir,
-            name.as_os_str(),
-            OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-        ) else {
-            continue;
-        };
-        let Ok(st) = rustix::fs::fstat(&entry) else {
-            continue;
-        };
-        // A directory is re-owned now, before it is opened: one that cannot be
-        // opened then still changes hands, and this descriptor never followed
-        // anything to get here.
-        chown_matching(&entry, &st, owner, group);
-        if FileType::from_raw_mode(st.st_mode) == FileType::Directory {
-            pending.push((std::rc::Rc::clone(dir), name));
+impl HomeWalk {
+    /// Re-own every entry of `dir`, and queue the directories to be walked.
+    fn queue_entries(
+        &mut self,
+        dir: &std::rc::Rc<uucore::safe_traversal::DirFd>,
+        pending: &mut Vec<(
+            std::rc::Rc<uucore::safe_traversal::DirFd>,
+            std::ffi::OsString,
+        )>,
+    ) {
+        for name in self.read_names(dir) {
+            if self.reown_entry(dir, &name) {
+                pending.push((std::rc::Rc::clone(dir), name));
+            }
         }
     }
-}
 
-/// Give the file behind `fd` the new UID if it has the old one, and the new
-/// GID if it has the old one. `st` is the `fstat` of this same descriptor, so
-/// the inode checked is the inode changed. `fd` may be an `O_PATH` descriptor,
-/// so the change goes through `fchownat` with `AT_EMPTY_PATH`, which works on
-/// one and, for a symlink, changes the link itself.
-fn chown_matching(
-    fd: impl rustix::fd::AsFd,
-    st: &rustix::fs::Stat,
-    owner: (u32, u32),
-    group: (u32, u32),
-) {
-    let (old_owner, new_owner) = owner;
-    let (old_group, new_group) = group;
-    let set_owner = (old_owner != new_owner && st.st_uid == old_owner)
-        .then(|| rustix::process::Uid::from_raw(new_owner));
-    let set_group = (old_group != new_group && st.st_gid == old_group)
-        .then(|| rustix::process::Gid::from_raw(new_group));
-    if set_owner.is_some() || set_group.is_some() {
-        let _ = rustix::fs::chownat(
+    /// The names in `dir`, as many as could be read.
+    ///
+    /// `DirFd::read_dir` needs a second descriptor, so it fails outright at the
+    /// descriptor limit, and it drops what it read if a later read fails. This
+    /// needs none, and whatever came back is still re-owned.
+    fn read_names(&mut self, dir: &uucore::safe_traversal::DirFd) -> Vec<std::ffi::OsString> {
+        use rustix::io::Errno;
+        use std::os::unix::ffi::OsStrExt;
+
+        let mut buf = [std::mem::MaybeUninit::uninit(); 8192];
+        let mut entries = rustix::fs::RawDir::new(dir, &mut buf);
+        let mut names = Vec::new();
+        while let Some(entry) = entries.next() {
+            match entry {
+                Ok(entry) => {
+                    let name = entry.file_name();
+                    if name != c"." && name != c".." {
+                        names.push(std::ffi::OsStr::from_bytes(name.to_bytes()).to_owned());
+                    }
+                }
+                // The directory was deleted while it was being read.
+                Err(Errno::NOENT) => break,
+                Err(_) => {
+                    self.complete = false;
+                    break;
+                }
+            }
+        }
+        names
+    }
+
+    /// Re-own the entry `name` of `dir` through a descriptor of its own, and
+    /// say whether it is a directory. A directory is re-owned here too, before
+    /// it is opened: one that cannot be opened then still changes hands, and
+    /// this descriptor never followed anything to get to it.
+    fn reown_entry(&mut self, dir: &uucore::safe_traversal::DirFd, name: &std::ffi::OsStr) -> bool {
+        use rustix::fs::{FileType, Mode, OFlags};
+        use rustix::io::Errno;
+
+        let entry = match rustix::fs::openat(
+            dir,
+            name,
+            OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(entry) => entry,
+            // Deleted since it was listed: the user may do that.
+            Err(Errno::NOENT) => return false,
+            Err(_) => {
+                self.complete = false;
+                return false;
+            }
+        };
+        let Ok(st) = rustix::fs::fstat(&entry) else {
+            self.complete = false;
+            return false;
+        };
+        self.chown_matching(&entry, &st);
+        FileType::from_raw_mode(st.st_mode) == FileType::Directory
+    }
+
+    /// Give the file behind `fd` the new UID if it has the old one, and the new
+    /// GID if it has the old one. `st` is the `fstat` of this same descriptor,
+    /// so the inode checked is the inode changed. `fd` may be an `O_PATH`
+    /// descriptor, so the change goes through `fchownat` with `AT_EMPTY_PATH`,
+    /// which works on one and, for a symlink, changes the link itself.
+    fn chown_matching(&mut self, fd: impl rustix::fd::AsFd, st: &rustix::fs::Stat) {
+        let (old_owner, new_owner) = self.owner;
+        let (old_group, new_group) = self.group;
+        let set_owner = (old_owner != new_owner && st.st_uid == old_owner)
+            .then(|| rustix::process::Uid::from_raw(new_owner));
+        let set_group = (old_group != new_group && st.st_gid == old_group)
+            .then(|| rustix::process::Gid::from_raw(new_group));
+        if set_owner.is_none() && set_group.is_none() {
+            return;
+        }
+        match rustix::fs::chownat(
             &fd,
             c"",
             set_owner,
             set_group,
             rustix::fs::AtFlags::EMPTY_PATH,
-        );
+        ) {
+            // ENOENT: deleted after it was opened, the user may do that.
+            Ok(()) | Err(rustix::io::Errno::NOENT) => {}
+            Err(_) => self.complete = false,
+        }
     }
 }
 
