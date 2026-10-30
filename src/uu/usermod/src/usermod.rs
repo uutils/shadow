@@ -243,8 +243,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // explicitly moved, recursively chown the existing home directory.
     // usermod(8): only files owned by the old UID get the new UID, and only
     // files in the old primary group get the new group.
-    // A home that cannot be walked is reported at the end, like GNU: the
-    // account files are written regardless.
+    // A home that cannot be re-owned is reported at the end, like upstream:
+    // the account files are written regardless.
     let home_chown = if (new_uid != old_uid || new_primary_gid != old_primary_gid)
         && !home_is_changing
         && !home_for_chown.is_empty()
@@ -522,17 +522,32 @@ fn apply_subid_changes(
 /// owned by the old UID get the new one, entries in the old group get the
 /// new group, anything else is left alone.
 ///
-/// Like GNU, whether the home is the user's is decided through a symlink,
-/// and a home that is the user's but is a symlink or not a directory is not
-/// walked: that is an error, exit 12, raised after the account files are
-/// written. A home that is missing or not the user's is left alone. The user
-/// owns the tree and can rename, replace or re-link
-/// entries in it while this runs as root, so the walk never resolves a path
-/// below `home`: each directory is opened relative to its parent's descriptor
-/// with `O_NOFOLLOW`, each other entry with `O_PATH | O_NOFOLLOW`, and the
-/// ownership test and the change both go through that one descriptor. A
-/// symlink swapped in mid-walk is re-owned itself and never followed, and the
-/// inode that was checked is the inode that changes.
+/// Whether the home is the user's is decided through a symlink, like upstream.
+/// A home that is missing, a dangling link, or not the user's is left alone.
+/// One that is the user's is opened without following a link, however its path
+/// is spelled, and if that fails it is not walked: it is a symlink, or not a
+/// directory, or it vanished between the two calls, and upstream exits 12 in
+/// all three as well. If it was swapped between them for a directory that is
+/// not the user's, it is left alone.
+///
+/// The user owns the tree and can rename, replace or re-link entries in it
+/// while this runs as root, so the walk never resolves a path below `home`:
+/// each directory is opened relative to its parent's descriptor with
+/// `O_NOFOLLOW`, each other entry with `O_PATH | O_NOFOLLOW`, and the ownership
+/// test and the change both go through that one descriptor. A symlink swapped
+/// in mid-walk is re-owned itself and never followed, and the inode that was
+/// checked is the inode that changes. See [`HomeWalk::chown_matching`] for the
+/// one thing in the old group that keeps it.
+///
+/// Every entry is re-owned through the descriptor that found it, directories
+/// included, so a directory that cannot be opened still changes hands. Any
+/// failure to re-own, open or read does not stop the walk, unlike upstream; it
+/// becomes `CantChownHome`, exit 12, once the rest of the tree is done, and
+/// the caller raises that after the account files are written. This includes
+/// running out of descriptors on a tree deeper than the limit, where the part
+/// out of reach stays as it was. An entry deleted or replaced by the user
+/// mid-walk is not a failure: nothing can make a walk complete against someone
+/// changing the tree under it, and it has nothing left to re-own.
 fn rechown_home(home: &Path, owner: (u32, u32), group: (u32, u32)) -> Result<(), UsermodError> {
     use std::rc::Rc;
     use uucore::safe_traversal::{DirFd, SymlinkBehavior};
