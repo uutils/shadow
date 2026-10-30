@@ -194,6 +194,27 @@ compare_exit "chpasswd -s without -c" \
 compare_exit "chpasswd -e with -c" \
     "echo x:y | $RS/chpasswd -e -c SHA512" "echo x:y | /usr/sbin/chpasswd -e -c SHA512"
 
+# Member lists: both tools refuse a name that is not a user, and nothing is left
+# behind, so the two runs start from the same files.
+compare_exit "groupmod -U with a user that does not exist" \
+    "$RS/groupmod -U no_such_user_9f3a $PROBE_GRP" "/usr/sbin/groupmod -U no_such_user_9f3a $PROBE_GRP"
+compare_exit "groupmod -U with an empty list" \
+    "$RS/groupmod -U '' $PROBE_GRP" "/usr/sbin/groupmod -U '' $PROBE_GRP"
+compare_exit "groupmod -U with a stray comma" \
+    "$RS/groupmod -U $PROBE, $PROBE_GRP" "/usr/sbin/groupmod -U $PROBE, $PROBE_GRP"
+compare_exit "groupmod -a on its own" \
+    "$RS/groupmod -a $PROBE_GRP" "/usr/sbin/groupmod -a $PROBE_GRP"
+compare_exit "groupmod -U on a group that does not exist" \
+    "$RS/groupmod -U no_such_user_9f3a no_such_group_9f3a" "/usr/sbin/groupmod -U no_such_user_9f3a no_such_group_9f3a"
+compare_exit "groupmod -p with a colon" \
+    "$RS/groupmod -p a:b $PROBE_GRP" "/usr/sbin/groupmod -p a:b $PROBE_GRP"
+compare_exit "groupadd -U with a user that does not exist" \
+    "$RS/groupadd -U no_such_user_9f3a no_such_group_9f3a" "/usr/sbin/groupadd -U no_such_user_9f3a no_such_group_9f3a"
+compare_exit "groupadd -U with an empty list" \
+    "$RS/groupadd -U '' no_such_group_9f3a" "/usr/sbin/groupadd -U '' no_such_group_9f3a"
+compare_exit "groupadd -f -U on a group that exists" \
+    "$RS/groupadd -f -U no_such_user_9f3a $PROBE_GRP" "/usr/sbin/groupadd -f -U no_such_user_9f3a $PROBE_GRP"
+
 # ── Deliberate differences ──────────────────────────────────────────
 
 echo "=== deliberate differences ==="

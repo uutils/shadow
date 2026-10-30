@@ -31,6 +31,15 @@ fn setup_prefix(group_content: &str, login_defs_content: &str) -> tempfile::Temp
     dir
 }
 
+/// Give a prefix dir the two users the `-U` tests name.
+fn write_passwd(dir: &tempfile::TempDir) {
+    std::fs::write(
+        dir.path().join("etc/passwd"),
+        "alice:x:1000:1000::/h:/bin/sh\nbob:x:1001:1001::/h:/bin/sh\n",
+    )
+    .expect("failed to write passwd file");
+}
+
 /// Read the group file content back from a prefix dir.
 fn read_group(dir: &tempfile::TempDir) -> String {
     std::fs::read_to_string(dir.path().join("etc/group")).expect("failed to read group file")
@@ -327,6 +336,7 @@ fn test_users_flag_sets_members() {
 
     // groupadd(8) -U: the new group starts with these members.
     let dir = setup_prefix("root:x:0:\n", "GID_MIN 1000\nGID_MAX 60000\n");
+    write_passwd(&dir);
     let prefix = dir.path().to_str().unwrap();
     assert_eq!(
         run(&["groupadd", "-P", prefix, "-U", "alice,bob", "devs"]),
@@ -337,4 +347,99 @@ fn test_users_flag_sets_members() {
         group.contains("devs:x:") && group.contains(":alice,bob"),
         "members should be set, got: {group}"
     );
+}
+
+// Probed on Ubuntu 26.04's groupadd: every name in -U has to be a user, and an
+// empty name is not one. The group is not created.
+#[test]
+fn test_users_refuses_a_bad_name_and_creates_nothing() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    for bad in [
+        "ghost",
+        "alice,ghost",
+        "",
+        ",",
+        "alice,",
+        ",alice",
+        "alice,,bob",
+        " alice",
+    ] {
+        let dir = setup_prefix("root:x:0:\n", "GID_MIN 1000\nGID_MAX 60000\n");
+        write_passwd(&dir);
+        assert_eq!(
+            run_with_prefix(&dir, &["-U", bad, "devs"]),
+            10,
+            "-U {bad:?} should exit 10"
+        );
+        assert_eq!(read_group(&dir), "root:x:0:\n", "-U {bad:?}");
+    }
+}
+
+// A prefixed run looks at the users under the prefix, not at this system's.
+#[test]
+fn test_users_under_a_prefix_looks_only_at_the_prefix() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix("root:x:0:\n", "GID_MIN 1000\nGID_MAX 60000\n");
+    write_passwd(&dir);
+    assert_eq!(run_with_prefix(&dir, &["-U", "root", "devs"]), 10);
+    assert_eq!(read_group(&dir), "root:x:0:\n");
+}
+
+// An existing group wins: with -f it is success and the names do not matter,
+// without it the name is taken. A taken GID is reported before the names.
+#[test]
+fn test_users_is_checked_after_the_name_and_the_gid() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix("root:x:0:\n", "GID_MIN 1000\nGID_MAX 60000\n");
+    write_passwd(&dir);
+    assert_eq!(run_with_prefix(&dir, &["-f", "-U", "ghost", "root"]), 0);
+    assert_eq!(run_with_prefix(&dir, &["-U", "ghost", "root"]), 9);
+    assert_eq!(
+        run_with_prefix(&dir, &["-g", "0", "-U", "ghost", "devs"]),
+        4
+    );
+    assert_eq!(
+        run_with_prefix(&dir, &["-f", "-g", "0", "-U", "ghost", "devs"]),
+        10
+    );
+    assert_eq!(read_group(&dir), "root:x:0:\n");
+}
+
+#[test]
+fn test_users_listed_twice_is_written_once() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix("root:x:0:\n", "GID_MIN 1000\nGID_MAX 60000\n");
+    write_passwd(&dir);
+    assert_eq!(run_with_prefix(&dir, &["-U", "alice,alice", "devs"]), 0);
+    assert!(
+        read_group(&dir).contains(":alice\n"),
+        "got: {}",
+        read_group(&dir)
+    );
+}
+
+// A password that would break the file format is refused with the code of a
+// failed write, 10, as Ubuntu 26.04's groupadd does. It leaves the group behind
+// in /etc/group when that happens; here nothing is written.
+#[test]
+fn test_password_with_a_colon_exits_10_and_creates_nothing() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix("root:x:0:\n", "GID_MIN 1000\nGID_MAX 60000\n");
+    assert_eq!(run_with_prefix(&dir, &["-p", "a:b", "devs"]), 10);
+    assert_eq!(read_group(&dir), "root:x:0:\n");
 }

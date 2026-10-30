@@ -17,8 +17,8 @@ databases.
 ## OPTIONS
 
 **-a**, **--append**
-:   With **-U**, add the users to the member list instead of replacing it. Use
-    only with **-U**; without it the exit status is 2.
+:   With **-U**, add the users to the member list instead of replacing it.
+    Without **-U** it does nothing.
 
 **-g**, **--gid** *GID*
 :   Change the group ID to *GID*. **4294967295** is refused with exit status 3:
@@ -41,7 +41,10 @@ databases.
 
 **-U**, **--users** *USERS*
 :   Set the group's member list (comma-separated), in /etc/group and in
-    /etc/gshadow when that file exists.
+    /etc/gshadow when that file exists. Every name has to be an existing user,
+    from /etc/passwd or the name service, or under *PREFIX_DIR* with **-P**.
+    Otherwise the exit status is 10 and nothing changes. An empty name is not a
+    user: an empty list and a stray comma are refused too.
 
 ## EXIT STATUS
 
@@ -64,14 +67,7 @@ databases.
 :   Group name already in use.
 
 **10**
-:   Cannot update group file.
-
-## DIFFERENCES FROM UPSTREAM SHADOW
-
-**-U** does not check its names: a user that does not exist is written to the
-member list, where upstream exits 10 and changes nothing. An empty list clears
-the members, where upstream exits 10. **-a** without **-U** is exit 2, where
-upstream exits 0.
+:   Cannot update group file, or a name given to **-U** is not a user.
 
 ## FILES
 

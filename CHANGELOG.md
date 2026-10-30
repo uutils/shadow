@@ -54,6 +54,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `groupmod -U` and `groupadd -U` check their names, as upstream does: a name
+  that is not a user is exit 10 and changes nothing, where it was written to the
+  member list. Users from the name service count, and with `-P` the ones under
+  the prefix. An empty name is not a user, so `-U ''` no longer clears the list
+  and a stray comma is refused; a name listed twice is kept once. The checks come
+  after the group, the name and the GID, in upstream's order
+
+- `groupmod -a` without `-U` is accepted and does nothing, as upstream does. It
+  was exit 2
+
+- `groupmod -p` and `groupadd -p` with a colon or a newline in the password exit
+  10, as upstream does, and write nothing. They exited 3
+
 - The pinned Rust toolchains now apply. A `rust-toolchain.toml` asking for
   the `stable` channel overrode them: every run in the Debian and Alpine
   images downloaded the latest stable over the image's own toolchain, and

@@ -49,7 +49,10 @@ The new group will be entered into the system files (/etc/group and
 
 **-U**, **--users** *USERS*
 :   Make the listed users (comma-separated) members of the new group, in
-    /etc/group and /etc/gshadow.
+    /etc/group and /etc/gshadow. Every name has to be an existing user, from
+    /etc/passwd or the name service, or under *PREFIX_DIR* with **-P**. Otherwise
+    the exit status is 10 and no group is created. An empty name is not a user:
+    an empty list and a stray comma are refused too.
 
 ## EXIT STATUS
 
@@ -69,12 +72,13 @@ The new group will be entered into the system files (/etc/group and
 :   Group name already in use.
 
 **10**
-:   Cannot update group file.
+:   Cannot update group file, or a name given to **-U** is not a user.
 
 ## DIFFERENCES FROM UPSTREAM SHADOW
 
-**-U** does not check its names: a user that does not exist is written to the
-member list, where upstream exits 10.
+**-p** with a password that would break the file, one with a colon or a newline,
+exits 10 like upstream and writes nothing. Upstream leaves the new group in
+/etc/group with no entry in /etc/gshadow.
 
 ## FILES
 
