@@ -491,3 +491,17 @@ fn test_remove_home_refuses_shared_home_without_force() {
     );
     assert!(home.exists(), "shared home must survive");
 }
+
+#[test]
+fn test_selinux_user_needs_a_selinux_kernel() {
+    if crate::common::skip_unless_root() || shadow_core::selinux::kernel_enabled() {
+        return;
+    }
+    let dir = setup_private_group_dir();
+    assert_eq!(run_with_root(&dir, &["-Z", "priv"]), 3);
+    assert!(
+        std::fs::read_to_string(dir.path().join("etc/passwd"))
+            .unwrap()
+            .contains("priv:")
+    );
+}

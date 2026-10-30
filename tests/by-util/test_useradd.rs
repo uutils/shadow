@@ -878,3 +878,101 @@ fn test_invalid_name_exits_19() {
     let passwd = std::fs::read_to_string(dir.path().join("etc/passwd")).unwrap();
     assert_eq!(passwd, "root:x:0:0:root:/root:/bin/bash\n");
 }
+
+/// A tree to add accounts to, with empty subordinate ID files.
+fn setup_new_options() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let etc = dir.path().join("etc");
+    std::fs::create_dir_all(&etc).expect("failed to create etc dir");
+    for file in ["passwd", "shadow", "group", "gshadow", "login.defs"] {
+        std::fs::write(etc.join(file), "").expect("failed to write file");
+    }
+    std::fs::write(etc.join("passwd"), "root:x:0:0::/root:/bin/sh\n").expect("write passwd");
+    std::fs::write(etc.join("group"), "root:x:0:\n").expect("write group");
+    std::fs::write(etc.join("subuid"), "root:100000:65536\n").expect("write subuid");
+    std::fs::write(etc.join("subgid"), "root:100000:65536\n").expect("write subgid");
+    dir
+}
+
+fn add(dir: &tempfile::TempDir, extra: &[&str]) -> i32 {
+    let prefix = dir.path().to_str().expect("non-UTF-8 temp path");
+    let mut args = vec!["useradd", "-P", prefix];
+    args.extend_from_slice(extra);
+    run(&args)
+}
+
+fn etc_file(dir: &tempfile::TempDir, name: &str) -> String {
+    std::fs::read_to_string(dir.path().join("etc").join(name)).expect("read etc file")
+}
+
+#[test]
+fn test_badname_allows_a_bad_name_only_with_it() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_new_options();
+    assert_eq!(add(&dir, &["-M", "b@d"]), 19);
+    assert_eq!(add(&dir, &["-M", "--badname", "a:b"]), 1);
+    assert_eq!(add(&dir, &["-M", "--badname", ""]), 1);
+    assert_eq!(add(&dir, &["-M", "--badname", "b@d"]), 0);
+    assert!(etc_file(&dir, "passwd").contains("\nb@d:x:"));
+}
+
+#[test]
+fn test_add_subids_for_system_only_with_the_flag() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_new_options();
+    assert_eq!(add(&dir, &["-M", "-r", "sys1"]), 0);
+    assert!(!etc_file(&dir, "subuid").contains("sys1:"));
+    assert_eq!(add(&dir, &["-M", "-r", "-F", "sys2"]), 0);
+    assert!(etc_file(&dir, "subuid").contains("sys2:"));
+    assert!(etc_file(&dir, "subgid").contains("sys2:"));
+}
+
+#[test]
+fn test_btrfs_home_off_btrfs_exits_12_with_the_account_written() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_new_options();
+    if shadow_core::home::is_on_btrfs(dir.path()) {
+        return;
+    }
+    assert_eq!(
+        add(
+            &dir,
+            &["-m", "--btrfs-subvolume-home", "-d", "/home/u1", "u1"]
+        ),
+        12
+    );
+    assert!(etc_file(&dir, "passwd").contains("u1:x:"));
+    assert!(!dir.path().join("home/u1").exists());
+}
+
+#[test]
+fn test_btrfs_home_does_nothing_without_create_home() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_new_options();
+    assert_eq!(add(&dir, &["-M", "--btrfs-subvolume-home", "u2"]), 0);
+    assert!(!dir.path().join("home/u2").exists());
+}
+
+#[test]
+fn test_selinux_user_needs_a_selinux_kernel() {
+    if crate::common::skip_unless_root() || shadow_core::selinux::kernel_enabled() {
+        return;
+    }
+    let dir = setup_new_options();
+    assert_eq!(add(&dir, &["-M", "-Z", "user_u", "u3"]), 3);
+    assert!(!etc_file(&dir, "passwd").contains("u3:"));
+}
+
+#[test]
+fn test_selinux_range_needs_selinux_user() {
+    let dir = setup_new_options();
+    assert_eq!(add(&dir, &["-M", "--selinux-range", "s0", "u4"]), 2);
+}

@@ -25,6 +25,7 @@ use shadow_core::transaction::{self, Commit, LockedFile, Record};
 
 mod options {
     pub const FORCE: &str = "force";
+    pub const SELINUX_USER: &str = "selinux-user";
     pub const REMOVE: &str = "remove";
     pub const ROOT: &str = "root";
     pub const PREFIX: &str = "prefix";
@@ -48,6 +49,7 @@ enum UserdelError {
     CantUpdateGroup(String),
     CantRemoveHome(String),
     UserNotFound(String),
+    BadArgument(String),
 }
 
 impl fmt::Display for UserdelError {
@@ -56,7 +58,8 @@ impl fmt::Display for UserdelError {
             Self::CantUpdatePasswd(msg)
             | Self::CantUpdateGroup(msg)
             | Self::CantRemoveHome(msg)
-            | Self::UserNotFound(msg) => f.write_str(msg),
+            | Self::UserNotFound(msg)
+            | Self::BadArgument(msg) => f.write_str(msg),
         }
     }
 }
@@ -70,6 +73,7 @@ impl UError for UserdelError {
             Self::CantUpdateGroup(_) => exit_codes::CANT_UPDATE_GROUP,
             Self::CantRemoveHome(_) => exit_codes::CANT_REMOVE_HOME,
             Self::UserNotFound(_) => extra_exit_codes::USER_NOT_FOUND,
+            Self::BadArgument(_) => 3,
         }
     }
 }
@@ -87,6 +91,13 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let Some(login) = matches.get_one::<String>(options::LOGIN) else {
         return Err(shadow_core::cli::AlreadyPrinted(exit_codes::INVALID_SYNTAX).into());
     };
+    let selinux_user = matches.get_flag(options::SELINUX_USER);
+    if selinux_user && !shadow_core::selinux::kernel_enabled() {
+        return Err(UserdelError::BadArgument("-Z requires SELinux enabled kernel".into()).into());
+    }
+    if selinux_user && matches.contains_id(options::PREFIX) {
+        return Err(shadow_core::cli::AlreadyPrinted(exit_codes::INVALID_SYNTAX).into());
+    }
     let remove_home = matches.get_flag(options::REMOVE);
     let force = matches.get_flag(options::FORCE);
     // --root DIR is a real chroot: the account files come from the new root,
@@ -190,6 +201,11 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         }
     }
 
+    if selinux_user {
+        shadow_core::selinux::remove_login(login)
+            .map_err(|e| UserdelError::CantUpdatePasswd(e.to_string()))?;
+    }
+
     nscd::invalidate_cache("passwd");
     nscd::invalidate_cache("group");
 
@@ -213,6 +229,13 @@ pub fn uu_app() -> Command {
                     "With -r, remove the home directory even if it is not owned by the user \
                      or is shared",
                 )
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new(options::SELINUX_USER)
+                .short('Z')
+                .long("selinux-user")
+                .help("Remove the SELinux user mapping of the account")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -315,7 +338,9 @@ fn safe_remove_home(
         }
     }
 
-    // Refuse to remove a mount point (device ID differs from parent).
+    // Refuse to remove a mount point (device ID differs from parent). A btrfs
+    // subvolume made with useradd --btrfs-subvolume-home looks the same from here
+    // and is not one; root can remove it like a directory.
     if let Some(parent) = home.parent()
         && parent.exists()
     {
@@ -323,7 +348,7 @@ fn safe_remove_home(
         let parent_meta = std::fs::metadata(parent).map_err(|e| {
             UserdelError::CantRemoveHome(format!("cannot stat parent of '{}': {e}", home.display()))
         })?;
-        if meta.dev() != parent_meta.dev() {
+        if meta.dev() != parent_meta.dev() && !shadow_core::home::is_btrfs_subvolume(&canonical) {
             return Err(UserdelError::CantRemoveHome(format!(
                 "refusing to remove mount point at '{}'",
                 home.display()
