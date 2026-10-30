@@ -193,7 +193,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         entries[idx].gecos.clone_from(c);
     }
     if let Some(h) = matches.get_one::<String>(options::HOME) {
-        entries[idx].home.clone_from(h);
+        // One trailing slash goes, as with upstream: a home that scripts compare
+        // should not depend on how the command line happened to spell it.
+        let h = h.strip_suffix('/').filter(|s| !s.is_empty()).unwrap_or(h);
+        h.clone_into(&mut entries[idx].home);
     }
     if let Some(s) = matches.get_one::<String>(options::SHELL) {
         entries[idx].shell.clone_from(s);

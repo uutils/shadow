@@ -1588,3 +1588,32 @@ fn test_relative_home_is_refused() {
     assert_eq!(code, 3);
     assert_eq!(read_passwd(&dir), before, "nothing should be written");
 }
+
+/// One trailing slash is dropped from the value `-d` gives, and only one, as
+/// the packaged usermod does. The root directory stays.
+#[test]
+fn test_home_given_with_a_trailing_slash_is_stored_without() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    for (given, stored) in [
+        ("/new/home/", "/new/home"),
+        ("/new/home//", "/new/home/"),
+        ("/new/home", "/new/home"),
+        ("/", "/"),
+        ("//", "/"),
+    ] {
+        let dir = setup_prefix(
+            "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+            "testuser:$6$hash:19500:0:99999:7:::\n",
+            "testuser:x:1000:\n",
+        );
+        assert_eq!(run_with_prefix(&dir, &["-d", given, "testuser"]), 0);
+        let passwd = read_passwd(&dir);
+        assert!(
+            passwd.contains(&format!(":{stored}:/bin/bash")),
+            "-d {given}: {passwd}"
+        );
+    }
+}
