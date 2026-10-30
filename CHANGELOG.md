@@ -23,7 +23,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is re-owned. The user controls the tree being copied, so every entry on both
   sides is reached from its parent's descriptor, and no path below either home
   is resolved. Exit 12 if the move cannot be completed, with the account files
-  written, as upstream does (#348)
+  written, as upstream does. Two deliberate differences, in `usermod(8)`: a
+  cross-filesystem move with `-u` or `-g` clears the set-user-ID and set-group-ID
+  bits of what changes hands, and a home the user does not own is moved but not
+  walked (#350, fixes #348)
+
+- `usermod -r`/`--remove` takes the user out of the groups listed with `-G` and
+  leaves the others, in `/etc/group` and `/etc/gshadow`. It needs `-G` and cannot
+  be used with `-a` (#370)
+
+- `chage -i`/`--iso8601` prints the dates of `chage -l` as `YYYY-MM-DD` (#355)
+
+### Changed
+
+- `pwck` prints nothing when the files are clean, and `pwck: no changes` on
+  standard output after an error, with `-q` as well. It no longer warns about a
+  UID or GID above 60000, which flagged `nobody` (65534) on every Debian and
+  Ubuntu system (#366)
+
+- `passwd -l`, `-u`, `-d`, `-e` and the aging options print
+  `passwd: password changed.` on standard output, like upstream. They printed a
+  line of their own on standard error. `-q` still prints nothing (#356)
+
+- `chfn` and `chsh` print nothing after a successful change, like upstream (#357)
+
+- `useradd -r`, `groupadd -r` and `newusers -r` hand out system IDs from the top
+  of the range down, like upstream: one below the lowest system ID in use,
+  starting at `SYS_UID_MAX` or `SYS_GID_MAX`, and the highest free one when that
+  reaches the bottom. They counted up from the bottom of the range (#344)
 
 ### Fixed
 
@@ -40,6 +67,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of them, `--help` included. Such an entry is now dropped; with `login -p`
   it is not carried into the session (#346)
 
+- `useradd` and `usermod` accept `-1` for `-f` and `-e`, which blanks the field.
+  It was refused as an unknown argument (#339)
+
+- `useradd` exits 19 on an invalid user name, as upstream does. It exited 3 (#341)
+
+- `useradd -U` creates the user group even with `USERGROUPS_ENAB no`, and `-U`
+  with `-g` is refused with exit 2, both as upstream does (#345)
+
+- `usermod -g` moves the files in the home from the old primary group to the new
+  one, as `-u` already did for the owner. Like upstream, `-u` and `-g` now walk
+  the home only when it is a real directory owned by the user; `-u` used to
+  re-own files under a root-owned or symlinked home (#349)
+
+- `groupmod -U`, with or without `-a`, sets the members in `/etc/gshadow` as well
+  as `/etc/group`. It left `/etc/gshadow` as it was (#369)
+
+- `groupadd -g 4294967295` and `usermod -u 4294967295` are refused with exit 3, as
+  upstream does. That value is `(gid_t)-1` and `(uid_t)-1`, which `chown` and
+  `setresuid` take as "no change", and it was written to the account files (#372)
+
 - `usermod -u` and `-g` exit 12 with "Failed to change ownership of the home
   directory" when the home is the user's but is a symlink or not a
   directory, as upstream does, after writing the account files. They exited
@@ -48,21 +95,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or read, running out of descriptors on a very deep tree. The walk carries on
   and re-owns the rest first, where upstream stops at the first failure. An
   entry the user deletes during the walk is not a failure, where upstream
-  exits 12
+  exits 12 (#359)
 
 - `usermod` records `res=failed` in the audit log and syslog when it exits 12
-  over the home, rather than logging success and then failing
+  over the home, rather than logging success and then failing (#359)
 
 - `usermod -d` with `-u` or `-g` re-owns the home it gives, as upstream does,
   where it used to skip the re-own whenever `-d` was there, even with the same
   value as the current home. The previous home is left as it is. A relative
   path for `-d` is refused with exit 3, as upstream does; it was written to
-  `/etc/passwd`
+  `/etc/passwd`. One trailing slash on `-d` is dropped, as upstream does: `/x/`
+  is stored as `/x` (#373)
 
 - A home written with a trailing slash in `/etc/passwd` is treated like the
   same home without one: a symlinked `/home/bob/` is now exit 12 with nothing
   walked, as `/home/bob` already was. upstream exits 0 and re-owns the target
-  of the link
+  of the link (#359)
 
 ### Security
 
@@ -74,13 +122,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parent's descriptor with `O_NOFOLLOW`, and each entry is checked and
   re-owned through one descriptor. A test swaps directories and symlinks
   for the whole run; the old walk re-owned a file outside the home within
-  two rounds
+  two rounds (#359)
 
 - `usermod -g` no longer regroups a hard link in the home to a file the user
   does not own. It is one inode, so the file changed group where its owner
   keeps it too, and a user could arrange that for any file they can write and
   link. upstream does regroup it; this is a deliberate difference. The user's
-  own hard links change as before
+  own hard links change as before (#359)
 
 ## [0.6.0] - 2026-10-13
 
