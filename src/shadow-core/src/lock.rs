@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 
 use crate::error::ShadowError;
 
-/// Default lock timeout (matches GNU shadow-utils `LOCK_TIMEOUT`).
+/// Default lock timeout (matches upstream shadow `LOCK_TIMEOUT`).
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Retry interval when waiting for a lock.
@@ -88,7 +88,7 @@ impl FileLock {
         let tmp_path = tmp_lock_path(&lock_path);
 
         // For the account files, /etc/.pwd.lock comes *first*, then the
-        // per-file lock -- the order lckpwdf(3) and the GNU tools use, and the
+        // per-file lock -- the order lckpwdf(3) and the upstream tools use, and the
         // only order that cannot deadlock. Taken the other way round, a tool
         // holding passwd.lock and waiting for .pwd.lock met a tool holding
         // shadow.lock and waiting for .pwd.lock's holder to let go of

@@ -6,7 +6,7 @@
 
 //! `grpck` -- verify integrity of group files.
 //!
-//! Drop-in replacement for GNU shadow-utils `grpck(8)`.
+//! Drop-in replacement for upstream shadow `grpck(8)`.
 //!
 //! Checks `/etc/group` and `/etc/gshadow` for consistency:
 //! - Correct field count (parsed via structured types)
@@ -94,7 +94,7 @@ struct GrpckOptions {
 
 impl GrpckOptions {
     fn from_matches(matches: &clap::ArgMatches) -> Self {
-        // grpck has no --prefix, matching GNU; --root is a real chroot, done
+        // grpck has no --prefix, matching upstream; --root is a real chroot, done
         // before this runs, so paths resolve against the new root.
         let root = SysRoot::default();
 
@@ -366,7 +366,7 @@ fn report_member_differences(
 /// NOTE: Sorting operates on parsed entries and discards any comments or
 /// blank lines from the original file. A lossless (comment-preserving)
 /// sort would require a significantly different parser that tracks raw
-/// lines alongside parsed entries. This matches GNU `grpck -s` behavior.
+/// lines alongside parsed entries. This matches upstream `grpck -s` behavior.
 fn sort_and_write(group_path: &Path, gshadow_path: &Path) -> UResult<()> {
     // The transaction re-reads under the lock: the entries checked above were
     // read before it. The layout keeps comments, blank lines and NIS compat

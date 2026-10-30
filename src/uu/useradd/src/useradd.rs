@@ -7,7 +7,7 @@
 
 //! `useradd` -- create a new user account.
 //!
-//! Drop-in replacement for GNU shadow-utils `useradd(8)`.
+//! Drop-in replacement for upstream shadow `useradd(8)`.
 //!
 //! Creates a new user account by writing to `/etc/passwd`, `/etc/shadow`,
 //! and optionally `/etc/group`, `/etc/gshadow`. Can create the home
@@ -87,7 +87,7 @@ mod exit_codes {
 
 /// Errors that the `useradd` utility can produce.
 ///
-/// Each variant maps to a specific exit code matching GNU `useradd(8)`.
+/// Each variant maps to a specific exit code matching upstream `useradd(8)`.
 #[derive(Debug)]
 enum UseraddError {
     /// Exit 1 -- cannot update password file.
@@ -718,7 +718,7 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     drop(signals);
 
     // Step 14: Allocate subordinate UID/GID ranges for rootless containers.
-    // Only done when the relevant file exists (matching GNU shadow-utils behavior).
+    // Only done when the relevant file exists (matching upstream shadow behavior).
     // useradd(8) allocates subordinate ranges for regular accounts only;
     // verified that shadow-utils leaves /etc/subuid untouched for -r.
     let subuid_path = opts.root.subuid_path();

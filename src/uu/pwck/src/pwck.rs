@@ -6,7 +6,7 @@
 
 //! `pwck` -- verify integrity of password files.
 //!
-//! Drop-in replacement for GNU shadow-utils `pwck(8)`.
+//! Drop-in replacement for upstream shadow `pwck(8)`.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -58,7 +58,7 @@ mod exit_codes {
 
 /// Errors that the `pwck` utility can produce.
 ///
-/// Each variant maps to a specific exit code matching GNU `pwck(8)`.
+/// Each variant maps to a specific exit code matching upstream `pwck(8)`.
 #[derive(Debug)]
 enum PwckError {
     /// Exit 2 -- one or more bad entries found.
@@ -115,7 +115,7 @@ struct PwckOptions {
 
 impl PwckOptions {
     fn from_matches(matches: &clap::ArgMatches) -> Self {
-        // pwck has no --prefix, matching GNU; --root is a real chroot, done
+        // pwck has no --prefix, matching upstream; --root is a real chroot, done
         // before this runs, so paths resolve against the new root.
         let root = SysRoot::default();
 
@@ -930,7 +930,7 @@ mod tests {
             check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root, files());
         assert!(
             errors >= 1,
-            "missing home directory should be an error (matching GNU)"
+            "missing home directory should be an error (matching upstream)"
         );
     }
 

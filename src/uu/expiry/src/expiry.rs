@@ -13,7 +13,7 @@
 //! expired. Shell profiles run it so a session started by something other
 //! than `login` -- a display manager, an ssh key -- still meets the policy.
 //!
-//! The GNU tool is setgid `shadow`: enough to read `/etc/shadow`, and the
+//! The upstream tool is setgid `shadow`: enough to read `/etc/shadow`, and the
 //! password change goes through PAM as the caller. That is how the per-tool
 //! install ships it. The single setuid binary keeps euid 0 for it instead,
 //! having nothing narrower to offer.
@@ -94,7 +94,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let check = matches.get_flag(options::CHECK);
     let force = matches.get_flag(options::FORCE);
     if !check && !force {
-        // expiry(1) does nothing without being asked; the GNU tool prints its
+        // expiry(1) does nothing without being asked; the upstream tool prints its
         // usage and exits 2.
         return Err(ExpiryError::Usage("one of -c or -f is required".into()).into());
     }

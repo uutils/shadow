@@ -7,7 +7,7 @@
 //! `pwconv`, `pwunconv`, `grpconv`, `grpunconv` — convert between shadowed
 //! and unshadowed account files.
 //!
-//! Drop-in replacements for the GNU shadow-utils tools of the same names.
+//! Drop-in replacements for the upstream shadow tools of the same names.
 //! `pwconv` moves password hashes out of the world-readable `/etc/passwd`
 //! into `/etc/shadow`, creating it if need be, and reconciles the two: a
 //! passwd line with no shadow line gets one, a shadow line with no passwd

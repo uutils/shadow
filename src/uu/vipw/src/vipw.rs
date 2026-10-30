@@ -6,13 +6,13 @@
 
 //! `vipw` — edit the password, group, shadow or gshadow file under a lock.
 //!
-//! Drop-in replacement for GNU shadow-utils `vipw(8)` and `vigr(8)`. It takes
+//! Drop-in replacement for upstream shadow `vipw(8)` and `vigr(8)`. It takes
 //! the same lock every other tool in the suite takes, hands the administrator
 //! a copy of the file in their editor, and installs the result atomically --
 //! so a hand edit cannot interleave with a `useradd` running at the same time,
 //! and a crash mid-write cannot leave a half-written `/etc/passwd`.
 //!
-//! `vigr` is this tool with `/etc/group` as its default; the GNU suite ships
+//! `vigr` is this tool with `/etc/group` as its default; the upstream suite ships
 //! it as a symlink. It lives in its own crate, which calls [`run`].
 
 use std::fmt;
@@ -93,7 +93,7 @@ impl Database {
     }
 
     /// The file that usually has to change alongside this one, and the
-    /// command that edits it. Printed after a successful edit, as the GNU
+    /// command that edits it. Printed after a successful edit, as the upstream
     /// tool does, because a passwd line without its shadow line is an account
     /// nobody can log into.
     fn companion(self) -> (&'static str, &'static str) {
@@ -346,7 +346,7 @@ fn edit(tool: Tool, database: Database, root: &SysRoot, quiet: bool) -> UResult<
         VipwError::UnexpectedFailure(format!("cannot read {}: {e}", edit_path.display()))
     })?;
 
-    // Compared by content, not by timestamp. The GNU tool compares
+    // Compared by content, not by timestamp. The upstream tool compares
     // modification times in whole seconds, so an edit saved within the same
     // second as the copy was made is silently thrown away.
     if edited == original {

@@ -19,7 +19,7 @@ use crate::hardening;
 /// The `database` should be one of `"passwd"`, `"shadow"`, or `"group"`.
 ///
 /// Silently succeeds if `nscd`/`sssd` is not installed or not running —
-/// this matches GNU shadow-utils behavior.
+/// this matches upstream shadow behavior.
 ///
 /// Subprocesses are spawned with a sanitized environment to prevent the
 /// caller's full (potentially tainted) env from leaking into child processes

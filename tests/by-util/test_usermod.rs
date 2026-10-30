@@ -344,7 +344,7 @@ fn test_home_not_owned_by_user_is_left_alone() {
             }
 
             let code = run_with_prefix(&dir, &[args[0], args[1], "testuser"]);
-            // GNU: a home that is the user's through a symlink is not walked,
+            // Upstream: a home that is the user's through a symlink is not walked,
             // and that is exit 12, with /etc/passwd written all the same.
             assert_eq!(
                 code,
@@ -1275,7 +1275,7 @@ fn test_rechown_never_follows_an_entry_swapped_mid_walk() {
     }
 }
 
-/// GNU decides whether the home is the user's through a symlink. A home the
+/// Upstream decides whether the home is the user's through a symlink. A home the
 /// user owns that cannot be walked without following a link, or that is not
 /// a directory, is exit 12; a home that is not the user's, missing, or a
 /// dangling link, is left alone with exit 0.

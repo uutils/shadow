@@ -6,7 +6,7 @@
 
 //! `groupmod` -- modify a group definition.
 //!
-//! Drop-in replacement for GNU shadow-utils `groupmod(8)`.
+//! Drop-in replacement for upstream shadow `groupmod(8)`.
 
 use std::fmt;
 use std::path::Path;

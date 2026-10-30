@@ -436,7 +436,7 @@ fn test_clean_files_print_nothing() {
         return;
     }
 
-    // nobody/nogroup use 65534 on Debian and Ubuntu; GNU pwck does not flag it.
+    // nobody/nogroup use 65534 on Debian and Ubuntu; upstream pwck does not flag it.
     let dir = setup_root(
         "root:x:0:0:root:/root:/bin/bash\nnobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n",
         "root:$6$hash:19000:0:99999:7:::\nnobody:*:19000:0:99999:7:::\n",

@@ -6,7 +6,7 @@
 
 //! `passwd` — change user password.
 //!
-//! Drop-in replacement for GNU shadow-utils `passwd(1)`.
+//! Drop-in replacement for upstream shadow `passwd(1)`.
 
 use std::fmt;
 use std::io::Write as _;
@@ -58,7 +58,7 @@ mod exit_codes {
 
 /// Errors that the `passwd` utility can produce.
 ///
-/// Each variant maps to a specific exit code matching GNU `passwd(1)`:
+/// Each variant maps to a specific exit code matching upstream `passwd(1)`:
 ///   1 = permission denied, 3 = unexpected failure, 4 = shadow file missing,
 ///   5 = file busy (lock), 10 = PAM error.
 ///
@@ -699,7 +699,7 @@ fn format_status(entry: &ShadowEntry) -> String {
 /// Convert days since the epoch to the `YYYY-MM-DD` form `passwd -S` prints.
 ///
 /// A value that is not a representable date -- anything with write access to
-/// `/etc/shadow` can put one there -- shows as `never`, which is what GNU
+/// `/etc/shadow` can put one there -- shows as `never`, which is what upstream
 /// displays for a field it cannot make sense of.
 fn format_days_since_epoch(days: i64) -> String {
     shadow_core::date::civil_from_days(days).map_or_else(
@@ -761,7 +761,7 @@ where
         true,
     );
 
-    // GNU passwd reports every change it writes this way, on stdout.
+    // Upstream passwd reports every change it writes this way, on stdout.
     if !quiet {
         let _ = writeln!(
             std::io::stdout().lock(),
@@ -856,7 +856,7 @@ mod tests {
             reserved: String::new(),
         };
         let status = format_status(&entry);
-        // * is locked per GNU behavior.
+        // * is locked per upstream behavior.
         assert!(status.contains(" L "));
         assert!(status.contains(" never "));
     }
@@ -890,7 +890,7 @@ mod tests {
 
     #[test]
     fn test_format_status_star_password() {
-        // Password "*" — GNU treats as locked (system account).
+        // Password "*" — upstream treats as locked (system account).
         let entry = ShadowEntry {
             name: "star".to_string(),
             passwd: "*".to_string(),
@@ -903,7 +903,10 @@ mod tests {
             reserved: String::new(),
         };
         let status = format_status(&entry);
-        assert!(status.contains(" L "), "* should show as L (matching GNU)");
+        assert!(
+            status.contains(" L "),
+            "* should show as L (matching upstream)"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1125,7 +1128,7 @@ mod tests {
     /// Locking is idempotent. It used to prepend a second `!`, after which
     /// one unlock left the account still locked -- and `-u` refuses to unlock
     /// an account that would stay locked, so the tool could not undo its own
-    /// second lock. GNU shadow 4.17 leaves a single marker however many times
+    /// second lock. Upstream shadow 4.17 leaves a single marker however many times
     /// it is asked.
     #[test]
     fn test_locking_an_already_locked_account_changes_nothing() {

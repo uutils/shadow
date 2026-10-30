@@ -6,7 +6,7 @@
 
 //! `chfn` — change user finger (GECOS) information.
 //!
-//! Drop-in replacement for GNU shadow-utils `chfn(1)`.
+//! Drop-in replacement for upstream shadow `chfn(1)`.
 //! Modifies the GECOS field of `/etc/passwd`.
 
 use std::fmt;

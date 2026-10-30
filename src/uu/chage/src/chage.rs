@@ -6,7 +6,7 @@
 
 //! `chage` — change user password aging information.
 //!
-//! Drop-in replacement for GNU shadow-utils `chage(1)`.
+//! Drop-in replacement for upstream shadow `chage(1)`.
 
 use std::fmt;
 use std::io::Write;
@@ -55,7 +55,7 @@ mod exit_codes {
 
 /// Errors that the `chage` utility can produce.
 ///
-/// Each variant maps to a specific exit code matching GNU `chage(1)`:
+/// Each variant maps to a specific exit code matching upstream `chage(1)`:
 ///   1 = permission denied, 2 = invalid syntax, 3 = unexpected failure,
 ///   5 = file busy (lock), 15 = can't find shadow entry.
 #[derive(Debug)]
@@ -71,7 +71,7 @@ enum ChageError {
     /// Exit 1 — the account does not exist.
     ///
     /// chage(1) reserves 15 for "can't find the shadow password file"; a
-    /// missing *account* is an ordinary failure, and GNU exits 1 for it.
+    /// missing *account* is an ordinary failure, and upstream exits 1 for it.
     UserNotFound(String),
     /// Exit 2 — a numeric option was given a value outside its range.
     InvalidArgument(String),
@@ -200,7 +200,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     }
 
     if !has_modifications {
-        // GNU chage enters interactive mode when no flags are given.
+        // Upstream chage enters interactive mode when no flags are given.
         return Err(ChageError::UnexpectedFailure(
             "no aging fields specified (interactive mode not yet supported)".into(),
         )
@@ -386,11 +386,11 @@ fn cmd_list(root: &SysRoot, login: &str, iso: bool) -> UResult<()> {
 /// A `max_age` at or above this many days disables expiry.
 ///
 /// chage(1) prints `never` for the two password lines at this value and a real
-/// date one day below it, verified against GNU shadow 4.17: `-M 9999` shows a
+/// date one day below it, verified against upstream shadow 4.17: `-M 9999` shows a
 /// date, `-M 10000` shows `never`.
 const MAX_AGE_NEVER: i64 = 10_000;
 
-/// Print the aging information to stdout in the GNU `chage -l` format.
+/// Print the aging information to stdout in the upstream `chage -l` format.
 fn print_aging_info(entry: &ShadowEntry, iso: bool) {
     let mut out = std::io::stdout().lock();
     write_aging_info(entry, &mut out, iso);
@@ -728,7 +728,7 @@ mod tests {
     // -----------------------------------------------------------------------
     // `chage -l` output
     //
-    // The expected text is GNU shadow 4.17's, captured from the Debian image:
+    // The expected text is upstream shadow 4.17's, captured from the Debian image:
     // the label columns, the "password must be changed" wording and the
     // `never` threshold all have to match for scripts that parse this.
     // -----------------------------------------------------------------------
@@ -762,7 +762,7 @@ mod tests {
 
     #[test]
     fn test_aging_output_iso8601() {
-        // `chage -l -i`, checked against GNU shadow 4.17 for the same entry.
+        // `chage -l -i`, checked against upstream shadow 4.17 for the same entry.
         let entry = ShadowEntry {
             inactive_days: Some(5),
             expire_date: Some(shadow_core::date::days_from_civil(2030, 12, 31)),
@@ -828,7 +828,7 @@ mod tests {
         assert_eq!(lines[3], "Account expires|Jan 01, 1970");
     }
 
-    /// GNU shows a date at `-M 9999` and `never` at `-M 10000`.
+    /// Upstream shows a date at `-M 9999` and `never` at `-M 10000`.
     #[test]
     fn test_max_age_never_threshold_is_10000() {
         let base = shadow_core::date::days_from_civil(2026, 1, 1);
@@ -913,7 +913,7 @@ mod tests {
             exit_codes::SHADOW_NOT_FOUND
         );
         // A missing account is not a missing shadow file: chage(1) reserves 15
-        // for the file, and GNU exits 1 for an unknown login.
+        // for the file, and upstream exits 1 for an unknown login.
         assert_eq!(
             ChageError::UserNotFound("test".into()).code(),
             exit_codes::USER_NOT_FOUND

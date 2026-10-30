@@ -7,7 +7,7 @@
 //! `vigr` — edit the group file under a lock.
 //!
 //! `vigr` is `vipw(8)` with `/etc/group` as the default target instead of
-//! `/etc/passwd`; the GNU suite ships it as a symlink to `vipw`. Everything it
+//! `/etc/passwd`; the upstream suite ships it as a symlink to `vipw`. Everything it
 //! does lives in `uu_vipw`, and this crate only names the default.
 
 use clap::Command;

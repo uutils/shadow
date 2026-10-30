@@ -6,7 +6,7 @@
 
 //! `userdel` — delete a user account and related files.
 //!
-//! Drop-in replacement for GNU shadow-utils `userdel(8)`.
+//! Drop-in replacement for upstream shadow `userdel(8)`.
 
 use std::fmt;
 use std::path::Path;

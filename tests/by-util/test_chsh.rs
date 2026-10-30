@@ -72,7 +72,7 @@ fn test_chsh_success_prints_nothing() {
     if crate::common::skip_unless_root() {
         return;
     }
-    // GNU chsh prints nothing when the change succeeds.
+    // Upstream chsh prints nothing when the change succeeds.
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let etc = dir.path().join("etc");
     std::fs::create_dir_all(&etc).expect("failed to create etc dir");

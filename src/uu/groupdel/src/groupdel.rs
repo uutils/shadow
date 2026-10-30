@@ -6,7 +6,7 @@
 
 //! `groupdel` -- delete a group.
 //!
-//! Drop-in replacement for GNU shadow-utils `groupdel(8)`.
+//! Drop-in replacement for upstream shadow `groupdel(8)`.
 
 use std::fmt;
 use std::path::Path;

@@ -269,7 +269,7 @@ pub fn parse_range(spec: &str) -> Option<(u64, u64)> {
 /// A range already covered by one of the user's entries is left alone -- the
 /// grant exists, and a second copy would only confuse whoever reads the file
 /// -- otherwise a new entry is appended. No check is made against other
-/// users' entries: the GNU tool makes none, and an administrator may
+/// users' entries: the upstream tool makes none, and an administrator may
 /// deliberately share a range.
 pub fn add_range(entries: &mut Vec<SubIdEntry>, name: &str, first: u64, last: u64) {
     let covered = entries

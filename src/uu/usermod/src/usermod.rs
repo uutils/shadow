@@ -6,7 +6,7 @@
 
 //! `usermod` — modify a user account.
 //!
-//! Drop-in replacement for GNU shadow-utils `usermod(8)`.
+//! Drop-in replacement for upstream shadow `usermod(8)`.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -605,7 +605,7 @@ fn parse_subid_changes(matches: &clap::ArgMatches) -> Result<Vec<SubIdChange>, U
 /// Apply the subordinate id changes, each file in its own transaction.
 ///
 /// The entries are keyed by the login name as given on the command line. The
-/// GNU tool does the same, and does not rename them on `-l` either: a range
+/// upstream tool does the same, and does not rename them on `-l` either: a range
 /// is a grant to a name, and the administrator who renames the account
 /// re-grants it if that is what they meant.
 fn apply_subid_changes(

@@ -6,7 +6,7 @@
 
 //! `chsh` — change login shell.
 //!
-//! Drop-in replacement for GNU shadow-utils `chsh(1)`.
+//! Drop-in replacement for upstream shadow `chsh(1)`.
 //! Changes the login shell field in `/etc/passwd`.
 
 use std::fmt;

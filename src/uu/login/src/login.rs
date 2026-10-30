@@ -19,7 +19,7 @@
 //! records the logout.
 //!
 //! It is not setuid. getty runs it as root, and it refuses to do anything
-//! else: "Cannot possibly work without effective root", as the GNU tool
+//! else: "Cannot possibly work without effective root", as the upstream tool
 //! puts it.
 
 // Everything past the argument parser exists for the PAM build: without PAM

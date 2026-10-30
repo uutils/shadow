@@ -6,7 +6,7 @@
 
 //! `groupadd` -- create a new group.
 //!
-//! Drop-in replacement for GNU shadow-utils `groupadd(8)`.
+//! Drop-in replacement for upstream shadow `groupadd(8)`.
 
 use std::fmt;
 use std::path::Path;
