@@ -27,6 +27,7 @@ pub mod nscd;
 pub mod os_error;
 pub mod passwd;
 pub mod records;
+pub mod selinux;
 pub mod shadow;
 pub mod skel;
 pub mod subid;
