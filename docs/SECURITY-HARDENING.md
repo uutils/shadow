@@ -8,7 +8,7 @@ Techniques adopted from OpenBSD and best practices for setuid-root tools.
 
 - [x] `caller_is_root()` uses `getuid()` not `geteuid()` for authorization
 - [x] In the multicall layout, an applet outside
-      `passwd`/`chfn`/`chsh`/`newgrp`/`gpasswd`/`sg`/`newuidmap`/`newgidmap`/`expiry`
+      `passwd`/`chfn`/`chsh`/`newgrp`/`gpasswd`/`sg`/`newuidmap`/`newgidmap`/`expiry`/`chage`
       drops to the caller's uid before running, so the single setuid binary has
       the same privilege model as the per-tool install — and fails closed if the
       kernel will not take the privilege away
@@ -59,6 +59,17 @@ Techniques adopted from OpenBSD and best practices for setuid-root tools.
       to parse, instead of silently dropping the reported lines
 - [x] `userdel -r` refuses a home the user does not own or that another account
       shares, unless `-f`
+- [x] `usermod -u` and `-g` re-own the home through descriptors. The user owns
+      the tree and can swap a directory for a symlink while root walks it, so
+      each directory is opened from its parent's descriptor with `O_NOFOLLOW`
+      and each entry is checked and re-owned through one descriptor. A hard link
+      to a file the user does not own keeps its group
+- [x] `usermod -m` copies across filesystems the same way, on both sides: no path
+      below either home is resolved, what is copied is what was opened, and the
+      new home stays root-owned `0700` until the copy is done
+- [x] `groupadd -g` and `usermod -u` refuse 4294967295, as `useradd -u` and
+      `groupmod -g` already did: it is the "no change" value of `chown(2)` and
+      `setresuid(2)`
 - [x] Path resolution is total: no `unreachable!()` reachable from a `--prefix`
       argument or a home directory read out of `/etc/passwd`
 - [x] The aging arithmetic is checked. `lastchg + max + inactive` sums three
