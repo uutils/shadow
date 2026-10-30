@@ -954,3 +954,122 @@ fn test_rechown_home_that_cannot_be_walked() {
         );
     }
 }
+
+/// Listens on `/dev/log` for the life of a test, and removes it afterwards.
+///
+/// Sending to a full datagram socket blocks, and every test in this process
+/// that logs sends to this one while it exists, this test's own `usermod`
+/// included. So a thread keeps it drained the whole time.
+struct SyslogListener {
+    lines: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    reader: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SyslogListener {
+    const PATH: &'static str = "/dev/log";
+
+    /// `None` where a real syslog daemon already owns the socket: taking it
+    /// over would lose that daemon's log, and its messages cannot be read here.
+    fn bind() -> Option<Self> {
+        use std::sync::atomic::Ordering;
+
+        if std::fs::symlink_metadata(Self::PATH).is_ok() {
+            return None;
+        }
+        let socket = std::os::unix::net::UnixDatagram::bind(Self::PATH).expect("bind /dev/log");
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_millis(50)))
+            .expect("set timeout");
+        let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader = {
+            let lines = std::sync::Arc::clone(&lines);
+            let stop = std::sync::Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 2048];
+                while !stop.load(Ordering::Relaxed) {
+                    if let Ok(n) = socket.recv(&mut buf) {
+                        lines
+                            .lock()
+                            .expect("lines lock")
+                            .push(String::from_utf8_lossy(&buf[..n]).into_owned());
+                    }
+                }
+            })
+        };
+        Some(Self {
+            lines,
+            stop,
+            reader: Some(reader),
+        })
+    }
+
+    /// The first line about `login`. Tests run in parallel in this process and
+    /// log too, so lines about other accounts are expected here.
+    fn line_about(&self, login: &str) -> String {
+        let needle = format!("acct=\"{login}\"");
+        for _ in 0..1000 {
+            let lines = self.lines.lock().expect("lines lock");
+            if let Some(line) = lines.iter().find(|line| line.contains(&needle)) {
+                return line.clone();
+            }
+            drop(lines);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("no syslog line about {login}");
+    }
+}
+
+impl Drop for SyslogListener {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
+        let _ = std::fs::remove_file(Self::PATH);
+    }
+}
+
+/// The account files are written either way, but a home that could not be
+/// re-owned means the change did not complete, and exit 12 says so: the audit
+/// trail must not record the same run as a success.
+#[test]
+fn test_audit_records_a_failed_home_rechown_as_failed() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let Some(listener) = SyslogListener::bind() else {
+        return;
+    };
+
+    let setup = |login: &str| {
+        let dir = setup_prefix(
+            &format!("{login}:x:1000:1000:Test:/home/{login}:/bin/bash\n"),
+            &format!("{login}:$6$hash:19500:0:99999:7:::\n"),
+            &format!("{login}:x:1000:\n"),
+        );
+        std::fs::create_dir_all(dir.path().join("home")).expect("failed to create /home");
+        dir
+    };
+
+    // A symlinked home is the user's and is not walked: exit 12.
+    let dir = setup("auditfail");
+    let real = dir.path().join("real");
+    std::fs::create_dir(&real).expect("failed to create dir");
+    std::os::unix::fs::chown(&real, Some(1000), Some(1000)).expect("chown failed");
+    std::os::unix::fs::symlink(&real, dir.path().join("home/auditfail"))
+        .expect("failed to create symlink");
+    assert_eq!(run_with_prefix(&dir, &["-u", "1500", "auditfail"]), 12);
+    let line = listener.line_about("auditfail");
+    assert!(line.contains("res=failed"), "{line}");
+
+    // The same change on a home that can be walked.
+    let dir = setup("auditok");
+    let home = dir.path().join("home/auditok");
+    std::fs::create_dir(&home).expect("failed to create home");
+    std::os::unix::fs::chown(&home, Some(1000), Some(1000)).expect("chown failed");
+    assert_eq!(run_with_prefix(&dir, &["-u", "1500", "auditok"]), 0);
+    let line = listener.line_about("auditok");
+    assert!(line.contains("res=success"), "{line}");
+}

@@ -435,7 +435,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     nscd::invalidate_cache("passwd");
     nscd::invalidate_cache("group");
 
-    audit::log_user_event("MOD_USER", login, new_uid, true);
+    // The account files are written by now, but a home left behind means the
+    // change is incomplete; the log has to agree with the exit status.
+    audit::log_user_event("MOD_USER", login, new_uid, home_chown.is_ok());
 
     home_chown.map_err(Into::into)
 }
