@@ -94,6 +94,18 @@ default values used for creating new accounts.
     decides, and it defaults to *yes*. Cannot be used with **-g** or **-N**; the
     exit status is 2.
 
+**--badname**
+:   Accept a name that would be refused, deprecated as it is upstream. A name that
+    would not fit the file, one with a colon or a newline, is exit status 1.
+
+**-F**, **--add-subids-for-system**
+:   Add subordinate IDs for a system account too, which **-r** otherwise skips.
+
+**--btrfs-subvolume-home**
+:   With **-m**, make the home a btrfs subvolume. If the directory it goes in is not
+    on btrfs the exit status is 12, with the account written. Without **-m** it does
+    nothing.
+
 ## EXIT STATUS
 
 **0**
@@ -126,11 +138,17 @@ default values used for creating new accounts.
 **19**
 :   Invalid user name.
 
+## SELINUX
+
+**-Z**/**--selinux-user** *SEUSER* maps the new account to an SELinux user, with
+**--selinux-range** *SERANGE* for its MLS range, by running **semanage login**. On a
+kernel without SELinux **-Z** is exit status 3, before anything else. If **semanage**
+is missing or fails the exit status is 14, with the account written. It cannot be
+used with **-P**. **--selinux-range** without **-Z** is exit status 2.
+
 ## DIFFERENCES FROM UPSTREAM SHADOW
 
-**--badname**, **-F**/**--add-subids-for-system**, **--btrfs-subvolume-home**,
-**-Z**/**--selinux-user** and **--selinux-range** are not implemented, and are
-refused as unknown options, exit 2.
+**--badname ""** is exit status 1. Upstream writes an entry with no name.
 
 ## FILES
 

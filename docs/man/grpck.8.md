@@ -41,6 +41,9 @@ be opened is reported on standard error.
 **-R**, **--root** *CHROOT_DIR*
 :   Apply changes in the *CHROOT_DIR* directory.
 
+**-S**, **--silence-warnings**
+:   Do not report a member listed in one file and not the other.
+
 **-s**, **--sort**
 :   Sort entries by GID.
 
@@ -83,8 +86,6 @@ has no place in a sorted file.
 so a *group* file that is not there is exit 3 in every mode; upstream exits 4
 without **-r**. A *gshadow* file that is not there means no gshadow file, exit 0.
 
-**-S**/**--silence-warnings** is not implemented, and is refused as an unknown
-option, exit 1.
 
 ## FILES
 

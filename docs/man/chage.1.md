@@ -22,6 +22,11 @@ with no such group); what the caller may do is decided from their real uid, so
 the privilege buys a user nothing beyond their own line. Every other mode requires
 the superuser.
 
+Given only a *LOGIN*, **chage** asks for each field in turn on standard output,
+showing the current value, and reads the answers from standard input. An empty
+answer, or the end of input, keeps a value; **-1** empties a field. An answer that
+does not parse is exit status 1, and nothing is written. This is for root only.
+
 ## OPTIONS
 
 **-d**, **--lastday** *LAST_DAY*
@@ -127,11 +132,6 @@ artefact.
 **15**
 :   /etc/shadow could not be read. This code is for the *file*; a missing
     *account* is exit 1.
-
-## DIFFERENCES FROM UPSTREAM SHADOW
-
-There is no interactive mode. Given only a *LOGIN*, upstream prompts for each
-field; here that is an error, exit 3, and nothing changes.
 
 ## FILES
 

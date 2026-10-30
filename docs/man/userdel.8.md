@@ -32,6 +32,12 @@ is also removed from membership lists in /etc/group and /etc/gshadow.
 **-R**, **--root** *CHROOT_DIR*
 :   Apply changes in the *CHROOT_DIR* directory.
 
+**-Z**, **--selinux-user**
+:   Remove the SELinux user mapping of the account by running **semanage login**.
+    On a kernel without SELinux the exit status is 3, before anything else. If
+    **semanage** is missing or fails it is 1, with the account removed. It cannot be
+    used with **-P**.
+
 ## EXIT STATUS
 
 **0**
@@ -51,11 +57,6 @@ is also removed from membership lists in /etc/group and /etc/gshadow.
 
 **12**
 :   Cannot remove home directory.
-
-## DIFFERENCES FROM UPSTREAM SHADOW
-
-**-Z**/**--selinux-user** is not implemented, and is refused as an unknown
-option, exit 2.
 
 ## FILES
 

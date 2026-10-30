@@ -58,9 +58,9 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
 | `pwck` | **Implemented.** Silent on clean files, each problem on stdout and `pwck: no changes` after them. Offers no repairs; see `pwck(8)`. |
 | `useradd` | **Implemented.** UID/GID allocation, home dir + skel, shadow entry, group creation. |
 | `userdel` | **Implemented.** Remove from all system files, optional home/mail cleanup. |
-| `usermod` | **Implemented.** Modify account properties and group membership (`-G`, `-a`, `-r`), lock/unlock, set pre-hashed password, subordinate IDs, move the home (`-m`) and re-own it through descriptors. Not implemented: `-o`, `-b`, `-Z`, `--selinux-range`. |
+| `usermod` | **Implemented.** Modify account properties and group membership (`-G`, `-a`, `-r`), lock/unlock, set pre-hashed password, subordinate IDs, move the home (`-m`) and re-own it through descriptors. |
 | `chpasswd` | **Implemented.** Batch password change from stdin. |
-| `chage` | **Implemented.** Password aging management; `-l` (with `-i` for ISO dates) for a user's own account, setgid `shadow`. No interactive mode. |
+| `chage` | **Implemented.** Password aging management; `-l` (with `-i` for ISO dates) for a user's own account, setgid `shadow`. With only a login, prompts for each field. |
 | `groupadd` | **Implemented.** Auto GID allocation, system groups, force mode, initial members. |
 | `groupdel` | **Implemented.** Primary group usage check, force mode. |
 | `groupmod` | **Implemented.** GID change, rename, password, member list in group and gshadow. |
