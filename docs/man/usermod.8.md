@@ -25,7 +25,8 @@ changes that are specified on the command line.
 **-d**, **--home** *HOME_DIR*
 :   Set the new home directory for the user. It must be an absolute path. With
     **-u** or **-g**, files in this directory are the ones re-owned, if it
-    exists and is the user's. The previous home is left as it is.
+    exists and is the user's. Without **-m**, the previous home is left as it
+    is.
 
 **-e**, **--expiredate** *EXPIRE_DATE*
 :   Set the account expiration date.
@@ -45,6 +46,18 @@ changes that are specified on the command line.
 
 **-L**, **--lock**
 :   Lock the user's password by prepending a '!' to the shadow password.
+
+**-m**, **--move-home**
+:   Move the home directory to the path **-d** gives. Only valid with **-d**.
+    The account files are written first, and stay written if the move fails. On
+    the same filesystem the directory is renamed. Across filesystems it is
+    copied, keeping owners, modes, times, the access ACL, hard links, symlinks,
+    fifos and device nodes, and then removed; if the copy fails, what was copied
+    is removed and the old home is left. A socket in the home fails the copy. A
+    home that does not exist gets a warning and exit status 0. If the path is
+    taken, or the old home is not a directory or is a symlink, the exit status
+    is 12. With **-u** or **-g**, the home is re-owned at its new path, and is
+    left as it was if it did not move.
 
 **-p**, **--password** *PASSWORD*
 :   Set the user's password to the specified pre-hashed value. The hash
@@ -118,7 +131,7 @@ form.
 :   Cannot update the group file.
 
 **12**
-:   Cannot re-own the home directory. The account files were written.
+:   Cannot move or re-own the home directory. The account files were written.
 
 ## DIFFERENCES FROM UPSTREAM SHADOW
 
@@ -141,6 +154,17 @@ exit status is 12 either way.
 entry vanishes while it runs. Here it exits 0, as what was deleted needs no new
 owner. A directory the user replaces during the walk is treated the same way;
 what took its place is re-owned, and not followed.
+
+**The set-user-ID bit goes when a copied home is re-owned.** **-m** with **-u**
+or **-g** across filesystems clears the set-user-ID and set-group-ID bits of the
+files that change hands, as a rename on one filesystem does with upstream too.
+upstream keeps them in the copied case. Here the copy is made first and re-owned
+by the same walk as any other home, so both cases give the same result.
+
+**A moved home that is not the user's is not walked.** **-m** with **-u** or
+**-g** leaves everything in place if the home directory itself belongs to someone
+else, as **-u** and **-g** do without **-m**. upstream leaves that directory but
+re-owns the user's files inside it when it moves it.
 
 ## FILES
 

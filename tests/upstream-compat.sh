@@ -251,6 +251,7 @@ compare_exit "newgidmap with no operands" "$RS/newgidmap" "/usr/bin/newgidmap"
 compare_exit "newuidmap with an incomplete triple" "$RS/newuidmap 1 0 100000" "/usr/bin/newuidmap 1 0 100000"
 compare_exit "newgidmap with a zero count" "$RS/newgidmap 1 0 100000 0" "/usr/bin/newgidmap 1 0 100000 0"
 compare_exit "usermod with an invalid subuid range" "$RS/usermod -v 9-1 root" "/usr/sbin/usermod -v 9-1 root"
+compare_exit "usermod -m without -d" "$RS/usermod -m root" "/usr/sbin/usermod -m root"
 compare_exit "newuidmap on a process that is not there" "$RS/newuidmap 4194304 0 0 1" "/usr/bin/newuidmap 4194304 0 0 1"
 
 # ── Results ─────────────────────────────────────────────────────────

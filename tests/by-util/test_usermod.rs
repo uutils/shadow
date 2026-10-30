@@ -384,6 +384,343 @@ fn test_home_not_owned_by_user_is_left_alone() {
 }
 
 #[test]
+fn test_move_home_requires_home() {
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "testuser:x:1000:\n",
+    );
+    assert_eq!(run_with_prefix(&dir, &["-m", "testuser"]), 2);
+}
+
+#[test]
+fn test_move_home() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "testuser:x:1000:\n",
+    );
+    let old = dir.path().join("home/testuser");
+    std::fs::create_dir_all(old.join("sub")).expect("failed to create home");
+    std::fs::write(old.join("sub/f"), "data").expect("failed to write file");
+
+    let code = run_with_prefix(&dir, &["-d", "/home/moved", "-m", "testuser"]);
+    assert_eq!(code, 0, "moving the home directory should succeed");
+
+    assert!(!old.exists(), "old home should be gone");
+    let moved = dir.path().join("home/moved/sub/f");
+    assert_eq!(std::fs::read_to_string(moved).expect("moved file"), "data");
+    assert!(read_passwd(&dir).contains(":/home/moved:"));
+}
+
+#[test]
+fn test_move_home_onto_existing_directory_fails() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "testuser:x:1000:\n",
+    );
+    std::fs::create_dir_all(dir.path().join("home/testuser")).expect("failed to create home");
+    std::fs::create_dir_all(dir.path().join("home/taken")).expect("failed to create dir");
+
+    let code = run_with_prefix(&dir, &["-d", "/home/taken", "-m", "testuser"]);
+    assert_eq!(code, 12, "a move onto an existing directory should exit 12");
+    assert!(
+        dir.path().join("home/testuser").is_dir(),
+        "old home should stay"
+    );
+}
+
+/// One account with the home `/home/testuser` in its prefix, not created yet.
+fn setup_move_prefix() -> tempfile::TempDir {
+    setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "testuser:x:1000:\nnewgrp:x:2000:\n",
+    )
+}
+
+#[test]
+fn test_move_home_reowns_the_moved_home() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_move_prefix();
+    let old = dir.path().join("home/testuser");
+    std::fs::create_dir_all(old.join("sub")).expect("failed to create home");
+    std::fs::write(old.join("sub/mine"), "x").expect("failed to write file");
+    std::fs::write(old.join("theirs"), "x").expect("failed to write file");
+    for p in [&old, &old.join("sub"), &old.join("sub/mine")] {
+        std::os::unix::fs::lchown(p, Some(1000), Some(1000)).expect("chown");
+    }
+    std::os::unix::fs::lchown(old.join("theirs"), Some(3333), Some(3333)).expect("chown");
+
+    let code = run_with_prefix(
+        &dir,
+        &[
+            "-d",
+            "/home/moved",
+            "-m",
+            "-u",
+            "1500",
+            "-g",
+            "newgrp",
+            "testuser",
+        ],
+    );
+    assert_eq!(code, 0);
+
+    let new = dir.path().join("home/moved");
+    assert_eq!(owner_of(&new), (1500, 2000));
+    assert_eq!(owner_of(&new.join("sub")), (1500, 2000));
+    assert_eq!(owner_of(&new.join("sub/mine")), (1500, 2000));
+    assert_eq!(owner_of(&new.join("theirs")), (3333, 3333));
+    assert!(!old.exists(), "old home should be gone");
+}
+
+#[test]
+fn test_move_home_same_value_reowns_in_place() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_move_prefix();
+    let home = dir.path().join("home/testuser");
+    std::fs::create_dir_all(&home).expect("failed to create home");
+    std::os::unix::fs::lchown(&home, Some(1000), Some(1000)).expect("chown");
+
+    let code = run_with_prefix(
+        &dir,
+        &["-d", "/home/testuser", "-m", "-u", "1500", "testuser"],
+    );
+    assert_eq!(code, 0);
+    assert_eq!(owner_of(&home).0, 1500, "nothing to move, still re-owned");
+}
+
+#[test]
+fn test_move_home_same_value_with_slash_counts_as_taken() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_move_prefix();
+    let home = dir.path().join("home/testuser");
+    std::fs::create_dir_all(&home).expect("failed to create home");
+
+    // Ubuntu's usermod compares the spelling given, then finds the path taken.
+    let code = run_with_prefix(&dir, &["-d", "/home/testuser/", "-m", "testuser"]);
+    assert_eq!(code, 12);
+    assert!(read_passwd(&dir).contains(":/home/testuser:"));
+    assert!(home.is_dir());
+}
+
+#[test]
+fn test_move_home_new_slash_is_dropped() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_move_prefix();
+    std::fs::create_dir_all(dir.path().join("home/testuser")).expect("failed to create home");
+
+    let code = run_with_prefix(&dir, &["-d", "/home/moved/", "-m", "testuser"]);
+    assert_eq!(code, 0);
+    assert!(read_passwd(&dir).contains(":/home/moved:"));
+    assert!(dir.path().join("home/moved").is_dir());
+}
+
+#[test]
+fn test_move_home_relative_is_refused() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_move_prefix();
+    let home = dir.path().join("home/testuser");
+    std::fs::create_dir_all(&home).expect("failed to create home");
+
+    assert_eq!(run_with_prefix(&dir, &["-d", "rel", "-m", "testuser"]), 3);
+    assert!(read_passwd(&dir).contains(":/home/testuser:"));
+    assert!(home.is_dir());
+}
+
+#[test]
+fn test_move_home_taken_target_is_not_reowned() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_move_prefix();
+    let old = dir.path().join("home/testuser");
+    let taken = dir.path().join("home/taken");
+    for d in [&old, &taken] {
+        std::fs::create_dir_all(d).expect("failed to create dir");
+        std::os::unix::fs::lchown(d, Some(1000), Some(1000)).expect("chown");
+    }
+
+    let code = run_with_prefix(&dir, &["-d", "/home/taken", "-m", "-u", "1500", "testuser"]);
+    assert_eq!(code, 12);
+    let passwd = read_passwd(&dir);
+    assert!(passwd.contains("testuser:x:1500:"), "account is written");
+    assert!(passwd.contains(":/home/taken:"), "account is written");
+    assert_eq!(owner_of(&old).0, 1000, "not moved, so not re-owned");
+    assert_eq!(owner_of(&taken).0, 1000, "not moved, so not re-owned");
+}
+
+#[test]
+fn test_move_home_taken_target_wins_over_missing_home() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_move_prefix();
+    std::fs::create_dir_all(dir.path().join("home/taken")).expect("failed to create dir");
+
+    assert_eq!(
+        run_with_prefix(&dir, &["-d", "/home/taken", "-m", "testuser"]),
+        12
+    );
+}
+
+#[test]
+fn test_move_home_failed_rename_is_not_reowned() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_move_prefix();
+    let old = dir.path().join("home/testuser");
+    std::fs::create_dir_all(&old).expect("failed to create home");
+    std::os::unix::fs::lchown(&old, Some(1000), Some(1000)).expect("chown");
+
+    let code = run_with_prefix(
+        &dir,
+        &["-d", "/home/no/such/moved", "-m", "-u", "1500", "testuser"],
+    );
+    assert_eq!(code, 12);
+    assert!(read_passwd(&dir).contains(":/home/no/such/moved:"));
+    assert_eq!(owner_of(&old).0, 1000);
+}
+
+#[test]
+fn test_move_home_missing_home_warns_and_succeeds() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_move_prefix();
+    std::fs::create_dir_all(dir.path().join("home")).expect("failed to create dir");
+
+    let code = run_with_prefix(&dir, &["-d", "/home/moved", "-m", "-u", "1500", "testuser"]);
+    assert_eq!(code, 0);
+    assert!(read_passwd(&dir).contains(":/home/moved:"));
+    assert!(!dir.path().join("home/moved").exists());
+}
+
+#[test]
+fn test_move_home_empty_home_field_is_not_the_prefix_root() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test::/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "testuser:x:1000:\n",
+    );
+
+    let code = run_with_prefix(&dir, &["-d", "/moved", "-m", "testuser"]);
+    assert_eq!(code, 0);
+    assert!(dir.path().join("etc/passwd").exists(), "prefix untouched");
+    assert!(!dir.path().join("moved").exists());
+}
+
+#[test]
+fn test_move_home_that_is_a_file_fails() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_move_prefix();
+    std::fs::create_dir_all(dir.path().join("home")).expect("failed to create dir");
+    let old = dir.path().join("home/testuser");
+    std::fs::write(&old, "x").expect("failed to write file");
+
+    assert_eq!(
+        run_with_prefix(&dir, &["-d", "/home/moved", "-m", "testuser"]),
+        12
+    );
+    assert!(old.is_file(), "left where it is");
+    assert!(!dir.path().join("home/moved").exists());
+}
+
+#[test]
+fn test_move_home_symlink_moves_the_link_and_fails() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    // Probed on Ubuntu 26.04: the link is renamed, nothing behind it changes,
+    // and the exit status is 12, whoever owns what it points to.
+    for (owner, args) in [
+        (1000, &["-d", "/home/moved", "-m", "testuser"][..]),
+        (
+            1000,
+            &["-d", "/home/moved", "-m", "-u", "1500", "testuser"][..],
+        ),
+        (3333, &["-d", "/home/moved", "-m", "testuser"][..]),
+    ] {
+        let dir = setup_move_prefix();
+        let real = dir.path().join("home/real");
+        std::fs::create_dir_all(&real).expect("failed to create dir");
+        std::fs::write(real.join("f"), "x").expect("failed to write file");
+        for p in [&real, &real.join("f")] {
+            std::os::unix::fs::lchown(p, Some(owner), Some(owner)).expect("chown");
+        }
+        std::os::unix::fs::symlink("real", dir.path().join("home/testuser")).expect("symlink");
+
+        assert_eq!(run_with_prefix(&dir, args), 12, "{args:?} owner {owner}");
+        assert_eq!(
+            std::fs::read_link(dir.path().join("home/moved")).expect("the link moved"),
+            std::path::Path::new("real")
+        );
+        assert_eq!(owner_of(&real).0, owner, "the target is not touched");
+        assert_eq!(
+            owner_of(&real.join("f")).0,
+            owner,
+            "the target is not touched"
+        );
+    }
+}
+
+#[test]
+fn test_move_home_dangling_symlink_warns_and_succeeds() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_move_prefix();
+    std::fs::create_dir_all(dir.path().join("home")).expect("failed to create dir");
+    let old = dir.path().join("home/testuser");
+    std::os::unix::fs::symlink("/nonexistent", &old).expect("symlink");
+
+    assert_eq!(
+        run_with_prefix(&dir, &["-d", "/home/moved", "-m", "testuser"]),
+        0
+    );
+    assert!(std::fs::read_link(&old).is_ok(), "left where it is");
+}
+
+#[test]
 fn test_add_to_groups() {
     if crate::common::skip_unless_root() {
         return;

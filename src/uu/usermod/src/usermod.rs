@@ -8,8 +8,9 @@
 //!
 //! Drop-in replacement for GNU shadow-utils `usermod(8)`.
 
+use std::collections::HashMap;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use clap::{Arg, ArgAction, Command};
 use uucore::error::{UError, UResult};
@@ -26,6 +27,7 @@ use shadow_core::{nscd, validate};
 mod options {
     pub const COMMENT: &str = "comment";
     pub const HOME: &str = "home";
+    pub const MOVE_HOME: &str = "move-home";
     pub const EXPIREDATE: &str = "expiredate";
     pub const INACTIVE: &str = "inactive";
     pub const GID: &str = "gid";
@@ -57,6 +59,7 @@ enum UsermodError {
     GroupNotFound(String),
     CantUpdateGroup(String),
     CantChownHome(String),
+    CantMoveHome(String),
 }
 
 impl fmt::Display for UsermodError {
@@ -69,7 +72,8 @@ impl fmt::Display for UsermodError {
             | Self::NameInUse(msg)
             | Self::GroupNotFound(msg)
             | Self::CantUpdateGroup(msg)
-            | Self::CantChownHome(msg) => f.write_str(msg),
+            | Self::CantChownHome(msg)
+            | Self::CantMoveHome(msg) => f.write_str(msg),
         }
     }
 }
@@ -89,7 +93,7 @@ impl UError for UsermodError {
             // usermod(8): 10 = can't update the group file.
             Self::CantUpdateGroup(_) => 10,
             // usermod(8): 12 = unable to complete the home directory change.
-            Self::CantChownHome(_) => 12,
+            Self::CantChownHome(_) | Self::CantMoveHome(_) => 12,
         }
     }
 }
@@ -180,6 +184,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // Save the old UID and GID before mutation so we can chown if needed.
     let old_uid = entries[idx].uid;
     let old_primary_gid = entries[idx].gid;
+    let old_home = entries[idx].home.clone();
 
     // Check UID collision before mutating.
     if let Some(&uid) = matches.get_one::<u32>(options::UID) {
@@ -262,7 +267,14 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // files in the old primary group get the new group.
     // A home that cannot be re-owned is reported at the end, like upstream:
     // the account files are written regardless.
-    let home_chown = if (new_uid != old_uid || new_primary_gid != old_primary_gid)
+    // With -m the home is not there yet, so the re-own waits for the move below.
+    let move_to = matches
+        .get_flag(options::MOVE_HOME)
+        .then(|| matches.get_one::<String>(options::HOME))
+        .flatten()
+        .filter(|new_home| **new_home != old_home);
+    let home_chown = if move_to.is_none()
+        && (new_uid != old_uid || new_primary_gid != old_primary_gid)
         && !home_for_chown.is_empty()
     {
         rechown_home(
@@ -448,14 +460,27 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     apply_subid_changes(&root, login, &subid_changes)?;
 
+    // usermod(8) -m: the account files are already updated, as with upstream,
+    // when the move itself fails.
+    let home_change = if move_to.is_some() {
+        move_and_reown_home(
+            &root,
+            (&old_home, &home_for_chown),
+            (old_uid, new_uid),
+            (old_primary_gid, new_primary_gid),
+        )
+    } else {
+        home_chown
+    };
+
     nscd::invalidate_cache("passwd");
     nscd::invalidate_cache("group");
 
     // The account files are written by now, but a home left behind means the
     // change is incomplete; the log has to agree with the exit status.
-    audit::log_user_event("MOD_USER", login, new_uid, home_chown.is_ok());
+    audit::log_user_event("MOD_USER", login, new_uid, home_change.is_ok());
 
-    home_chown.map_err(Into::into)
+    home_change.map_err(Into::into)
 }
 
 /// One requested change to `/etc/subuid` or `/etc/subgid`.
@@ -531,6 +556,439 @@ fn apply_subid_changes(
             UsermodError::CantUpdate(format!("cannot write {}: {e}", path.display()))
         })?;
     }
+    Ok(())
+}
+
+/// Do what `-m` asks once the account files are written: move the home, then
+/// re-own it at its new path. Nothing is re-owned if the move does not happen.
+///
+/// The paths are looked at through a symlink, like upstream. A home that is a
+/// symlink to a directory is renamed as a link, and then counts as a home that
+/// cannot be re-owned. Across filesystems it cannot be opened, so it stays.
+fn move_and_reown_home(
+    root: &SysRoot,
+    (old_home, new_home): (&str, &str),
+    owner: (u32, u32),
+    group: (u32, u32),
+) -> Result<(), UsermodError> {
+    use rustix::fs::FileType;
+
+    let old_path = root.resolve(old_home);
+    let new_path = root.resolve(new_home);
+    if rustix::fs::stat(&new_path).is_ok() {
+        return Err(UsermodError::CantMoveHome(format!(
+            "directory {new_home} exists"
+        )));
+    }
+    // An empty home resolves to the root of the prefix, which is not a home.
+    let old_stat = (!old_home.is_empty())
+        .then(|| rustix::fs::stat(&old_path).ok())
+        .flatten();
+    let Some(old_stat) = old_stat else {
+        uucore::show_warning!(
+            "The previous home directory ({old_home}) does not exist or is inaccessible. Move cannot be completed."
+        );
+        return Ok(());
+    };
+    if FileType::from_raw_mode(old_stat.st_mode) != FileType::Directory {
+        return Err(UsermodError::CantMoveHome(format!(
+            "The previous home directory ({old_home}) was not a directory. It is not removed and no home directories are created."
+        )));
+    }
+    let is_symlink = std::fs::symlink_metadata(&old_path).is_ok_and(|m| m.is_symlink());
+    move_home(&old_path, &new_path).map_err(|_| {
+        UsermodError::CantMoveHome(format!("cannot rename directory {old_home} to {new_home}"))
+    })?;
+    if is_symlink {
+        return Err(cant_chown_home());
+    }
+    if owner.0 != owner.1 || group.0 != group.1 {
+        rechown_home(&new_path, owner, group)?;
+    }
+    Ok(())
+}
+
+/// Move a home directory: a rename on one filesystem, otherwise a copy that
+/// keeps owners, modes, times and hard links, followed by removal of the old
+/// tree. On a failed copy the partial new tree is removed and the old one
+/// is left as it was. Like upstream, an old tree that cannot be fully removed
+/// only gets a warning.
+fn move_home(old: &Path, new: &Path) -> std::io::Result<()> {
+    match std::fs::rename(old, new) {
+        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
+            copy_home(old, new)?;
+            if std::fs::remove_dir_all(old).is_err() {
+                uucore::show_warning!(
+                    "failed to completely remove old home directory {}",
+                    old.display()
+                );
+            }
+            Ok(())
+        }
+        result => result,
+    }
+}
+
+/// Copy the home at `old` to `new`, which must not exist, and remove what was
+/// copied if that fails.
+///
+/// This runs as root in a tree the user controls, and `new` can sit in a
+/// directory the user owns too. So no path below either of them is ever
+/// resolved: every entry on both sides is reached from its parent's descriptor
+/// with `O_NOFOLLOW`, and the attributes copied are those of what was opened.
+/// Should the user rename `new` away and leave a symlink in its place, the copy
+/// carries on in the directory it made.
+fn copy_home(old: &Path, new: &Path) -> std::io::Result<()> {
+    use rustix::fs::{Mode, OFlags};
+
+    // O_NOFOLLOW only looks at the last component. In "home/" that is not the
+    // link, so the kernel would resolve it. components() drops those spellings.
+    let old: PathBuf = old.components().collect();
+    let new: PathBuf = new.components().collect();
+    let (Some(parent), Some(name)) = (new.parent(), new.file_name()) else {
+        return Err(std::io::ErrorKind::InvalidInput.into());
+    };
+    let src = open_dir(rustix::fs::CWD, &old)?;
+    let parent = rustix::fs::openat(
+        rustix::fs::CWD,
+        parent,
+        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
+    // Root's and 0700 until the very end, so the user cannot reach anything in
+    // the copy while it runs, whatever owner and mode its subdirectories have
+    // been given by then.
+    rustix::fs::mkdirat(&parent, name, Mode::from_raw_mode(0o700))?;
+    let copied = open_new_dir(&parent, name).and_then(|dst| copy_tree(src, dst));
+    if copied.is_err() {
+        let _ = std::fs::remove_dir_all(&new);
+    }
+    copied
+}
+
+/// Open the directory `name` of `dir` for reading, not through a symlink.
+fn open_dir<Fd: rustix::fd::AsFd, P: rustix::path::Arg>(
+    dir: Fd,
+    name: P,
+) -> std::io::Result<std::fs::File> {
+    use rustix::fs::{Mode, OFlags};
+
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let fd = rustix::fs::openat(dir, name, flags, Mode::empty())?;
+    Ok(std::fs::File::from(fd))
+}
+
+/// Open the directory just made at `name`. If the user owns `dir`, what is
+/// there now can be one of theirs, and that must not receive the copy.
+fn open_new_dir<Fd: rustix::fd::AsFd>(
+    dir: Fd,
+    name: &std::ffi::OsStr,
+) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::MetadataExt;
+
+    let new = open_dir(dir, name)?;
+    let meta = new.metadata()?;
+    if meta.uid() != rustix::process::geteuid().as_raw() || meta.mode() & 0o077 != 0 {
+        return Err(std::io::ErrorKind::PermissionDenied.into());
+    }
+    Ok(new)
+}
+
+/// Open the regular file `name` of `dir` for reading, and stat what was opened.
+///
+/// It was a regular file when it was looked at, but the user can have swapped
+/// it since. `O_NONBLOCK` is there for a fifo, whose open would otherwise wait
+/// for a writer the user may never bring, and `O_NOCTTY` for a terminal.
+fn open_regular(
+    dir: &std::fs::File,
+    name: &std::ffi::CStr,
+) -> std::io::Result<(std::fs::File, std::fs::Metadata)> {
+    use rustix::fs::{Mode, OFlags};
+
+    let flags =
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::NOCTTY | OFlags::CLOEXEC;
+    let file = std::fs::File::from(rustix::fs::openat(dir, name, flags, Mode::empty())?);
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(std::io::ErrorKind::InvalidData.into());
+    }
+    Ok((file, meta))
+}
+
+/// A directory being copied.
+struct CopyDir {
+    src: std::fs::File,
+    dst: std::fs::File,
+    /// Taken before the directory is read, which changes its access time.
+    meta: std::fs::Metadata,
+    acl: Option<Vec<u8>>,
+    /// The entries still to copy.
+    names: Vec<std::ffi::CString>,
+}
+
+impl CopyDir {
+    fn open(src: std::fs::File, dst: std::fs::File) -> std::io::Result<Self> {
+        let meta = src.metadata()?;
+        let acl = read_access_acl(&src)?;
+        let names = list_names(&src)?;
+        Ok(Self {
+            src,
+            dst,
+            meta,
+            acl,
+            names,
+        })
+    }
+}
+
+/// The names in `dir`. Holds no descriptor once it returns, so a level of a
+/// copy costs two, one for each side.
+fn list_names(dir: &std::fs::File) -> std::io::Result<Vec<std::ffi::CString>> {
+    use rustix::io::Errno;
+
+    let mut buf = [std::mem::MaybeUninit::uninit(); 8192];
+    let mut entries = rustix::fs::RawDir::new(dir, &mut buf);
+    let mut names = Vec::new();
+    while let Some(entry) = entries.next() {
+        match entry {
+            Ok(entry) => {
+                let name = entry.file_name();
+                if name != c"." && name != c".." {
+                    names.push(name.to_owned());
+                }
+            }
+            // The directory was deleted while it was being read.
+            Err(Errno::NOENT) => break,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(names)
+}
+
+/// Copy the directory `src` into the empty directory `dst`, then give `dst` the
+/// attributes of `src`, each subdirectory as its own contents are done.
+///
+/// `links` maps the (device, inode) of a multiply linked source file to its
+/// first copy, as a path from `dst`. The stack is explicit: the depth of the
+/// tree is the user's to choose, and running out of descriptors on a deep one
+/// fails the copy, where running out of stack would kill the process and leave
+/// the partial copy behind.
+fn copy_tree(src: std::fs::File, dst: std::fs::File) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let top = dst.try_clone()?;
+    let mut links = HashMap::new();
+    let mut at = PathBuf::new();
+    let mut stack = vec![CopyDir::open(src, dst)?];
+    while let Some(dir) = stack.last_mut() {
+        let Some(name) = dir.names.pop() else {
+            if let Some(done) = stack.pop() {
+                copy_attributes(&done.dst, &done.meta, done.acl.as_deref())?;
+            }
+            at.pop();
+            continue;
+        };
+        let name_in_tree = at.join(std::ffi::OsStr::from_bytes(name.to_bytes()));
+        if let Some(subdir) = copy_entry(dir, &name, &top, &name_in_tree, &mut links)? {
+            at = name_in_tree;
+            stack.push(subdir);
+        }
+    }
+    Ok(())
+}
+
+/// Copy the entry `name` of `dir`. A directory is only made, and handed back for
+/// the caller to walk. An entry the user has deleted by now needs no copy.
+fn copy_entry(
+    dir: &CopyDir,
+    name: &std::ffi::CStr,
+    top: &std::fs::File,
+    name_in_tree: &Path,
+    links: &mut HashMap<(u64, u64), PathBuf>,
+) -> std::io::Result<Option<CopyDir>> {
+    use rustix::fs::{Mode, OFlags};
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+    let flags = OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let handle = match rustix::fs::openat(&dir.src, name, flags, Mode::empty()) {
+        Ok(handle) => std::fs::File::from(handle),
+        Err(rustix::io::Errno::NOENT) => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let meta = handle.metadata()?;
+    let kind = meta.file_type();
+    if kind.is_dir() {
+        let src = open_dir(&dir.src, name)?;
+        rustix::fs::mkdirat(&dir.dst, name, Mode::from_raw_mode(0o700))?;
+        let dst = open_dir(&dir.dst, name)?;
+        return CopyDir::open(src, dst).map(Some);
+    }
+    if meta.nlink() > 1
+        && let Some(first) = links.get(&(meta.dev(), meta.ino()))
+    {
+        link_first_copy(top, first, &dir.dst, name)?;
+        return Ok(None);
+    }
+    let meta = if kind.is_symlink() {
+        let target = rustix::fs::readlinkat(&handle, c"", Vec::new())?;
+        rustix::fs::symlinkat(target.as_c_str(), &dir.dst, name)?;
+        copy_attributes_at(&dir.dst, name, &meta)?;
+        meta
+    } else if kind.is_file() {
+        let (mut reader, opened) = open_regular(&dir.src, name)?;
+        let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW;
+        let mut writer = std::fs::File::from(rustix::fs::openat(
+            &dir.dst,
+            name,
+            flags | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o600),
+        )?);
+        std::io::copy(&mut reader, &mut writer)?;
+        copy_attributes(&writer, &opened, read_access_acl(&reader)?.as_deref())?;
+        opened
+    } else if kind.is_fifo() || kind.is_char_device() || kind.is_block_device() {
+        rustix::fs::mknodat(
+            &dir.dst,
+            name,
+            rustix::fs::FileType::from_raw_mode(meta.mode()),
+            Mode::from_raw_mode(0o600),
+            meta.rdev(),
+        )?;
+        copy_attributes_at(&dir.dst, name, &meta)?;
+        meta
+    } else {
+        // A socket belongs to a running process and cannot be copied. Refused
+        // like upstream: the old home stays whole, nothing is lost silently.
+        return Err(std::io::ErrorKind::Unsupported.into());
+    };
+    if meta.nlink() > 1 {
+        links.insert((meta.dev(), meta.ino()), name_in_tree.to_path_buf());
+    }
+    Ok(None)
+}
+
+/// Link `name` of `dir` to the copy already made at `first`, a path from `top`.
+fn link_first_copy(
+    top: &std::fs::File,
+    first: &Path,
+    dir: &std::fs::File,
+    name: &std::ffi::CStr,
+) -> std::io::Result<()> {
+    use rustix::fs::{AtFlags, Mode, OFlags};
+
+    let (Some(parents), Some(leaf)) = (first.parent(), first.file_name()) else {
+        return Err(std::io::ErrorKind::InvalidData.into());
+    };
+    let mut from: Option<std::fs::File> = None;
+    for part in parents {
+        let next = rustix::fs::openat(
+            from.as_ref().unwrap_or(top),
+            part,
+            OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?;
+        from = Some(std::fs::File::from(next));
+    }
+    rustix::fs::linkat(
+        from.as_ref().unwrap_or(top),
+        leaf,
+        dir,
+        name,
+        AtFlags::empty(),
+    )?;
+    Ok(())
+}
+
+/// The access and modification times in `meta`.
+fn timestamps_of(meta: &std::fs::Metadata) -> rustix::fs::Timestamps {
+    use std::os::unix::fs::MetadataExt;
+
+    rustix::fs::Timestamps {
+        last_access: rustix::fs::Timespec {
+            tv_sec: meta.atime(),
+            tv_nsec: meta.atime_nsec(),
+        },
+        last_modification: rustix::fs::Timespec {
+            tv_sec: meta.mtime(),
+            tv_nsec: meta.mtime_nsec(),
+        },
+    }
+}
+
+/// The extended attribute a POSIX access ACL is stored in. The default ACL of a
+/// directory is not kept, as with upstream.
+const ACCESS_ACL: &std::ffi::CStr = c"system.posix_acl_access";
+
+/// The access ACL of `file`, if it has one. An ACL has to move with the mode:
+/// its mask is stored in the group bits, so a file that kept its mode and lost
+/// its ACL gives the owning group what used to be only the mask.
+fn read_access_acl(file: &std::fs::File) -> std::io::Result<Option<Vec<u8>>> {
+    use rustix::io::Errno;
+
+    let len = match rustix::fs::fgetxattr_query(file, ACCESS_ACL) {
+        Ok(len) => len,
+        Err(Errno::NODATA | Errno::NOTSUP) => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let mut acl = vec![0; len];
+    let len = rustix::fs::fgetxattr(file, ACCESS_ACL, &mut acl[..])?;
+    acl.truncate(len);
+    Ok(Some(acl))
+}
+
+/// Give the open `file` the owner, mode, ACL and times in `meta`. The mode is
+/// set after the owner, since chown(2) clears the set-user-ID and set-group-ID
+/// bits. A filesystem that cannot hold the ACL fails the copy, as carrying on
+/// without it widens what the file gives away.
+fn copy_attributes(
+    file: &std::fs::File,
+    meta: &std::fs::Metadata,
+    acl: Option<&[u8]>,
+) -> std::io::Result<()> {
+    use rustix::fs::Mode;
+    use rustix::process::{Gid, Uid};
+    use std::os::unix::fs::MetadataExt;
+
+    rustix::fs::fchown(
+        file,
+        Some(Uid::from_raw(meta.uid())),
+        Some(Gid::from_raw(meta.gid())),
+    )?;
+    rustix::fs::fchmod(file, Mode::from_raw_mode(meta.mode() & 0o7777))?;
+    if let Some(acl) = acl {
+        rustix::fs::fsetxattr(file, ACCESS_ACL, acl, rustix::fs::XattrFlags::empty())?;
+    }
+    rustix::fs::futimens(file, &timestamps_of(meta))?;
+    Ok(())
+}
+
+/// The same for the entry `name` of `dir`, for what cannot be opened without
+/// side effects: a symlink, a fifo, a device.
+fn copy_attributes_at(
+    dir: &std::fs::File,
+    name: &std::ffi::CStr,
+    meta: &std::fs::Metadata,
+) -> std::io::Result<()> {
+    use rustix::fs::{AtFlags, Mode};
+    use rustix::process::{Gid, Uid};
+    use std::os::unix::fs::MetadataExt;
+
+    rustix::fs::chownat(
+        dir,
+        name,
+        Some(Uid::from_raw(meta.uid())),
+        Some(Gid::from_raw(meta.gid())),
+        AtFlags::SYMLINK_NOFOLLOW,
+    )?;
+    if !meta.file_type().is_symlink() {
+        rustix::fs::chmodat(
+            dir,
+            name,
+            Mode::from_raw_mode(meta.mode() & 0o7777),
+            AtFlags::empty(),
+        )?;
+    }
+    rustix::fs::utimensat(dir, name, &timestamps_of(meta), AtFlags::SYMLINK_NOFOLLOW)?;
     Ok(())
 }
 
@@ -802,6 +1260,14 @@ pub fn uu_app() -> Command {
                 .help("Replace the home directory path"),
         )
         .arg(
+            Arg::new(options::MOVE_HOME)
+                .short('m')
+                .long("move-home")
+                .help("Move the contents of the home directory to the new location (use only with -d)")
+                .requires(options::HOME)
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new(options::EXPIREDATE)
                 .short('e')
                 .long("expiredate")
@@ -1011,6 +1477,333 @@ mod tests {
                 .try_get_matches_from(["usermod", "-a", "-r", "-G", "sudo", "u"])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn test_copy_home_keeps_links_modes_and_times() {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+
+        let src = tempfile::tempdir().expect("tempdir");
+        let dst = tempfile::tempdir().expect("tempdir");
+        let s = src.path();
+        std::fs::create_dir(s.join("d")).expect("mkdir");
+        std::fs::write(s.join("d/f"), "data").expect("write");
+        std::fs::set_permissions(s.join("d/f"), std::fs::Permissions::from_mode(0o640))
+            .expect("chmod");
+        std::fs::hard_link(s.join("d/f"), s.join("hard")).expect("link");
+        std::os::unix::fs::symlink("d/f", s.join("sym")).expect("symlink");
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            s.join("fifo"),
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o600),
+            0,
+        )
+        .expect("mkfifo");
+        let old = rustix::fs::Timestamps {
+            last_access: rustix::fs::Timespec {
+                tv_sec: 1_000_000_000,
+                tv_nsec: 0,
+            },
+            last_modification: rustix::fs::Timespec {
+                tv_sec: 1_000_000_000,
+                tv_nsec: 0,
+            },
+        };
+        for p in ["d/f", "d"] {
+            rustix::fs::utimensat(
+                rustix::fs::CWD,
+                s.join(p),
+                &old,
+                rustix::fs::AtFlags::empty(),
+            )
+            .expect("utimensat");
+        }
+
+        let d = dst.path().join("new");
+        copy_home(s, &d).expect("copy_home");
+
+        let stat = |p: &str| std::fs::symlink_metadata(d.join(p)).expect("stat");
+        assert_eq!(
+            std::fs::read_to_string(d.join("d/f")).expect("read"),
+            "data"
+        );
+        assert_eq!(stat("d/f").mode() & 0o7777, 0o640);
+        assert_eq!(stat("d/f").mtime(), 1_000_000_000);
+        assert_eq!(stat("d").mtime(), 1_000_000_000);
+        assert_eq!(
+            stat("hard").ino(),
+            stat("d/f").ino(),
+            "hard link should stay a link"
+        );
+        assert_eq!(
+            std::fs::read_link(d.join("sym")).expect("readlink"),
+            Path::new("d/f")
+        );
+        assert!(stat("fifo").file_type().is_fifo());
+    }
+
+    /// Make `dir/name/name/...`, `depth` levels of it, without a path that
+    /// long ever being given to the kernel.
+    fn make_deep(dir: &Path, name: &str, depth: usize) {
+        use rustix::fs::{Mode, OFlags};
+
+        let mut at = std::fs::File::open(dir).expect("open");
+        for _ in 0..depth {
+            rustix::fs::mkdirat(&at, name, Mode::from_raw_mode(0o755)).expect("mkdirat");
+            at = std::fs::File::from(
+                rustix::fs::openat(
+                    &at,
+                    name,
+                    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+                    Mode::empty(),
+                )
+                .expect("openat"),
+            );
+        }
+        let f = rustix::fs::openat(
+            &at,
+            "bottom",
+            OFlags::WRONLY | OFlags::CREATE | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o644),
+        )
+        .expect("create");
+        drop(f);
+    }
+
+    /// How many directories the chain `dir/name/name/...` really has.
+    fn depth_of(dir: &Path, name: &str) -> usize {
+        use rustix::fs::{Mode, OFlags};
+
+        let mut at = std::fs::File::open(dir).expect("open");
+        let mut depth = 0;
+        while let Ok(next) = rustix::fs::openat(
+            &at,
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            at = std::fs::File::from(next);
+            depth += 1;
+        }
+        depth
+    }
+
+    /// The new path can sit in a directory the user owns, and then they can
+    /// rename the copy away and leave a symlink in its place while it runs.
+    /// Whatever is copied after that must not land where the link points.
+    #[test]
+    fn test_copy_home_is_not_redirected_by_a_swapped_path() {
+        let src = tempfile::tempdir().expect("tempdir");
+        for i in 0..4000 {
+            std::fs::write(src.path().join(format!("f{i}")), "x").expect("write");
+        }
+        let parent = tempfile::tempdir().expect("tempdir");
+        let new = parent.path().join("new");
+        let aside = parent.path().join("aside");
+        let trap = parent.path().join("trap");
+        std::fs::create_dir(&trap).expect("mkdir");
+
+        let swapper = {
+            let (new, aside, trap) = (new.clone(), aside.clone(), trap.clone());
+            std::thread::spawn(move || {
+                while std::fs::rename(&new, &aside).is_err() {
+                    std::hint::spin_loop();
+                }
+                std::os::unix::fs::symlink(&trap, &new).expect("symlink");
+            })
+        };
+        let copied = copy_home(src.path(), &new);
+        swapper.join().expect("swapper");
+
+        let landed = std::fs::read_dir(&trap).expect("read_dir").count();
+        assert_eq!(landed, 0, "{landed} entries went through the link");
+        // Swapped before it was even opened, the copy fails instead, which is
+        // as good: nothing was written anywhere else.
+        if copied.is_ok() {
+            let kept = std::fs::read_dir(&aside).expect("read_dir").count();
+            assert_eq!(kept, 4000, "everything is in the directory that was made");
+        }
+    }
+
+    /// A planted directory at the new path is not the one this run made, and
+    /// must not receive the copy.
+    #[test]
+    fn test_open_new_dir_refuses_what_others_can_enter() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let parent = tempfile::tempdir().expect("tempdir");
+        let planted = parent.path().join("planted");
+        std::fs::create_dir(&planted).expect("mkdir");
+        std::fs::set_permissions(&planted, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let dir = std::fs::File::open(parent.path()).expect("open");
+        assert!(open_new_dir(&dir, std::ffi::OsStr::new("planted")).is_err());
+    }
+
+    #[test]
+    fn test_copy_home_deeper_than_path_max() {
+        let src = tempfile::tempdir().expect("tempdir");
+        let name = "n".repeat(200);
+        make_deep(src.path(), &name, 25);
+        let parent = tempfile::tempdir().expect("tempdir");
+        let new = parent.path().join("new");
+
+        copy_home(src.path(), &new).expect("copy_home");
+
+        assert_eq!(depth_of(&new, &name), 25);
+    }
+
+    /// A home the user controls must not be able to crash this. Runs on a test
+    /// thread, with a smaller stack than the main one, so a recursive copy
+    /// overflows at this depth, and that takes the whole test binary down.
+    #[test]
+    fn test_copy_home_does_not_recurse() {
+        use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+
+        // Two descriptors per level. Past the limit the copy fails cleanly.
+        let limit = getrlimit(Resource::Nofile);
+        if limit.maximum.is_some_and(|hard| hard < 4096) {
+            return;
+        }
+        setrlimit(
+            Resource::Nofile,
+            Rlimit {
+                current: limit.maximum.or(Some(1 << 20)),
+                maximum: limit.maximum,
+            },
+        )
+        .expect("setrlimit");
+
+        let src = tempfile::tempdir().expect("tempdir");
+        make_deep(src.path(), "d", 1500);
+        let parent = tempfile::tempdir().expect("tempdir");
+        let new = parent.path().join("new");
+
+        copy_home(src.path(), &new).expect("copy_home");
+
+        assert_eq!(depth_of(&new, "d"), 1500);
+    }
+
+    /// The user can swap a regular file for a fifo between the two opens, and
+    /// opening a fifo for reading waits for a writer the user may never bring.
+    #[test]
+    fn test_open_regular_does_not_wait_on_a_fifo() {
+        let parent = tempfile::tempdir().expect("tempdir");
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            parent.path().join("fifo"),
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o600),
+            0,
+        )
+        .expect("mkfifo");
+        let dir = std::fs::File::open(parent.path()).expect("open");
+
+        let (done, wait) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(open_regular(&dir, c"fifo").map(|_| ()));
+        });
+        let opened = wait
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the open must not block");
+        assert!(opened.is_err(), "a fifo is not a regular file");
+    }
+
+    #[test]
+    fn test_copy_home_keeps_directory_access_times() {
+        use std::os::unix::fs::MetadataExt;
+
+        let src = tempfile::tempdir().expect("tempdir");
+        let sub = src.path().join("sub");
+        std::fs::create_dir(&sub).expect("mkdir");
+        std::fs::write(sub.join("f"), "x").expect("write");
+        let times = rustix::fs::Timestamps {
+            last_access: rustix::fs::Timespec {
+                tv_sec: 1_000_000_000,
+                tv_nsec: 0,
+            },
+            last_modification: rustix::fs::Timespec {
+                tv_sec: 1_000_000_000,
+                tv_nsec: 0,
+            },
+        };
+        rustix::fs::utimensat(rustix::fs::CWD, &sub, &times, rustix::fs::AtFlags::empty())
+            .expect("utimensat");
+        let parent = tempfile::tempdir().expect("tempdir");
+        let new = parent.path().join("new");
+
+        copy_home(src.path(), &new).expect("copy_home");
+
+        let copied = std::fs::metadata(new.join("sub")).expect("stat");
+        assert_eq!(copied.atime(), 1_000_000_000);
+        assert_eq!(copied.mtime(), 1_000_000_000);
+    }
+
+    /// An ACL's mask lives in the group bits of the mode. A file that lost its
+    /// ACL but kept its mode gives the owning group what only the mask was.
+    #[test]
+    fn test_copy_home_keeps_the_access_acl() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let src = tempfile::tempdir().expect("tempdir");
+        let file = src.path().join("f");
+        std::fs::write(&file, "x").expect("write");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o640)).expect("chmod");
+        // user::rwx user:1234:r-- group::--- mask::r-- other::---
+        // The same for the directory, which its owner has to be able to enter.
+        let entry = |tag: u16, perm: u16, id: u32| {
+            [
+                tag.to_le_bytes().as_slice(),
+                perm.to_le_bytes().as_slice(),
+                id.to_le_bytes().as_slice(),
+            ]
+            .concat()
+        };
+        let acl = [
+            2u32.to_le_bytes().to_vec(),
+            entry(0x01, 7, u32::MAX),
+            entry(0x02, 4, 1234),
+            entry(0x04, 0, u32::MAX),
+            entry(0x10, 4, u32::MAX),
+            entry(0x20, 0, u32::MAX),
+        ]
+        .concat();
+        let set = |path: &Path| {
+            rustix::fs::setxattr(
+                path,
+                "system.posix_acl_access",
+                &acl,
+                rustix::fs::XattrFlags::empty(),
+            )
+        };
+        if set(&file).is_err() || set(src.path()).is_err() {
+            return; // No ACLs on this filesystem.
+        }
+        let parent = tempfile::tempdir().expect("tempdir");
+        let new = parent.path().join("new");
+
+        copy_home(src.path(), &new).expect("copy_home");
+
+        for path in [new.join("f"), new.clone()] {
+            let mut got = vec![0; acl.len() + 64];
+            let n = rustix::fs::getxattr(&path, "system.posix_acl_access", &mut got[..])
+                .expect("the ACL is there");
+            assert_eq!(&got[..n], &acl[..], "{}", path.display());
+        }
+    }
+
+    /// Ubuntu's usermod refuses the whole move over a socket, and leaves the
+    /// old home as it was. Dropping it and exiting 0 would lose it silently.
+    #[test]
+    fn test_copy_home_refuses_a_socket() {
+        let src = tempfile::tempdir().expect("tempdir");
+        let _socket = std::os::unix::net::UnixListener::bind(src.path().join("s")).expect("bind");
+        let parent = tempfile::tempdir().expect("tempdir");
+        let new = parent.path().join("new");
+
+        assert!(copy_home(src.path(), &new).is_err());
+        assert!(!new.exists(), "the partial copy is removed");
+        assert!(src.path().join("s").exists(), "the old home is left");
     }
 
     fn skip_unless_root() -> bool {

@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   crates.io settings first. The same script publishes by hand when the
   pipeline cannot (see CONTRIBUTING)
 
+- `usermod -m`/`--move-home` moves the home to the path `-d` gives: a rename,
+  or across filesystems a copy keeping owners, modes, times, the access ACL,
+  hard links, symlinks, fifos and device nodes. With `-u` or `-g` the moved home
+  is re-owned. The user controls the tree being copied, so every entry on both
+  sides is reached from its parent's descriptor, and no path below either home
+  is resolved. Exit 12 if the move cannot be completed, with the account files
+  written, as upstream does (#348)
+
 ### Fixed
 
 - The pinned Rust toolchains now apply. A `rust-toolchain.toml` asking for
