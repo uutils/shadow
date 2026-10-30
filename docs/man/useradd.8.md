@@ -22,6 +22,10 @@ default values used for creating new accounts.
 
 ## OPTIONS
 
+**-b**, **--base-dir** *BASE_DIR*
+:   Base directory for the new account's home: without **-d**, the home is
+    *BASE_DIR*/*LOGIN*.
+
 **-c**, **--comment** *COMMENT*
 :   Set the GECOS field of the new account.
 
@@ -32,10 +36,12 @@ default values used for creating new accounts.
 :   Print or change default useradd configuration.
 
 **-e**, **--expiredate** *EXPIRE_DATE*
-:   Set the expiration date of the new account (YYYY-MM-DD).
+:   Set the expiration date of the new account (YYYY-MM-DD). **-1** leaves it
+    unset.
 
 **-f**, **--inactive** *INACTIVE*
-:   Set the password inactivity period of the new account.
+:   Set the password inactivity period of the new account. **-1** leaves it
+    unset.
 
 **-g**, **--gid** *GROUP*
 :   Set the name or numeric ID of the primary group of the new account.
@@ -45,6 +51,10 @@ default values used for creating new accounts.
 
 **-k**, **--skel** *SKEL_DIR*
 :   Specify the skeleton directory (default: /etc/skel).
+
+**-K**, **--key** *KEY=VALUE*
+:   Override a value from /etc/login.defs for this run, such as **UID_MIN**. May
+    be repeated.
 
 **-m**, **--create-home**
 :   Create the user's home directory if it does not exist.
@@ -61,8 +71,13 @@ default values used for creating new accounts.
 **-p**, **--password** *PASSWORD*
 :   Set the encrypted password of the new account.
 
+**-P**, **--prefix** *PREFIX_DIR*
+:   Use *PREFIX_DIR* as a prefix for system file paths.
+
 **-r**, **--system**
-:   Create a system account.
+:   Create a system account. UIDs are handed out from the top of the system range
+    down: one below the lowest system UID in use, starting at **SYS_UID_MAX**,
+    and the highest free one when that reaches the bottom.
 
 **-R**, **--root** *CHROOT_DIR*
 :   Apply changes in the *CHROOT_DIR* directory.
@@ -74,7 +89,10 @@ default values used for creating new accounts.
 :   Set the user ID of the new account.
 
 **-U**, **--user-group**
-:   Create a group with the same name as the user (default behavior).
+:   Create a group with the same name as the user, even if **USERGROUPS_ENAB**
+    in /etc/login.defs is *no*. Without **-U**, **-N** or **-g**, that setting
+    decides, and it defaults to *yes*. Cannot be used with **-g** or **-N**; the
+    exit status is 2.
 
 ## EXIT STATUS
 
@@ -105,8 +123,14 @@ default values used for creating new accounts.
 **12**
 :   Cannot create home directory.
 
-**14**
-:   Cannot update SELinux user mapping.
+**19**
+:   Invalid user name.
+
+## DIFFERENCES FROM UPSTREAM SHADOW
+
+**--badname**, **-F**/**--add-subids-for-system**, **--btrfs-subvolume-home**,
+**-Z**/**--selinux-user** and **--selinux-range** are not implemented, and are
+refused as unknown options, exit 2.
 
 ## FILES
 

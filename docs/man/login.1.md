@@ -24,8 +24,9 @@ controlling terminal and refuses without one.
 
 Two implementations of this program are in service: shadow-utils' on Ubuntu
 20.04, 22.04 and 24.04 and Debian 12, and util-linux's from Debian 13 and
-Ubuntu 25.10. This one implements the options and behaviour the two share, and
-adds util-linux's **-H** and **--help**, which conflict with nothing.
+Ubuntu 25.10, 26.04 included. This one implements the options and behaviour
+the two share, and adds util-linux's **-H** and **--help**, which conflict with
+nothing.
 
 ## HOW A LOGIN PROCEEDS
 
@@ -112,9 +113,9 @@ user or their shell.
 that matters for two decades.
 
 The terminal is not hung up. util-linux's **login** calls **vhangup**(2) to
-shake off any process still listening on the line; shadow's, which every
-current LTS ships, does not. Getty owns the line before **login** runs, and
-this program trusts that as shadow's does.
+shake off any process still listening on the line; shadow's does not.
+Getty owns the line before **login** runs, and this program trusts that as
+shadow's does.
 
 **lastlog** is not written. Debian 13 removed /var/log/lastlog; where it still
 exists, **pam_lastlog** in the `login` service maintains it, as it does on

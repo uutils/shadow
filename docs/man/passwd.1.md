@@ -18,6 +18,9 @@ or associated password validity period.
 When invoked without a LOGIN argument, **passwd** changes the password for
 the current user.
 
+A change made by **-l**, **-u**, **-d**, **-e** or an aging option prints
+*passwd: password changed.* on standard output, unless **-q** is given.
+
 ## OPTIONS
 
 **-a**, **--all**
@@ -49,7 +52,8 @@ the current user.
 :   Quiet mode.
 
 **-r**, **--repository** *REPOSITORY*
-:   Change password in the named repository.
+:   Accepted for compatibility. Only the local files are supported, whatever
+    *REPOSITORY* says.
 
 **-R**, **--root** *CHROOT_DIR*
 :   Apply changes in the *CHROOT_DIR* directory and use the configuration
@@ -86,10 +90,28 @@ the current user.
 :   Permission denied or operation failed.
 
 **2**
-:   Invalid command syntax.
+:   Conflicting options, or a required one missing.
+
+**3**
+:   An unexpected failure.
+
+**4**
+:   The shadow file is missing.
 
 **5**
 :   Password file busy.
+
+**6**
+:   An unknown option or an invalid argument to one.
+
+**10**
+:   PAM reported an error.
+
+## DIFFERENCES FROM UPSTREAM SHADOW
+
+**-d -l** and **-l -u** conflict here, exit 2. Upstream exits 0 for the first and
+3 for the second. **-r** with a repository other than the local files is accepted
+here; upstream exits 6.
 
 ## FILES
 

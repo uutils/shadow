@@ -40,6 +40,9 @@ Checks performed include:
 **0**
 :   Success.
 
+**1**
+:   Invalid command syntax.
+
 **2**
 :   One or more bad group entries.
 
@@ -52,8 +55,12 @@ Checks performed include:
 **5**
 :   Cannot update files.
 
-**6**
-:   Cannot sort files.
+## DIFFERENCES FROM UPSTREAM SHADOW
+
+Problems are reported on standard error, where upstream uses standard output, and
+in a shorter form: a duplicate entry gets one line, without upstream's offer to
+delete it. Nothing like upstream's *grpck: no changes* is printed. **-q** does
+the job of upstream's **-S**/**--silence-warnings**, which is not accepted here.
 
 ## FILES
 
