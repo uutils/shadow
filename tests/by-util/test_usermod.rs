@@ -1380,3 +1380,64 @@ fn test_rechown_entries_deleted_mid_walk_are_not_a_failure() {
         assert_eq!(owner_of(&home), (1500, 1000), "round {round}");
     }
 }
+
+/// A hard link in the home to a file of someone else is that person's file,
+/// whatever group it is in. Both names are the same inode, so regrouping it
+/// here regroups it where its owner keeps it. The user's own hard links, in the
+/// home or out of it, are the user's files and change as any other does.
+#[test]
+fn test_rechown_leaves_the_group_of_someone_elses_hard_link() {
+    use std::os::unix::fs::chown;
+
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    // (args, what the user's own link becomes, what the other link stays at)
+    let cases: [(&[&str], (u32, u32)); 3] = [
+        (&["-g", "dev"], (1000, 2000)),
+        (&["-u", "1500", "-g", "dev"], (1500, 2000)),
+        (&["-u", "1500"], (1500, 1000)),
+    ];
+    for (args, own_expected) in cases {
+        let dir = setup_prefix(
+            "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+            "testuser:$6$hash:19500:0:99999:7:::\n",
+            "testuser:x:1000:\ndev:x:2000:\n",
+        );
+        let home = dir.path().join("home/testuser");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&home).expect("failed to create home");
+        std::fs::create_dir_all(&outside).expect("failed to create outside");
+        chown(&home, Some(1000), Some(1000)).expect("chown failed");
+
+        // Someone else's file, in the user's old group, linked into the home.
+        std::fs::write(outside.join("theirs"), "").expect("failed to write file");
+        chown(outside.join("theirs"), Some(1100), Some(1000)).expect("chown failed");
+        std::fs::hard_link(outside.join("theirs"), home.join("theirs")).expect("link failed");
+        // The user's own file, with a second name.
+        std::fs::write(outside.join("mine"), "").expect("failed to write file");
+        chown(outside.join("mine"), Some(1000), Some(1000)).expect("chown failed");
+        std::fs::hard_link(outside.join("mine"), home.join("mine")).expect("link failed");
+        // Someone else's file with one name is still regrouped: it was moved
+        // into the home, and this is the only place it is reachable from.
+        std::fs::write(home.join("given"), "").expect("failed to write file");
+        chown(home.join("given"), Some(1100), Some(1000)).expect("chown failed");
+
+        assert_eq!(
+            run_with_prefix(&dir, &[args, &["testuser"]].concat()),
+            0,
+            "{args:?}"
+        );
+
+        assert_eq!(owner_of(&home.join("theirs")), (1100, 1000), "{args:?}");
+        assert_eq!(owner_of(&outside.join("theirs")), (1100, 1000), "{args:?}");
+        assert_eq!(owner_of(&home.join("mine")), own_expected, "{args:?}");
+        let given = if args.contains(&"-g") {
+            (1100, 2000)
+        } else {
+            (1100, 1000)
+        };
+        assert_eq!(owner_of(&home.join("given")), given, "{args:?}");
+    }
+}

@@ -702,12 +702,25 @@ impl HomeWalk {
     /// so the inode checked is the inode changed. `fd` may be an `O_PATH`
     /// descriptor, so the change goes through `fchownat` with `AT_EMPTY_PATH`,
     /// which works on one and, for a symlink, changes the link itself.
+    ///
+    /// Unlike upstream, the group of a hard link to someone else's file is left
+    /// alone. The user can link a file they can write into their home, and it
+    /// is one inode: regrouping this name regroups the file where its owner
+    /// keeps it, and can take it away from the people its mode was for. A file
+    /// the user owns is theirs however many names it has, so it changes as any
+    /// other does, with `-g` alone too: skipping those would leave the hard
+    /// links every backup tree and package store is full of in the old group.
     fn chown_matching(&mut self, fd: impl rustix::fd::AsFd, st: &rustix::fs::Stat) {
+        use rustix::fs::FileType;
+
         let (old_owner, new_owner) = self.owner;
         let (old_group, new_group) = self.group;
+        let someone_elses_link = st.st_nlink > 1
+            && st.st_uid != old_owner
+            && FileType::from_raw_mode(st.st_mode) != FileType::Directory;
         let set_owner = (old_owner != new_owner && st.st_uid == old_owner)
             .then(|| rustix::process::Uid::from_raw(new_owner));
-        let set_group = (old_group != new_group && st.st_gid == old_group)
+        let set_group = (old_group != new_group && st.st_gid == old_group && !someone_elses_link)
             .then(|| rustix::process::Gid::from_raw(new_group));
         if set_owner.is_none() && set_group.is_none() {
             return;
