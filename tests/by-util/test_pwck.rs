@@ -726,3 +726,19 @@ fn test_shadow_mode_warning_stays_on_stderr() {
     assert_eq!((out.code, out.stdout.as_str()), (0, ""));
     assert!(out.stderr.contains("bad permissions"), "{out:?}");
 }
+
+#[test]
+fn test_badname_allows_a_bad_name() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_clean();
+    write_etc(&dir, "passwd", "a@b:x:1000:1000::/home/alice:/bin/bash\n");
+    write_etc(&dir, "shadow", "a@b:$6$hash:19000:0:99999:7:::\n");
+    assert_eq!(pwck_rooted(&dir, &["-r"]).code, 2);
+    for flag in ["-b", "--badname"] {
+        let out = pwck_rooted(&dir, &["-r", flag]);
+        assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{flag}");
+        assert!(out.stderr.contains("deprecated"), "{out:?}");
+    }
+}

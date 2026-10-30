@@ -32,6 +32,7 @@ mod options {
     pub const READ_ONLY: &str = "read-only";
     pub const SORT: &str = "sort";
     pub const QUIET: &str = "quiet";
+    pub const SILENCE: &str = "silence-warnings";
     pub const ROOT: &str = "root";
     pub const GROUP_FILE: &str = "group_file";
     pub const GSHADOW_FILE: &str = "gshadow_file";
@@ -85,6 +86,7 @@ impl UError for GrpckError {
 // ---------------------------------------------------------------------------
 
 struct GrpckOptions {
+    silence: bool,
     sort: bool,
     read_only: bool,
     group_path: PathBuf,
@@ -106,6 +108,7 @@ impl GrpckOptions {
             .map_or_else(|| root.gshadow_path(), PathBuf::from);
 
         Self {
+            silence: matches.get_flag(options::SILENCE),
             sort: matches.get_flag(options::SORT),
             read_only: matches.get_flag(options::READ_ONLY),
             group_path,
@@ -182,7 +185,9 @@ fn run_checks(opts: &GrpckOptions) -> UResult<()> {
             Ok(entries) => {
                 errors += check_group_gshadow_consistency(&group_entries, &entries);
                 errors += check_password_fields(&group_entries, &entries, opts);
-                report_member_differences(&group_entries, &entries, opts);
+                if !opts.silence {
+                    report_member_differences(&group_entries, &entries, opts);
+                }
                 gshadow_entries = entries;
             }
             Err(e @ shadow_core::error::ShadowError::Parse(_)) => {
@@ -508,6 +513,13 @@ pub fn uu_app() -> Command {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new(options::SILENCE)
+                .short('S')
+                .long("silence-warnings")
+                .help("Do not report members who differ between the two files")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new(options::ROOT)
                 .short('R')
                 .long("root")
@@ -648,6 +660,7 @@ mod tests {
         std::fs::write(&group_path, "root:x:0:\nusers:x:100:\n").expect("write group");
 
         let opts = GrpckOptions {
+            silence: false,
             sort: false,
             read_only: true,
             group_path,
@@ -667,6 +680,7 @@ mod tests {
         std::fs::write(&group_path, "root:x:0:\nbadentry:x\n").expect("write group");
 
         let opts = GrpckOptions {
+            silence: false,
             sort: false,
             read_only: true,
             group_path,
@@ -686,6 +700,7 @@ mod tests {
         let gshadow_path = dir.path().join("gshadow_nonexistent");
 
         let opts = GrpckOptions {
+            silence: false,
             sort: true,
             read_only: false,
             group_path: group_path.clone(),

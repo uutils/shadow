@@ -30,6 +30,7 @@ mod options {
     pub const READ_ONLY: &str = "read-only";
     pub const SORT: &str = "sort";
     pub const QUIET: &str = "quiet";
+    pub const BADNAME: &str = "badname";
     pub const ROOT: &str = "root";
     pub const PASSWD_FILE: &str = "passwd_file";
     pub const SHADOW_FILE: &str = "shadow_file";
@@ -104,8 +105,10 @@ impl UError for PwckError {
 // Parsed options
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::struct_excessive_bools)]
 struct PwckOptions {
     quiet: bool,
+    badname: bool,
     sort: bool,
     read_only: bool,
     root: SysRoot,
@@ -128,6 +131,7 @@ impl PwckOptions {
 
         Self {
             quiet: matches.get_flag(options::QUIET),
+            badname: matches.get_flag(options::BADNAME),
             sort: matches.get_flag(options::SORT),
             read_only: matches.get_flag(options::READ_ONLY),
             root,
@@ -155,6 +159,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     }
 
     let opts = PwckOptions::from_matches(&matches);
+    if opts.badname {
+        uucore::show_error!("WARNING: --badname is deprecated and will be removed");
+    }
     run_checks(&opts)
 }
 
@@ -208,6 +215,7 @@ fn run_checks(opts: &PwckOptions) -> UResult<()> {
         &group_entries,
         &valid_shells,
         opts.quiet,
+        opts.badname,
         &opts.root,
         (&opts.passwd_path, &opts.shadow_path),
     );
@@ -359,6 +367,13 @@ pub fn uu_app() -> Command {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new(options::BADNAME)
+                .short('b')
+                .long("badname")
+                .help("Allow bad names (deprecated)")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new(options::ROOT)
                 .short('R')
                 .long("root")
@@ -455,6 +470,7 @@ fn check_passwd_entries(
     group_entries: &[GroupEntry],
     valid_shells: &HashSet<PathBuf>,
     quiet: bool,
+    badname: bool,
     root: &SysRoot,
     (passwd_path, shadow_path): (&Path, &Path),
 ) -> u32 {
@@ -475,7 +491,9 @@ fn check_passwd_entries(
                 entry.name
             ));
             errors += 1;
-        } else if !shadow_core::validate::is_valid_account_name(&entry.name, MAX_USER_NAME_LEN) {
+        } else if !badname
+            && !shadow_core::validate::is_valid_account_name(&entry.name, MAX_USER_NAME_LEN)
+        {
             report(format_args!("invalid user name '{}'", entry.name));
             errors += 1;
         }
@@ -829,8 +847,16 @@ mod tests {
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
         let root = SysRoot::default();
 
-        let errors =
-            check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root, files());
+        let errors = check_passwd_entries(
+            &passwd,
+            &shadow,
+            &groups,
+            &shells,
+            false,
+            false,
+            &root,
+            files(),
+        );
         assert_eq!(errors, 0);
     }
 
@@ -845,8 +871,16 @@ mod tests {
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
         let root = SysRoot::default();
 
-        let errors =
-            check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root, files());
+        let errors = check_passwd_entries(
+            &passwd,
+            &shadow,
+            &groups,
+            &shells,
+            false,
+            false,
+            &root,
+            files(),
+        );
         assert!(errors >= 1, "duplicate username should be an error");
     }
 
@@ -858,8 +892,16 @@ mod tests {
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
         let root = SysRoot::default();
 
-        let errors =
-            check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root, files());
+        let errors = check_passwd_entries(
+            &passwd,
+            &shadow,
+            &groups,
+            &shells,
+            false,
+            false,
+            &root,
+            files(),
+        );
         assert!(errors >= 1, "empty username should be an error");
     }
 
@@ -872,8 +914,16 @@ mod tests {
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
         let root = SysRoot::default();
 
-        let errors =
-            check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root, files());
+        let errors = check_passwd_entries(
+            &passwd,
+            &shadow,
+            &groups,
+            &shells,
+            false,
+            false,
+            &root,
+            files(),
+        );
         assert!(errors >= 1, "missing primary group should be an error");
     }
 
@@ -886,8 +936,16 @@ mod tests {
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
         let root = SysRoot::default();
 
-        let errors =
-            check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root, files());
+        let errors = check_passwd_entries(
+            &passwd,
+            &shadow,
+            &groups,
+            &shells,
+            false,
+            false,
+            &root,
+            files(),
+        );
         assert!(errors >= 1, "missing shadow entry should be an error");
     }
 
@@ -902,8 +960,16 @@ mod tests {
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
         let root = SysRoot::default();
 
-        let errors =
-            check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root, files());
+        let errors = check_passwd_entries(
+            &passwd,
+            &shadow,
+            &groups,
+            &shells,
+            false,
+            false,
+            &root,
+            files(),
+        );
         assert!(
             errors >= 1,
             "password not in shadow file should be an error"
@@ -926,8 +992,16 @@ mod tests {
         let groups = vec![make_group("users", 1000)];
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
 
-        let errors =
-            check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root, files());
+        let errors = check_passwd_entries(
+            &passwd,
+            &shadow,
+            &groups,
+            &shells,
+            false,
+            false,
+            &root,
+            files(),
+        );
         assert!(
             errors >= 1,
             "missing home directory should be an error (matching upstream)"
@@ -950,7 +1024,16 @@ mod tests {
         let groups = vec![make_group("users", 1000)];
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
 
-        let errors = check_passwd_entries(&passwd, &shadow, &groups, &shells, true, &root, files());
+        let errors = check_passwd_entries(
+            &passwd,
+            &shadow,
+            &groups,
+            &shells,
+            true,
+            false,
+            &root,
+            files(),
+        );
         assert_eq!(errors, 0, "quiet mode should hide a missing home");
     }
 
