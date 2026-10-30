@@ -81,13 +81,6 @@ fn test_missing_login_exits_error() {
     assert_eq!(code, 2, "missing LOGIN should exit 2");
 }
 
-#[test]
-fn test_lock_unlock_conflict() {
-    // -L and -U conflict; clap reports ArgumentConflict which maps to exit 2.
-    let code = run(&["usermod", "-L", "-U", "someuser"]);
-    assert_eq!(code, 2, "conflicting -L -U flags should exit 2");
-}
-
 // ---------------------------------------------------------------------------
 // Root-only tests -- exercise real operations via --prefix
 // ---------------------------------------------------------------------------
@@ -159,7 +152,6 @@ fn test_fields_with_colon_or_newline_are_rejected_before_write() {
     assert_eq!(run_with_prefix(&dir, &["-c", "a:b", "testuser"]), 3);
     assert_eq!(run_with_prefix(&dir, &["-s", "/bin/sh\nx", "testuser"]), 3);
     assert_eq!(run_with_prefix(&dir, &["-d", "/home/x\r", "testuser"]), 3);
-    assert_eq!(run_with_prefix(&dir, &["-p", "$6$a:b", "testuser"]), 3);
 
     assert_eq!(read_passwd(&dir), original);
     assert!(read_shadow(&dir).contains("testuser:$6$hash:"));
@@ -385,6 +377,9 @@ fn test_home_not_owned_by_user_is_left_alone() {
 
 #[test]
 fn test_move_home_requires_home() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
     let dir = setup_prefix(
         "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
         "testuser:$6$hash:19500:0:99999:7:::\n",
@@ -1972,5 +1967,168 @@ fn test_home_given_with_a_trailing_slash_is_stored_without() {
             passwd.contains(&format!(":{stored}:/bin/bash")),
             "-d {given}: {passwd}"
         );
+    }
+}
+
+/// One account, unlocked, in no supplementary group, with its files at hand.
+fn setup_one_user() -> tempfile::TempDir {
+    setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "testuser:x:1000:\nwheel:x:10:\n",
+    )
+}
+
+/// Assert that a command exits `code` and leaves passwd and shadow alone.
+fn assert_refused(dir: &tempfile::TempDir, args: &[&str], code: i32) {
+    let (passwd, shadow) = (read_passwd(dir), read_shadow(dir));
+    assert_eq!(run_with_prefix(dir, args), code, "{args:?}");
+    assert_eq!(read_passwd(dir), passwd, "{args:?}");
+    assert_eq!(read_shadow(dir), shadow, "{args:?}");
+}
+
+// Ubuntu 26.04's usermod with a login and nothing else: "no options", exit 2,
+// unless the login does not exist. These two look at the real /etc, since -P
+// is an option, and change nothing there.
+#[test]
+fn test_no_option_at_all_exits_2() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    assert_eq!(run(&["usermod", "root"]), 2);
+    assert_eq!(run(&["usermod", "no_such_user_9f3a"]), 6);
+}
+
+// -P and -R count as options to it: exit 0, "no changes".
+#[test]
+fn test_only_a_prefix_exits_0() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_one_user();
+    assert_refused(&dir, &["testuser"], 0);
+}
+
+// Probed on Ubuntu 26.04: -a, -r and -m need their partner, -r excludes -a and
+// -L, -U and -p exclude each other, all exit 2 and nothing written. Debian 13
+// gives the same.
+#[test]
+fn test_flags_that_need_each_other_exit_2() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_one_user();
+    for args in [
+        &["-a", "testuser"][..],
+        &["-a", "-c", "new", "testuser"][..],
+        &["-a", "-l", "renamed", "testuser"][..],
+        &["-r", "testuser"][..],
+        &["-m", "testuser"][..],
+        &["-a", "-r", "-G", "wheel", "testuser"][..],
+        &["-L", "-U", "testuser"][..],
+        &["-L", "-p", "x", "testuser"][..],
+        &["-U", "-p", "x", "testuser"][..],
+    ] {
+        assert_refused(&dir, args, 2);
+    }
+}
+
+// The login is looked up first, so the code says it is the name that is wrong.
+#[test]
+fn test_missing_user_comes_before_the_flag_checks() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_one_user();
+    for args in [
+        &["-a", "ghost"][..],
+        &["-r", "ghost"][..],
+        &["-m", "ghost"][..],
+        &["-L", "-U", "ghost"][..],
+        &["-p", "a:b", "ghost"][..],
+    ] {
+        assert_refused(&dir, args, 6);
+    }
+}
+
+// A value the option cannot parse is exit 3, before the login is looked at.
+#[test]
+fn test_value_that_does_not_parse_exits_3() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_one_user();
+    assert_refused(&dir, &["-u", "abc", "ghost"], 3);
+    assert_refused(&dir, &["-f", "abc", "testuser"], 3);
+    assert_refused(&dir, &["-c", "a:b", "-a", "testuser"], 3);
+}
+
+// Ubuntu 26.04's usermod -U on a field that would come out empty warns, exits 0
+// and leaves it locked. Everything else on the command line still happens.
+#[test]
+fn test_unlock_to_an_empty_field_warns_and_exits_0() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_one_user();
+    std::fs::write(
+        dir.path().join("etc/shadow"),
+        "testuser:!:19500:0:99999:7:::\n",
+    )
+    .expect("failed to write shadow file");
+
+    assert_eq!(run_with_prefix(&dir, &["-U", "-c", "new", "testuser"]), 0);
+    assert!(read_shadow(&dir).contains("testuser:!:"), "still locked");
+    assert!(read_passwd(&dir).contains(":new:"), "-c still applied");
+}
+
+// One '!' goes per -U; a field with none is left as it is, without complaint.
+#[test]
+fn test_unlock_matches_upstream_on_every_field() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    for (before, after) in [
+        ("$6$h", "$6$h"),
+        ("!$6$h", "$6$h"),
+        ("!!$6$h", "!$6$h"),
+        ("!!", "!"),
+        ("!", "!"),
+        ("", ""),
+        ("*", "*"),
+        ("!*", "*"),
+    ] {
+        let dir = setup_one_user();
+        std::fs::write(
+            dir.path().join("etc/shadow"),
+            format!("testuser:{before}:19500:0:99999:7:::\n"),
+        )
+        .expect("failed to write shadow file");
+        assert_eq!(run_with_prefix(&dir, &["-U", "testuser"]), 0, "{before:?}");
+        assert!(
+            read_shadow(&dir).starts_with(&format!("testuser:{after}:")),
+            "{before:?} should give {after:?}, got {}",
+            read_shadow(&dir)
+        );
+    }
+}
+
+// Ubuntu 26.04's usermod -p with a character that would break the file exits 1.
+// It has already written passwd by then, so -l or -c stay applied and the account
+// is half renamed. Here nothing is written, which usermod(8) records.
+#[test]
+fn test_password_that_breaks_the_file_exits_1_and_writes_nothing() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_one_user();
+    for args in [
+        &["-p", "a:b", "testuser"][..],
+        &["-p", ":", "testuser"][..],
+        &["-p", "a\nb", "testuser"][..],
+        &["-c", "new", "-p", "a:b", "testuser"][..],
+        &["-l", "renamed", "-p", "a:b", "testuser"][..],
+    ] {
+        assert_refused(&dir, args, 1);
     }
 }

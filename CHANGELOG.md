@@ -54,6 +54,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `usermod LOGIN` with no option is refused with `no options`, exit 2, as upstream
+  does, and exit 6 if the login does not exist. It exited 0. With only `-P` or `-R`
+  it stays exit 0
+
+- `usermod` prints `usermod: no changes` on standard output when every value it was
+  given is what the account already has, as upstream does
+
+- `usermod` looks the login up before it complains about `-a` or `-r` without `-G`,
+  `-m` without `-d`, or `-L` with `-U`: a login that does not exist is exit 6. `-p`
+  with `-L` or `-U` is refused too, exit 2, and a value that does not parse is exit
+  3, not 2, all as upstream does. `-a` without `-G` stays exit 2
+
+- `usermod -U` on a field that would come out empty warns and exits 0, as upstream
+  does, and whatever else was asked for still happens. It exited 3. The account
+  stays locked either way
+
+- `usermod -p` with a colon or a newline exits 1, as upstream does. It exited 3.
+  Nothing is written; upstream has written `/etc/passwd` by then
+
+- `usermod -U` and `passwd -u` take off one `!` at a time, and leave a field with
+  none as it is with exit 0, as upstream does: `!!` becomes `!`. They exited 3 for
+  `!!`, for an empty field, for `*` and for an account that was not locked. A field
+  that would come out empty still stays locked
+
 - `groupdel -f` and `userdel -f` on a name that does not exist exit 6, as upstream
   does. They exited 0, and `userdel -f` also cleaned the name out of `shadow`, the
   group lists and the subordinate ID files, which upstream leaves alone

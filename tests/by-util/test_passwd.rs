@@ -299,7 +299,34 @@ fn test_unlock_only_bang_fails() {
     // Password "!" cannot be unlocked (would leave empty).
     let dir = setup_prefix("testuser:!:19500:0:99999:7:::\n");
     let code = run_with_prefix(&dir, &["-u", "testuser"]);
-    assert_ne!(code, 0, "unlock with only '!' should fail");
+    assert_eq!(code, 3, "unlock with only '!' should fail");
+    assert!(read_shadow(&dir).starts_with("testuser:!:"), "still locked");
+}
+
+// Ubuntu 26.04's passwd -u: one '!' goes, a field with none is left as it is and
+// that is success. Only a field that would come out empty is refused.
+#[test]
+fn test_unlock_matches_upstream_on_every_field() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    for (before, after) in [
+        ("$6$h", "$6$h"),
+        ("!$6$h", "$6$h"),
+        ("!!$6$h", "!$6$h"),
+        ("!!", "!"),
+        ("", ""),
+        ("*", "*"),
+        ("!*", "*"),
+    ] {
+        let dir = setup_prefix(&format!("testuser:{before}:19500:0:99999:7:::\n"));
+        assert_eq!(run_with_prefix(&dir, &["-u", "testuser"]), 0, "{before:?}");
+        assert!(
+            read_shadow(&dir).starts_with(&format!("testuser:{after}:")),
+            "{before:?} should give {after:?}, got {}",
+            read_shadow(&dir)
+        );
+    }
 }
 
 #[test]

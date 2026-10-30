@@ -77,26 +77,22 @@ impl ShadowEntry {
         }
     }
 
-    /// Unlock the password by removing the leading `!`.
+    /// Unlock the password by removing one leading `!`.
     ///
-    /// Returns `false` if the password is not locked, would become empty
-    /// after unlocking, or is the system account marker `*` (which
-    /// cannot be unlocked — use `delete_password` + rehash instead).
-    ///
-    /// Note: `is_locked()` returns `true` for `*`, but `unlock()` returns
-    /// `false` because removing one character from `*` yields an empty
-    /// password, which GNU passwd refuses.
+    /// Returns `false`, changing nothing, only when that would leave the field
+    /// empty, which would open the account with no password at all. A field
+    /// with no `!` is left as it is, and that counts as done: an empty one, a
+    /// hash, or the system account marker `*`. `passwd -u` and `usermod -U` of
+    /// Ubuntu 26.04's package both behave this way.
     pub fn unlock(&mut self) -> bool {
-        if !self.is_locked() {
-            return false;
+        match self.passwd.strip_prefix('!') {
+            Some("") => false,
+            Some(rest) => {
+                self.passwd = rest.to_owned();
+                true
+            }
+            None => true,
         }
-        let after = &self.passwd[1..];
-        if after.is_empty() || after == "!" {
-            // Would result in empty or still-locked password.
-            return false;
-        }
-        self.passwd = after.to_string();
-        true
     }
 
     /// Delete the password (set to empty string, making the account passwordless).
@@ -399,14 +395,16 @@ mod tests {
     }
 
     #[test]
-    fn test_unlock_not_locked_returns_false() {
-        let mut entry = ShadowEntry {
-            name: "u".into(),
-            passwd: "$6$hash".into(),
-            ..Default::default()
-        };
-        assert!(!entry.unlock());
-        assert_eq!(entry.passwd, "$6$hash", "should be unchanged");
+    fn test_unlock_not_locked_changes_nothing() {
+        for field in ["$6$hash", "", "*"] {
+            let mut entry = ShadowEntry {
+                name: "u".into(),
+                passwd: field.into(),
+                ..Default::default()
+            };
+            assert!(entry.unlock(), "{field:?}");
+            assert_eq!(entry.passwd, field, "should be unchanged");
+        }
     }
 
     #[test]
@@ -422,15 +420,15 @@ mod tests {
     }
 
     #[test]
-    fn test_unlock_double_bang_returns_false() {
-        // "!!" — removing one '!' leaves "!" which is still invalid.
+    fn test_unlock_double_bang_removes_one() {
+        // One '!' per unlock: what is left is still locked, so nothing opens.
         let mut entry = ShadowEntry {
             name: "u".into(),
             passwd: "!!".into(),
             ..Default::default()
         };
-        assert!(!entry.unlock());
-        assert_eq!(entry.passwd, "!!", "should be unchanged");
+        assert!(entry.unlock());
+        assert_eq!(entry.passwd, "!");
     }
 
     #[test]

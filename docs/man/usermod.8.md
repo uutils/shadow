@@ -69,7 +69,8 @@ changes that are specified on the command line.
 
 **-p**, **--password** *PASSWORD*
 :   Set the user's password to the specified pre-hashed value. The hash
-    must not contain ':', '\\n', or '\\r' characters.
+    must not contain ':', '\\n', or '\\r' characters; the exit status is 1 and
+    nothing is written. Cannot be used with **-L** or **-U**, exit status 2.
 
 **-P**, **--prefix** *PREFIX_DIR*
 :   Use *PREFIX_DIR* as a prefix for system file paths.
@@ -96,8 +97,9 @@ changes that are specified on the command line.
     account has is exit status 4.
 
 **-U**, **--unlock**
-:   Unlock the user's password by removing the '!' prefix from the
-    shadow password. Exit status 3 if that would leave the password field empty.
+:   Unlock the user's password by removing one '!' from the front of the shadow
+    password. If that would leave the field empty, the account stays locked with a
+    warning, and the exit status is 0. A field with no '!' is left as it is.
 
 ## SUBORDINATE IDS
 
@@ -127,10 +129,11 @@ form.
 :   Success.
 
 **1**
-:   Cannot update password file.
+:   Cannot update password file, or a password given to **-p** would not fit it.
 
 **2**
-:   Invalid command syntax.
+:   Invalid command syntax: a missing login, a login with no option, or options
+    that need or exclude one another.
 
 **3**
 :   Invalid argument to an option.
@@ -187,14 +190,10 @@ in it, as **-u** and **-g** leave such a home alone without **-m**. Upstream
 keeps that directory's owner but re-owns the user's files inside it when it
 moves it.
 
-**Unlocking to an empty password is refused.** **-U** on a password field that
-holds only the lock exits 3 and changes nothing. Upstream exits 0.
-
-**Some usage is stricter.** **-a** without **-G** is exit 2, and upstream exits
-0. **-p** with a ':' in the hash is exit 3, and upstream exits 1.
-
-**Running with no change to make succeeds.** *usermod LOGIN* with no option exits
-0. Upstream prints *no options* and exits 2.
+**A password that would not fit the file changes nothing.** **-p** with a ':' or
+a newline exits 1, as upstream does. Upstream has written /etc/passwd by then, so
+what **-l** or **-c** asked for stays, and a rename leaves /etc/shadow with the old
+name. Here nothing is written.
 
 **Some options are not implemented.** **-o**/**--non-unique**,
 **-b**/**--badname**, **-Z**/**--selinux-user** and **--selinux-range** are

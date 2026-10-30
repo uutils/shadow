@@ -201,6 +201,30 @@ compare_exit "userdel -f on an unknown login" \
 compare_exit "userdel -r -f on an unknown login" \
     "$RS/userdel -r -f no_such_user_9f3a" "/usr/sbin/userdel -r -f no_such_user_9f3a"
 
+# usermod's arguments. The first three are refused before anything is written,
+# and the rest leave nothing behind, so the two runs start from the same files.
+compare_exit "usermod with a login and no option" \
+    "$RS/usermod $PROBE" "/usr/sbin/usermod $PROBE"
+compare_exit "usermod with no option on an unknown login" \
+    "$RS/usermod no_such_user_9f3a" "/usr/sbin/usermod no_such_user_9f3a"
+compare_exit "usermod -a without -G" "$RS/usermod -a $PROBE" "/usr/sbin/usermod -a $PROBE"
+compare_exit "usermod -a on an unknown login" \
+    "$RS/usermod -a no_such_user_9f3a" "/usr/sbin/usermod -a no_such_user_9f3a"
+compare_exit "usermod -L with -p" "$RS/usermod -L -p x $PROBE" "/usr/sbin/usermod -L -p x $PROBE"
+compare_exit "usermod -u with something else than a number" \
+    "$RS/usermod -u abc $PROBE" "/usr/sbin/usermod -u abc $PROBE"
+compare_exit "usermod -p with a colon" "$RS/usermod -p a:b $PROBE" "/usr/sbin/usermod -p a:b $PROBE"
+compare_exit "usermod -p with a colon on an unknown login" \
+    "$RS/usermod -p a:b no_such_user_9f3a" "/usr/sbin/usermod -p a:b no_such_user_9f3a"
+/usr/sbin/usermod -p '!' "$PROBE" >/dev/null 2>&1
+compare_exit "usermod -U when the field would come out empty" \
+    "$RS/usermod -U $PROBE" "/usr/sbin/usermod -U $PROBE"
+/usr/sbin/usermod -s /bin/false "$PROBE" >/dev/null 2>&1
+compare_output "usermod with the values the account has" \
+    "$RS/usermod -s /bin/false $PROBE" "/usr/sbin/usermod -s /bin/false $PROBE"
+compare_exit "passwd -u on a field with no lock" \
+    "$RS/passwd -u root" "/usr/bin/passwd -u root"
+
 # Member lists: both tools refuse a name that is not a user, and nothing is left
 # behind, so the two runs start from the same files.
 compare_exit "groupmod -U with a user that does not exist" \
