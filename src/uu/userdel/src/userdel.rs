@@ -113,26 +113,21 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let pre_entries = passwd::read_passwd_file(&passwd_path)
         .map_err(|e| UserdelError::CantUpdatePasswd(format!("cannot read passwd: {e}")))?;
 
-    let target = pre_entries.iter().find(|e| e.name == *login).cloned();
-
-    // userdel(8): exit 6 when the user does not exist. With -f the removal of
-    // whatever remains (group membership, subordinate IDs) still proceeds.
-    if target.is_none() && !force {
+    // userdel(8): exit 6 when the user does not exist, with -f too.
+    let Some(target) = pre_entries.iter().find(|e| e.name == *login) else {
         return Err(UserdelError::UserNotFound(format!("user '{login}' does not exist")).into());
-    }
+    };
 
-    let saved_uid = target.as_ref().map_or(0, |e| e.uid);
-    let primary_gid = target.as_ref().map(|e| e.gid);
-    let saved_home = target.as_ref().map(|e| e.home.clone());
+    let saved_uid = target.uid;
+    let primary_gid = target.gid;
+    let saved_home = target.home.as_str();
     // A home shared with another still-present account must not be deleted
     // unless forced (userdel(8): -r removes it "even if another user uses the
     // same home directory" only with -f).
-    let home_shared_by_other = target.as_ref().is_some_and(|t| {
-        !t.home.is_empty()
-            && pre_entries
-                .iter()
-                .any(|e| e.name != *login && e.home == t.home)
-    });
+    let home_shared_by_other = !saved_home.is_empty()
+        && pre_entries
+            .iter()
+            .any(|e| e.name != *login && e.home == saved_home);
 
     // USERGROUPS_ENAB defaults to "yes" when unset or the file is absent.
     let usergroups_enab = shadow_core::login_defs::LoginDefs::load(&root.login_defs_path())
@@ -145,11 +140,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let signals = shadow_core::hardening::SignalBlocker::block_critical()
         .map_err(|e| UserdelError::CantUpdatePasswd(format!("cannot block signals: {e}")))?;
 
-    // 1. Remove from /etc/passwd (only if present; with -f it may be absent).
-    if target.is_some() {
-        remove_entry_from_file::<PasswdEntry>(&passwd_path, login, "passwd")
-            .map_err(UserdelError::CantUpdatePasswd)?;
-    }
+    // 1. Remove from /etc/passwd.
+    remove_entry_from_file::<PasswdEntry>(&passwd_path, login, "passwd")
+        .map_err(UserdelError::CantUpdatePasswd)?;
 
     // 2. Remove from /etc/shadow (a missing entry is not an error).
     let shadow_path = root.shadow_path();
@@ -186,10 +179,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     // 7. Optionally remove the home directory and mail spool.
     if remove_home {
-        if let Some(ref home_dir) = saved_home
-            && !home_dir.is_empty()
-        {
-            let home = root.resolve(home_dir);
+        if !saved_home.is_empty() {
+            let home = root.resolve(saved_home);
             safe_remove_home(&home, saved_uid, force, home_shared_by_other)?;
         }
 
@@ -219,8 +210,8 @@ pub fn uu_app() -> Command {
                 .short('f')
                 .long("force")
                 .help(
-                    "Remove even if the user does not exist, and with -r remove the home \
-                     directory even if it is not owned by the user or is shared",
+                    "With -r, remove the home directory even if it is not owned by the user \
+                     or is shared",
                 )
                 .action(ArgAction::SetTrue),
         )
@@ -423,7 +414,7 @@ fn remove_from_gshadow_members(path: &Path, login: &str) -> Result<(), String> {
 fn remove_user_private_group(
     root: &SysRoot,
     login: &str,
-    saved_gid: Option<u32>,
+    saved_gid: u32,
     pre_entries: &[PasswdEntry],
     force: bool,
 ) -> Result<(), String> {
@@ -448,7 +439,7 @@ fn remove_user_private_group(
     // Keep it if it is a private group whose GID is not the user's primary
     // one (then it is not really this user's), or another user's primary
     // group, unless forced.
-    if saved_gid != Some(gid) && !force {
+    if saved_gid != gid && !force {
         return Ok(());
     }
     if !force && pre_entries.iter().any(|e| e.name != login && e.gid == gid) {

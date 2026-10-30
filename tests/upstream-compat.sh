@@ -194,6 +194,13 @@ compare_exit "chpasswd -s without -c" \
 compare_exit "chpasswd -e with -c" \
     "echo x:y | $RS/chpasswd -e -c SHA512" "echo x:y | /usr/sbin/chpasswd -e -c SHA512"
 
+compare_exit "groupdel -f on an unknown group" \
+    "$RS/groupdel -f no_such_group_9f3a" "/usr/sbin/groupdel -f no_such_group_9f3a"
+compare_exit "userdel -f on an unknown login" \
+    "$RS/userdel -f no_such_user_9f3a" "/usr/sbin/userdel -f no_such_user_9f3a"
+compare_exit "userdel -r -f on an unknown login" \
+    "$RS/userdel -r -f no_such_user_9f3a" "/usr/sbin/userdel -r -f no_such_user_9f3a"
+
 # Member lists: both tools refuse a name that is not a user, and nothing is left
 # behind, so the two runs start from the same files.
 compare_exit "groupmod -U with a user that does not exist" \

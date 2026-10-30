@@ -19,8 +19,9 @@ is also removed from membership lists in /etc/group and /etc/gshadow.
 ## OPTIONS
 
 **-f**, **--force**
-:   Exit 0 if the user does not exist. With **-r**, remove the home directory
-    even if it is not owned by the user or is shared with another account.
+:   With **-r**, remove the home directory even if it is not owned by the user or
+    is shared with another account. A user that does not exist is still exit
+    status 6.
 
 **-P**, **--prefix** *PREFIX_DIR*
 :   Use *PREFIX_DIR* as a prefix for system file paths.
@@ -53,7 +54,6 @@ is also removed from membership lists in /etc/group and /etc/gshadow.
 
 ## DIFFERENCES FROM UPSTREAM SHADOW
 
-**-f** on a user that does not exist exits 0, where upstream exits 6.
 **-Z**/**--selinux-user** is not implemented, and is refused as an unknown
 option, exit 2.
 

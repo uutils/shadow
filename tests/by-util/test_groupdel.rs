@@ -255,14 +255,16 @@ fn test_force_and_sole_gshadow_entry() {
         return;
     }
 
-    // groupdel(8) -f: succeed even when the group does not exist.
+    // Ubuntu 26.04's groupdel: -f is about the primary group check only, and a
+    // group that does not exist is exit 6 with it too.
     let dir = setup_root(
         "only:x:1000:\n",
         "only:!::\n",
         "root:x:0:0:root:/root:/bin/sh\n",
     );
     let prefix = dir.path().to_str().unwrap();
-    assert_eq!(run(&["groupdel", "-P", prefix, "-f", "ghost"]), 0);
+    assert_eq!(run(&["groupdel", "-P", prefix, "-f", "ghost"]), 6);
+    assert_eq!(run(&["groupdel", "-P", prefix, "--force", "ghost"]), 6);
 
     // The sole gshadow entry used to be left behind: the write was skipped
     // whenever the result was empty.
