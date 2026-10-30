@@ -19,12 +19,21 @@ Checks performed include:
 - Correct number of fields
 - Unique group names
 - Valid GID values
+- Valid group names
 - Matching group/gshadow entries
+- Members and administrators that exist, in both files
+- A password field of *x* in /etc/group for a group in /etc/gshadow
+
+Files with no problem produce no output. Each problem gets a line on standard
+output, and then **grpck** prints *grpck: no changes*, also on standard output, and
+exits 2; the files are not rewritten. A member listed in one file and not the other
+gets a line too, but is not a problem: the exit status stays 0. A file that cannot
+be opened is reported on standard error.
 
 ## OPTIONS
 
 **-q**, **--quiet**
-:   Report only errors, suppress warnings.
+:   Accepted, and changes nothing: the report is the same with it.
 
 **-r**, **--read-only**
 :   Display errors and warnings but do not modify files.
@@ -57,10 +66,25 @@ Checks performed include:
 
 ## DIFFERENCES FROM UPSTREAM SHADOW
 
-Problems are reported on standard error, where upstream uses standard output, and
-in a shorter form: a duplicate entry gets one line, without upstream's offer to
-delete it. Nothing like upstream's *grpck: no changes* is printed. **-q** does
-the job of upstream's **-S**/**--silence-warnings**, which is not accepted here.
+Compared with the **grpck** of Ubuntu 26.04's *passwd* package, 1:4.17.4-2ubuntu3.
+
+**Nothing is repaired.** An entry that is bad or has no match gets one line,
+without upstream's offer to delete it or add what is missing. The files are only
+rewritten by **-s**.
+
+**Comments and blank lines are not bad entries.** Upstream reports them, and exits
+2. Here they are kept, and **-s** moves each with the entry it precedes.
+
+**-s checks first.** Upstream sorts whatever it finds, exit 0. Here a problem is
+reported, the exit status is 2, and nothing is sorted: a line that cannot be parsed
+has no place in a sorted file.
+
+**A missing file is not a lock failure.** Nothing is locked unless **-s** is given,
+so a *group* file that is not there is exit 3 in every mode; upstream exits 4
+without **-r**. A *gshadow* file that is not there means no gshadow file, exit 0.
+
+**-S**/**--silence-warnings** is not implemented, and is refused as an unknown
+option, exit 1.
 
 ## FILES
 

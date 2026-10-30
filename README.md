@@ -55,7 +55,7 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
 | Tool | Status |
 |------|--------|
 | `passwd` | **All 16 flags implemented.** Drop-in for upstream passwd. PAM password change, Landlock sandboxing, `--root`, `--quiet`, `--stdin`. `-S` output and exit codes compared with the distribution's `passwd` by `make test-upstream-compat`. |
-| `pwck` | **Implemented.** Silent on clean files, `pwck: no changes` after an error. Messages go to stderr where upstream uses stdout; see `pwck(8)`. |
+| `pwck` | **Implemented.** Silent on clean files, each problem on stdout and `pwck: no changes` after them. Offers no repairs; see `pwck(8)`. |
 | `useradd` | **Implemented.** UID/GID allocation, home dir + skel, shadow entry, group creation. |
 | `userdel` | **Implemented.** Remove from all system files, optional home/mail cleanup. |
 | `usermod` | **Implemented.** Modify account properties and group membership (`-G`, `-a`, `-r`), lock/unlock, set pre-hashed password, subordinate IDs, move the home (`-m`) and re-own it through descriptors. Not implemented: `-o`, `-b`, `-Z`, `--selinux-range`. |
@@ -64,7 +64,7 @@ default-in-Ubuntu in under 3 years. This project follows that playbook.
 | `groupadd` | **Implemented.** Auto GID allocation, system groups, force mode, initial members. |
 | `groupdel` | **Implemented.** Primary group usage check, force mode. |
 | `groupmod` | **Implemented.** GID change, rename, password, member list in group and gshadow. |
-| `grpck` | **Implemented.** Group/gshadow integrity verification. |
+| `grpck` | **Implemented.** Silent on clean files, each problem on stdout and `grpck: no changes` after them. Offers no repairs; see `grpck(8)`. |
 | `chfn` | **Implemented.** GECOS sub-field modification. |
 | `chsh` | **Implemented.** Shell change with /etc/shells validation. |
 | `newgrp` | **Implemented.** Effective group change with crypt verification. |

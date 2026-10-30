@@ -515,7 +515,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     };
 
     if !changing {
-        let _ = writeln!(std::io::stdout(), "{}: no changes", uucore::util_name());
+        let _ = writeln!(std::io::stdout(), "usermod: no changes");
     }
 
     nscd::invalidate_cache("passwd");

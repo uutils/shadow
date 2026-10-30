@@ -20,7 +20,7 @@ use clap::{Arg, ArgAction, Command};
 use shadow_core::group::{self, GroupEntry};
 use shadow_core::nscd;
 use shadow_core::passwd::PasswdEntry;
-use shadow_core::shadow::{self, ShadowEntry};
+use shadow_core::shadow::ShadowEntry;
 use shadow_core::sysroot::SysRoot;
 use shadow_core::transaction::{self, Commit, LockedFile};
 
@@ -158,6 +158,15 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     run_checks(&opts)
 }
 
+/// Say one thing about the files: on standard output, as upstream does. What goes
+/// wrong with the run itself, a file that cannot be opened, goes to standard error.
+fn report(message: fmt::Arguments<'_>) {
+    let _ = writeln!(std::io::stdout(), "{message}");
+}
+
+/// The longest user name `pwck` takes, as seen on Ubuntu 26.04's.
+const MAX_USER_NAME_LEN: usize = 255;
+
 /// Core logic, separated from argument parsing to keep `uumain` short.
 fn run_checks(opts: &PwckOptions) -> UResult<()> {
     let passwd_lines = read_raw_lines(&opts.passwd_path).map_err(|e| {
@@ -173,13 +182,15 @@ fn run_checks(opts: &PwckOptions) -> UResult<()> {
         match raw_line.parse::<PasswdEntry>() {
             Ok(entry) => passwd_entries.push(entry),
             Err(e) => {
-                uucore::show_error!("invalid password file entry at line {line_num}: {e}");
+                report(format_args!(
+                    "invalid password file entry at line {line_num}: {e}"
+                ));
                 errors += 1;
             }
         }
     }
 
-    let shadow_entries = load_shadow_file(&opts.shadow_path)?;
+    let shadow_entries = load_shadow_file(&opts.shadow_path, &mut errors)?;
 
     // Check shadow file permissions (should be 0600 or 0640).
     if !opts.quiet {
@@ -191,25 +202,24 @@ fn run_checks(opts: &PwckOptions) -> UResult<()> {
     let shells_path = opts.root.resolve("/etc/shells");
     let valid_shells = read_valid_shells(&shells_path);
 
-    let result = check_passwd_entries(
+    errors += check_passwd_entries(
         &passwd_entries,
         &shadow_entries,
         &group_entries,
         &valid_shells,
         opts.quiet,
         &opts.root,
+        (&opts.passwd_path, &opts.shadow_path),
     );
-    errors += result.errors;
 
-    let shadow_result = check_shadow_entries(&shadow_entries, &passwd_entries, opts.quiet);
-    errors += shadow_result.errors;
+    errors += check_shadow_entries(&shadow_entries, &passwd_entries, opts.quiet);
 
     // Never rewrite the files when parse errors were found: sorting works on
     // the entries that parsed, so writing would silently drop every line pwck
     // just reported as invalid. Report the errors and stop.
     if errors > 0 {
-        // Like GNU pwck, say so on stdout, even with -q
-        let _ = writeln!(std::io::stdout(), "{}: no changes", uucore::util_name());
+        // Like upstream, say so on stdout, even with -q.
+        report(format_args!("pwck: no changes"));
         return Err(PwckError::BadEntry(String::new()).into());
     }
 
@@ -220,14 +230,29 @@ fn run_checks(opts: &PwckOptions) -> UResult<()> {
     Ok(())
 }
 
-/// Load shadow file, returning empty vec if file does not exist.
-fn load_shadow_file(path: &Path) -> UResult<Vec<ShadowEntry>> {
-    if path.exists() {
-        shadow::read_shadow_file(path)
-            .map_err(|e| PwckError::CantOpen(format!("cannot open {}: {e}", path.display())).into())
-    } else {
-        Ok(Vec::new())
+/// Load shadow file, returning empty vec if file does not exist. A line that
+/// cannot be parsed is a bad entry, counted in `errors`, as it is in passwd.
+fn load_shadow_file(path: &Path, errors: &mut u32) -> UResult<Vec<ShadowEntry>> {
+    if !path.exists() {
+        return Ok(Vec::new());
     }
+    let lines = read_raw_lines(path)
+        .map_err(|e| PwckError::CantOpen(format!("cannot open {}: {e}", path.display())))?;
+
+    let mut entries = Vec::with_capacity(lines.len());
+    for (line_no, raw_line) in lines.iter().enumerate() {
+        match raw_line.parse::<ShadowEntry>() {
+            Ok(entry) => entries.push(entry),
+            Err(e) => {
+                let line_num = line_no + 1;
+                report(format_args!(
+                    "invalid shadow password file entry at line {line_num}: {e}"
+                ));
+                *errors += 1;
+            }
+        }
+    }
+    Ok(entries)
 }
 
 /// Load group file for GID validation. Returns empty vec on failure.
@@ -356,16 +381,6 @@ pub fn uu_app() -> Command {
 }
 
 // ---------------------------------------------------------------------------
-// Check results
-// ---------------------------------------------------------------------------
-
-struct CheckResult {
-    errors: u32,
-    #[cfg_attr(not(test), allow(dead_code))]
-    warnings: u32,
-}
-
-// ---------------------------------------------------------------------------
 // Core verification logic
 // ---------------------------------------------------------------------------
 
@@ -379,26 +394,23 @@ fn check_home_and_shell(
     entry: &PasswdEntry,
     root: &SysRoot,
     valid_shells: &HashSet<PathBuf>,
-    stderr: &mut dyn Write,
 ) -> u32 {
     let mut errors = 0;
 
     if !entry.home.is_empty() && entry.home != "/nonexistent" {
         if entry.home.starts_with('/') {
             if !root.resolve(&entry.home).exists() {
-                let _ = writeln!(
-                    stderr,
+                report(format_args!(
                     "user '{}': directory '{}' does not exist",
                     entry.name, entry.home
-                );
+                ));
                 errors += 1;
             }
         } else {
-            let _ = writeln!(
-                stderr,
+            report(format_args!(
                 "user '{}': directory '{}' is not an absolute path",
                 entry.name, entry.home
-            );
+            ));
             errors += 1;
         }
     }
@@ -413,19 +425,17 @@ fn check_home_and_shell(
                 && !valid_shells.contains(Path::new(&entry.shell))
                 && !root.resolve(&entry.shell).exists()
             {
-                let _ = writeln!(
-                    stderr,
+                report(format_args!(
                     "user '{}': program '{}' does not exist",
                     entry.name, entry.shell
-                );
+                ));
                 errors += 1;
             }
         } else {
-            let _ = writeln!(
-                stderr,
+            report(format_args!(
                 "user '{}': program '{}' is not an absolute path",
                 entry.name, entry.shell
-            );
+            ));
             errors += 1;
         }
     }
@@ -433,7 +443,11 @@ fn check_home_and_shell(
     errors
 }
 
-/// Run all passwd-related integrity checks.
+/// Run all passwd-related integrity checks, returning the number of problems.
+///
+/// `-q` makes some of them no problem at all, as it does upstream: a primary
+/// group, a home or a shell that is not there, and a password field that is not
+/// `x`. A bad name and a missing shadow entry stay.
 #[allow(clippy::too_many_arguments)]
 fn check_passwd_entries(
     passwd_entries: &[PasswdEntry],
@@ -442,68 +456,79 @@ fn check_passwd_entries(
     valid_shells: &HashSet<PathBuf>,
     quiet: bool,
     root: &SysRoot,
-) -> CheckResult {
+    (passwd_path, shadow_path): (&Path, &Path),
+) -> u32 {
     let mut errors: u32 = 0;
-    let mut warnings: u32 = 0;
 
     let mut seen_names: HashSet<&str> = HashSet::new();
     let group_gids: HashSet<u32> = group_entries.iter().map(|g| g.gid).collect();
     let shadow_names: HashSet<&str> = shadow_entries.iter().map(|s| s.name.as_str()).collect();
-    let mut stderr = std::io::stderr().lock();
 
     for entry in passwd_entries {
         // Check 2: Unique and valid usernames.
         if entry.name.is_empty() {
-            uucore::show_error!("invalid password entry: blank username");
+            report(format_args!("invalid password entry: blank username"));
             errors += 1;
         } else if !seen_names.insert(entry.name.as_str()) {
-            uucore::show_error!("duplicate password entry for '{}'", entry.name);
+            report(format_args!(
+                "duplicate password entry for '{}'",
+                entry.name
+            ));
             errors += 1;
-        } else if !quiet && shadow_core::validate::validate_username(&entry.name).is_err() {
-            uucore::show_warning!("user '{}': invalid username", entry.name);
-            warnings += 1;
+        } else if !shadow_core::validate::is_valid_account_name(&entry.name, MAX_USER_NAME_LEN) {
+            report(format_args!("invalid user name '{}'", entry.name));
+            errors += 1;
         }
 
-        // Check 4: Primary group exists in /etc/group.
-        if !group_entries.is_empty() && !group_gids.contains(&entry.gid) {
-            uucore::show_error!("user '{}': no group {}", entry.name, entry.gid);
+        // Check 4: Primary group exists, in the file or the name service.
+        if !quiet
+            && !group_entries.is_empty()
+            && !group_gids.contains(&entry.gid)
+            && uucore::entries::gid2grp(entry.gid).is_err()
+        {
+            report(format_args!(
+                "user '{}': no group {}",
+                entry.name, entry.gid
+            ));
             errors += 1;
         }
 
         // Checks 5 and 6: the home directory and the login shell.
         if !quiet {
-            errors += check_home_and_shell(entry, root, valid_shells, &mut stderr);
+            errors += check_home_and_shell(entry, root, valid_shells);
         }
 
-        // Check 9: Password should be 'x' (hash in shadow file).
-        if entry.passwd != "x" && entry.passwd != "*" {
-            if entry.passwd.is_empty() {
-                uucore::show_error!("user '{}': no password entry in shadow file", entry.name);
-                errors += 1;
-            } else if !quiet {
-                uucore::show_warning!("user '{}': password not in shadow file", entry.name);
-                warnings += 1;
-            }
+        // Check 9: With a shadow entry, the password field should say so.
+        if !quiet && entry.passwd != "x" && shadow_names.contains(entry.name.as_str()) {
+            report(format_args!(
+                "user {} has an entry in {}, but its password field in {} is not set to 'x'",
+                entry.name,
+                shadow_path.display(),
+                passwd_path.display()
+            ));
+            errors += 1;
         }
 
         // Check 7: Every passwd entry has a matching shadow entry.
         if !shadow_names.is_empty() && !shadow_names.contains(entry.name.as_str()) {
-            uucore::show_error!("no matching shadow entry for user '{}'", entry.name);
+            report(format_args!(
+                "no matching shadow entry for user '{}'",
+                entry.name
+            ));
             errors += 1;
         }
     }
 
-    CheckResult { errors, warnings }
+    errors
 }
 
-/// Run shadow-specific consistency checks.
+/// Run shadow-specific consistency checks, returning the number of problems.
 fn check_shadow_entries(
     shadow_entries: &[ShadowEntry],
     passwd_entries: &[PasswdEntry],
     quiet: bool,
-) -> CheckResult {
+) -> u32 {
     let mut errors: u32 = 0;
-    let mut warnings: u32 = 0;
 
     let passwd_names: HashSet<&str> = passwd_entries.iter().map(|p| p.name.as_str()).collect();
     let mut seen_shadow_names: HashSet<&str> = HashSet::new();
@@ -514,27 +539,33 @@ fn check_shadow_entries(
     for entry in shadow_entries {
         // Check 10: Shadow entries are unique.
         if !seen_shadow_names.insert(entry.name.as_str()) {
-            uucore::show_error!("duplicate shadow entry for '{}'", entry.name);
+            report(format_args!("duplicate shadow entry for '{}'", entry.name));
             errors += 1;
         }
 
         // Check 8: Every shadow entry has a matching passwd entry.
         if !passwd_names.contains(entry.name.as_str()) {
-            uucore::show_error!("no matching passwd entry for shadow user '{}'", entry.name);
+            report(format_args!(
+                "no matching passwd entry for shadow user '{}'",
+                entry.name
+            ));
             errors += 1;
         }
 
-        // Check 11: Shadow last_change is not in the future (warning).
+        // Check 11: Shadow last_change is not in the future.
         if !quiet
             && let Some(last_change) = entry.last_change
             && last_change > today_days
         {
-            uucore::show_warning!("user '{}': last password change in the future", entry.name);
-            warnings += 1;
+            report(format_args!(
+                "user {}: last password change in the future",
+                entry.name
+            ));
+            errors += 1;
         }
     }
 
-    CheckResult { errors, warnings }
+    errors
 }
 
 // ---------------------------------------------------------------------------
@@ -674,6 +705,10 @@ fn sort_shadow_by_passwd(
 mod tests {
     use super::*;
 
+    fn files() -> (&'static Path, &'static Path) {
+        (Path::new("/etc/passwd"), Path::new("/etc/shadow"))
+    }
+
     // -----------------------------------------------------------------------
     // Helper: build test entries
     // -----------------------------------------------------------------------
@@ -794,8 +829,9 @@ mod tests {
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
         let root = SysRoot::default();
 
-        let result = check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root);
-        assert_eq!(result.errors, 0);
+        let errors =
+            check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root, files());
+        assert_eq!(errors, 0);
     }
 
     #[test]
@@ -809,8 +845,9 @@ mod tests {
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
         let root = SysRoot::default();
 
-        let result = check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root);
-        assert!(result.errors >= 1, "duplicate username should be an error");
+        let errors =
+            check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root, files());
+        assert!(errors >= 1, "duplicate username should be an error");
     }
 
     #[test]
@@ -821,8 +858,9 @@ mod tests {
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
         let root = SysRoot::default();
 
-        let result = check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root);
-        assert!(result.errors >= 1, "empty username should be an error");
+        let errors =
+            check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root, files());
+        assert!(errors >= 1, "empty username should be an error");
     }
 
     #[test]
@@ -834,11 +872,9 @@ mod tests {
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
         let root = SysRoot::default();
 
-        let result = check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root);
-        assert!(
-            result.errors >= 1,
-            "missing primary group should be an error"
-        );
+        let errors =
+            check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root, files());
+        assert!(errors >= 1, "missing primary group should be an error");
     }
 
     #[test]
@@ -850,15 +886,13 @@ mod tests {
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
         let root = SysRoot::default();
 
-        let result = check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root);
-        assert!(
-            result.errors >= 1,
-            "missing shadow entry should be an error"
-        );
+        let errors =
+            check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root, files());
+        assert!(errors >= 1, "missing shadow entry should be an error");
     }
 
     #[test]
-    fn test_password_not_x_is_warning() {
+    fn test_password_not_x_is_error() {
         let mut entry = make_passwd("alice", 1000, 1000, "/home/alice", "/bin/bash");
         entry.passwd = "$6$hash".into();
 
@@ -868,10 +902,11 @@ mod tests {
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
         let root = SysRoot::default();
 
-        let result = check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root);
+        let errors =
+            check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root, files());
         assert!(
-            result.warnings >= 1,
-            "password not in shadow file should be a warning"
+            errors >= 1,
+            "password not in shadow file should be an error"
         );
     }
 
@@ -891,15 +926,16 @@ mod tests {
         let groups = vec![make_group("users", 1000)];
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
 
-        let result = check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root);
+        let errors =
+            check_passwd_entries(&passwd, &shadow, &groups, &shells, false, &root, files());
         assert!(
-            result.errors >= 1,
+            errors >= 1,
             "missing home directory should be an error (matching GNU)"
         );
     }
 
     #[test]
-    fn test_quiet_suppresses_warnings() {
+    fn test_quiet_hides_a_missing_home() {
         let dir = tempfile::tempdir().expect("failed to create tempdir");
         let root = SysRoot::new(Some(dir.path()));
 
@@ -914,8 +950,8 @@ mod tests {
         let groups = vec![make_group("users", 1000)];
         let shells: HashSet<PathBuf> = [PathBuf::from("/bin/bash")].into();
 
-        let result = check_passwd_entries(&passwd, &shadow, &groups, &shells, true, &root);
-        assert_eq!(result.warnings, 0, "quiet mode should suppress warnings");
+        let errors = check_passwd_entries(&passwd, &shadow, &groups, &shells, true, &root, files());
+        assert_eq!(errors, 0, "quiet mode should hide a missing home");
     }
 
     // -----------------------------------------------------------------------
@@ -927,8 +963,8 @@ mod tests {
         let passwd = vec![make_passwd("alice", 1000, 1000, "/home/alice", "/bin/bash")];
         let shadow = vec![make_shadow("alice"), make_shadow("ghost")];
 
-        let result = check_shadow_entries(&shadow, &passwd, false);
-        assert!(result.errors >= 1, "orphan shadow entry should be an error");
+        let errors = check_shadow_entries(&shadow, &passwd, false);
+        assert!(errors >= 1, "orphan shadow entry should be an error");
     }
 
     #[test]
@@ -936,25 +972,19 @@ mod tests {
         let passwd = vec![make_passwd("alice", 1000, 1000, "/home/alice", "/bin/bash")];
         let shadow = vec![make_shadow("alice"), make_shadow("alice")];
 
-        let result = check_shadow_entries(&shadow, &passwd, false);
-        assert!(
-            result.errors >= 1,
-            "duplicate shadow entry should be an error"
-        );
+        let errors = check_shadow_entries(&shadow, &passwd, false);
+        assert!(errors >= 1, "duplicate shadow entry should be an error");
     }
 
     #[test]
-    fn test_future_last_change_is_warning() {
+    fn test_future_last_change_is_error() {
         let passwd = vec![make_passwd("alice", 1000, 1000, "/home/alice", "/bin/bash")];
         let mut se = make_shadow("alice");
         // Set last_change far in the future.
         se.last_change = Some(999_999);
 
-        let result = check_shadow_entries(&[se], &passwd, false);
-        assert!(
-            result.warnings >= 1,
-            "future last_change should be a warning"
-        );
+        let errors = check_shadow_entries(&[se], &passwd, false);
+        assert!(errors >= 1, "future last_change should be a warning");
     }
 
     #[test]
@@ -963,9 +993,9 @@ mod tests {
         let mut se = make_shadow("alice");
         se.last_change = Some(999_999);
 
-        let result = check_shadow_entries(&[se], &passwd, true);
+        let errors = check_shadow_entries(&[se], &passwd, true);
         assert_eq!(
-            result.warnings, 0,
+            errors, 0,
             "quiet mode should suppress future last_change warning"
         );
     }
