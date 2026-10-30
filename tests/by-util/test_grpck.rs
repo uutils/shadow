@@ -372,3 +372,14 @@ fn test_group_names_upstream_accepts_and_refuses() {
         );
     }
 }
+
+#[test]
+fn test_silence_warnings_hides_only_members_that_differ() {
+    for flag in ["-S", "--silence-warnings"] {
+        let out = grpck_files("a:x:1:root\n", "a:!::\n", &[flag]);
+        assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{flag}");
+        grpck_files("a:x:1:ghost\n", "a:!::ghost\n", &[flag])
+            .assert_code(2)
+            .assert_stdout_contains("group a: no user ghost");
+    }
+}

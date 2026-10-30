@@ -12,7 +12,7 @@
 //! the caller's shell, `sg` runs a single command — so everything up to that
 //! point lives here.
 //!
-//! Distributions that ship the GNU suite make `sg` a symlink to `newgrp`, so
+//! Distributions that ship the upstream suite make `sg` a symlink to `newgrp`, so
 //! the two cannot disagree there. Keeping the shared half in one module is
 //! what buys us the same guarantee.
 
@@ -105,7 +105,7 @@ pub fn enter(root: &SysRoot, group: Option<&str>) -> Result<Session, ShadowError
                 ShadowError::Other(format!("cannot read {}: {e}", group_path.display()).into())
             })?;
             let Some(target) = groups.iter().find(|g| g.name == name) else {
-                // GNU's wording, which scripts match on.
+                // Upstream's wording, which scripts match on.
                 return Err(ShadowError::Validation("no such group".into()));
             };
 
@@ -133,7 +133,7 @@ pub fn enter(root: &SysRoot, group: Option<&str>) -> Result<Session, ShadowError
     // rebuilds the list from the member lists in `/etc/group`, and a primary
     // group is never named there, so on its own it drops the caller's original
     // group -- `sg staff` would cost them access to their own files. Adding it
-    // back is what the GNU tools do, and it has to happen while the privilege
+    // back is what the upstream tools do, and it has to happen while the privilege
     // to call setgroups(2) is still in hand.
     if entry.gid != target_gid {
         let mut groups = crate::process::getgroups()

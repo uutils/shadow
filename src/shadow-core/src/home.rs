@@ -47,6 +47,80 @@ pub fn create(
     gid: u32,
     mode: u32,
 ) -> Result<Outcome, ShadowError> {
+    create_with(home_path, skel_path, (uid, gid), mode, |path, mode| {
+        std::fs::DirBuilder::new().mode(mode).create(path)
+    })
+}
+
+/// Whether `path` is on a btrfs filesystem. A path that cannot be examined is not.
+#[must_use]
+pub fn is_on_btrfs(path: &Path) -> bool {
+    const BTRFS_SUPER_MAGIC: u32 = 0x9123_683E;
+    // The field's type differs between libcs; the magic is 32 bits in all of them.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    rustix::fs::statfs(path).is_ok_and(|fs| fs.f_type as u32 == BTRFS_SUPER_MAGIC)
+}
+
+/// Whether `path` is the top of a btrfs subvolume that is not mounted by itself.
+///
+/// Such a directory has a device of its own, as a mount point does, and can be
+/// removed, as a mount point cannot: 256 is the inode of a subvolume's top, and
+/// the mount table tells the two apart. If it cannot be read, the answer is no.
+#[must_use]
+pub fn is_btrfs_subvolume(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    let Ok(mounts) = std::fs::read_to_string("/proc/self/mountinfo") else {
+        return false;
+    };
+    let Some(wanted) = path.to_str().map(|p| p.replace(' ', "\\040")) else {
+        return false;
+    };
+    meta.ino() == 256
+        && is_on_btrfs(path)
+        && !mounts
+            .lines()
+            .any(|line| line.split(' ').nth(4) == Some(wanted.as_str()))
+}
+
+/// [`create`], with the home as a btrfs subvolume of its own.
+///
+/// # Errors
+///
+/// As [`create`], and if the directory the home goes in is not on btrfs.
+pub fn create_subvolume(
+    home_path: &Path,
+    skel_path: &Path,
+    uid: u32,
+    gid: u32,
+    mode: u32,
+) -> Result<Outcome, ShadowError> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    create_with(home_path, skel_path, (uid, gid), mode, |path, mode| {
+        if path.exists() {
+            return Err(std::io::ErrorKind::AlreadyExists.into());
+        }
+        let parent = path.parent().unwrap_or(Path::new("/"));
+        let (true, Some(name)) = (is_on_btrfs(parent), path.file_name()) else {
+            return Err(std::io::Error::other("it must be mounted on BTRFS"));
+        };
+        crate::process::btrfs_create_subvolume(parent, name)?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+    })
+}
+
+/// What [`create`] and [`create_subvolume`] share; `make_dir` makes the directory.
+fn create_with(
+    home_path: &Path,
+    skel_path: &Path,
+    (uid, gid): (u32, u32),
+    mode: u32,
+    make_dir: impl FnOnce(&Path, u32) -> std::io::Result<()>,
+) -> Result<Outcome, ShadowError> {
     create_ancestors(home_path)?;
 
     // The kernel does not reset the umask across setuid, so a caller-controlled
@@ -58,7 +132,7 @@ pub fn create(
     // copy_skel manages its own.
     let mkdir_result = {
         let _umask = crate::atomic::UmaskGuard::zero();
-        std::fs::DirBuilder::new().mode(mode).create(home_path)
+        make_dir(home_path, mode)
     };
 
     match mkdir_result {

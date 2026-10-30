@@ -32,6 +32,9 @@ not a problem.
 
 ## OPTIONS
 
+**-b**, **--badname**
+:   Accept names that would be reported, deprecated as it is upstream.
+
 **-q**, **--quiet**
 :   Do not check for a primary group, a home directory or a login shell that does
     not exist, a password field other than *x*, or a last password change in the
@@ -97,8 +100,6 @@ without **-r**. A *shadow* file that is not there means no shadow file, exit 0.
 0640, **pwck** warns on standard error unless **-q** is given. It is not a problem,
 and the exit status does not change. Upstream does not check.
 
-**-b**/**--badname** is not implemented, and is refused as an unknown option,
-exit 1.
 
 ## FILES
 

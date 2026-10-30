@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `chage LOGIN` prompts for each field, as upstream does. An empty answer or the end
+  of input keeps a value, `-1` empties a field, and an answer that does not parse is
+  exit 1 with nothing written
+
+- `usermod -o` allows a UID in use with `-u`, `usermod -b` and `useradd --badname`
+  accept a bad name, `pwck -b` does not report one, and `grpck -S` does not report
+  members who differ between the two files
+
+- `useradd -F` adds subordinate IDs for a system account
+
+- `useradd --btrfs-subvolume-home` with `-m` makes the home a btrfs subvolume. Off
+  btrfs it is exit 12 with the account written, as upstream
+
+- `useradd -Z`, `usermod -Z` and `userdel -Z` change the SELinux login mapping by
+  running `semanage login`, with `--selinux-range` for the first two. Without SELinux
+  in the kernel they exit 3 before anything else, as upstream
+
 - A release now publishes the workspace to crates.io by itself. Once dist has
   built the archives and created the GitHub release, it calls a reusable
   workflow that publishes every crate whose version is not on crates.io yet,

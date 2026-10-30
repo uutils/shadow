@@ -436,7 +436,7 @@ fn test_clean_files_print_nothing() {
         return;
     }
 
-    // nobody/nogroup use 65534 on Debian and Ubuntu; GNU pwck does not flag it.
+    // nobody/nogroup use 65534 on Debian and Ubuntu; upstream pwck does not flag it.
     let dir = setup_root(
         "root:x:0:0:root:/root:/bin/bash\nnobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n",
         "root:$6$hash:19000:0:99999:7:::\nnobody:*:19000:0:99999:7:::\n",
@@ -725,4 +725,20 @@ fn test_shadow_mode_warning_stays_on_stderr() {
     let out = pwck_rooted(&dir, &["-r"]);
     assert_eq!((out.code, out.stdout.as_str()), (0, ""));
     assert!(out.stderr.contains("bad permissions"), "{out:?}");
+}
+
+#[test]
+fn test_badname_allows_a_bad_name() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_clean();
+    write_etc(&dir, "passwd", "a@b:x:1000:1000::/home/alice:/bin/bash\n");
+    write_etc(&dir, "shadow", "a@b:$6$hash:19000:0:99999:7:::\n");
+    assert_eq!(pwck_rooted(&dir, &["-r"]).code, 2);
+    for flag in ["-b", "--badname"] {
+        let out = pwck_rooted(&dir, &["-r", flag]);
+        assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{flag}");
+        assert!(out.stderr.contains("deprecated"), "{out:?}");
+    }
 }

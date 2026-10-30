@@ -6,7 +6,7 @@
 
 //! `newgrp` — change effective group ID.
 //!
-//! Drop-in replacement for GNU shadow-utils / POSIX `newgrp(1)`.
+//! Drop-in replacement for upstream shadow / POSIX `newgrp(1)`.
 //! Starts a new shell with the specified group as the effective GID.
 
 use std::ffi::CString;

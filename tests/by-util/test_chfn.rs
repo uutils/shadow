@@ -84,7 +84,7 @@ fn test_chfn_success_prints_nothing() {
     if crate::common::skip_unless_root() {
         return;
     }
-    // GNU chfn prints nothing when the change succeeds.
+    // Upstream chfn prints nothing when the change succeeds.
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let etc = dir.path().join("etc");
     std::fs::create_dir_all(&etc).expect("failed to create etc dir");

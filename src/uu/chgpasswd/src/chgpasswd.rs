@@ -6,7 +6,7 @@
 
 //! `chgpasswd` — update group passwords in batch mode.
 //!
-//! Drop-in replacement for GNU shadow-utils `chgpasswd(8)`. Reads
+//! Drop-in replacement for upstream shadow `chgpasswd(8)`. Reads
 //! `group:password` pairs from stdin and updates `/etc/gshadow`, or
 //! `/etc/group` on a system that has no gshadow file.
 //!
@@ -43,7 +43,7 @@ mod options {
 
 /// Errors that the `chgpasswd` utility can produce.
 ///
-/// GNU `chgpasswd(8)` exits 1 for a failure, 2 for invalid command syntax and
+/// Upstream `chgpasswd(8)` exits 1 for a failure, 2 for invalid command syntax and
 /// 3 for a chroot directory it cannot enter.
 #[derive(Debug)]
 enum ChgpasswdError {
@@ -108,7 +108,7 @@ struct PasswordPair {
 fn parse_input_line(line: &str, line_number: usize) -> Result<PasswordPair, ChgpasswdError> {
     let line = line.strip_suffix('\r').unwrap_or(line);
 
-    // A line with no colon carries no password, which is how the GNU tool
+    // A line with no colon carries no password, which is how the upstream tool
     // words it -- and a blank line is that same case, not something to skip.
     let Some(colon_pos) = line.find(':') else {
         return Err(ChgpasswdError::InvalidInput(format!(
@@ -135,7 +135,7 @@ fn parse_input_line(line: &str, line_number: usize) -> Result<PasswordPair, Chgp
 /// Read every `group:password` pair from stdin.
 ///
 /// Empty input is not an error: `chgpasswd < /dev/null` succeeds having done
-/// nothing, which is what the GNU tool does and what a script driving it from
+/// nothing, which is what the upstream tool does and what a script driving it from
 /// a possibly-empty list depends on.
 fn read_pairs_from_stdin() -> Result<Vec<PasswordPair>, ChgpasswdError> {
     let stdin = io::stdin();
@@ -456,7 +456,7 @@ fn resolve_crypt_method(
     match method {
         Some(name) => parse_crypt_method(name).ok_or_else(|| {
             ChgpasswdError::UnexpectedFailure(match name {
-                // GNU accepts NONE and stores the password as clear text. A
+                // Upstream accepts NONE and stores the password as clear text. A
                 // readable group password in /etc/gshadow is worth no more
                 // than no password at all, and `-e` already covers writing a
                 // field verbatim when that is genuinely what is wanted.

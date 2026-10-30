@@ -7,7 +7,7 @@
 
 //! `useradd` -- create a new user account.
 //!
-//! Drop-in replacement for GNU shadow-utils `useradd(8)`.
+//! Drop-in replacement for upstream shadow `useradd(8)`.
 //!
 //! Creates a new user account by writing to `/etc/passwd`, `/etc/shadow`,
 //! and optionally `/etc/group`, `/etc/gshadow`. Can create the home
@@ -59,6 +59,11 @@ mod options {
     pub const DEFAULTS: &str = "defaults";
     pub const BASE_DIR: &str = "base-dir";
     pub const PREFIX: &str = "prefix";
+    pub const BADNAME: &str = "badname";
+    pub const ADD_SUBIDS: &str = "add-subids-for-system";
+    pub const BTRFS_HOME: &str = "btrfs-subvolume-home";
+    pub const SELINUX_USER: &str = "selinux-user";
+    pub const SELINUX_RANGE: &str = "selinux-range";
 }
 
 // ---------------------------------------------------------------------------
@@ -87,7 +92,7 @@ mod exit_codes {
 
 /// Errors that the `useradd` utility can produce.
 ///
-/// Each variant maps to a specific exit code matching GNU `useradd(8)`.
+/// Each variant maps to a specific exit code matching upstream `useradd(8)`.
 #[derive(Debug)]
 enum UseraddError {
     /// Exit 1 -- cannot update password file.
@@ -108,6 +113,8 @@ enum UseraddError {
     CannotCreateHome(String),
     /// Exit 19 -- invalid user or group name.
     BadName(String),
+    /// Exit 14 -- cannot update the `SELinux` user mapping.
+    CannotMapSelinux(String),
 }
 
 impl fmt::Display for UseraddError {
@@ -121,7 +128,8 @@ impl fmt::Display for UseraddError {
             | Self::UsernameInUse(msg)
             | Self::CannotUpdateGroup(msg)
             | Self::CannotCreateHome(msg)
-            | Self::BadName(msg) => f.write_str(msg),
+            | Self::BadName(msg)
+            | Self::CannotMapSelinux(msg) => f.write_str(msg),
         }
     }
 }
@@ -140,6 +148,7 @@ impl UError for UseraddError {
             Self::CannotUpdateGroup(_) => 10,
             Self::CannotCreateHome(_) => 12,
             Self::BadName(_) => 19,
+            Self::CannotMapSelinux(_) => 14,
         }
     }
 }
@@ -151,6 +160,11 @@ impl UError for UseraddError {
 /// Collected options for the `useradd` operation.
 #[allow(clippy::struct_excessive_bools)]
 struct UseraddOptions {
+    badname: bool,
+    add_subids: bool,
+    btrfs_home: bool,
+    selinux_user: Option<String>,
+    selinux_range: Option<String>,
     login: String,
     comment: String,
     home_dir: Option<String>,
@@ -204,6 +218,21 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |_| 2)? else {
         return Ok(());
     };
+
+    if matches.contains_id(options::SELINUX_USER) {
+        if !shadow_core::selinux::kernel_enabled() {
+            return Err(
+                UseraddError::BadArgument("-Z requires SELinux enabled kernel".into()).into(),
+            );
+        }
+        // -Z changes the policy of the system this runs on, not of a tree under -P.
+        if matches.contains_id(options::PREFIX) {
+            return Err(UseraddError::BadSyntax("-Z cannot be used with -P".into()).into());
+        }
+    }
+    if matches.get_flag(options::BADNAME) {
+        uucore::show_error!("WARNING: --badname is deprecated and will be removed");
+    }
 
     // --root DIR is a real chroot: the account files come from the new root,
     // and so does every absolute path read out of them. Done before anything
@@ -523,6 +552,11 @@ fn parse_options(matches: &clap::ArgMatches) -> Result<UseraddOptions, UseraddEr
     };
 
     Ok(UseraddOptions {
+        badname: matches.get_flag(options::BADNAME),
+        add_subids: matches.get_flag(options::ADD_SUBIDS),
+        btrfs_home: matches.get_flag(options::BTRFS_HOME),
+        selinux_user: matches.get_one::<String>(options::SELINUX_USER).cloned(),
+        selinux_range: matches.get_one::<String>(options::SELINUX_RANGE).cloned(),
         login,
         comment,
         home_dir,
@@ -552,7 +586,19 @@ fn parse_options(matches: &clap::ArgMatches) -> Result<UseraddOptions, UseraddEr
 #[allow(clippy::too_many_lines)]
 fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     // Step 1: Validate username.
-    validate::validate_username(&opts.login).map_err(|e| UseraddError::BadName(format!("{e}")))?;
+    if opts.badname {
+        // Anything the file can hold goes, as with upstream, which fails with this
+        // code when it writes a name with a colon. It does write an empty one,
+        // an entry nothing can use, so that is refused here.
+        if opts.login.is_empty() {
+            return Err(UseraddError::CannotUpdatePasswd("empty user name".into()).into());
+        }
+        validate::validate_field("login name", &opts.login)
+            .map_err(|e| UseraddError::CannotUpdatePasswd(e.to_string()))?;
+    } else {
+        validate::validate_username(&opts.login)
+            .map_err(|e| UseraddError::BadName(format!("{e}")))?;
+    }
 
     // Step 2: Block signals for the lock→write critical section only.
     // Dropped after file writes complete so home creation remains interruptible.
@@ -718,22 +764,29 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     drop(signals);
 
     // Step 14: Allocate subordinate UID/GID ranges for rootless containers.
-    // Only done when the relevant file exists (matching GNU shadow-utils behavior).
+    // Only done when the relevant file exists (matching upstream shadow behavior).
     // useradd(8) allocates subordinate ranges for regular accounts only;
     // verified that shadow-utils leaves /etc/subuid untouched for -r.
     let subuid_path = opts.root.subuid_path();
-    if !opts.system
+    if (!opts.system || opts.add_subids)
         && subuid_path.exists()
         && let Err(e) = append_subid_entry(&subuid_path, &opts.login, 65_536)
     {
         uucore::show_error!("warning: failed to add subordinate UID range: {e}");
     }
     let subgid_path = opts.root.subgid_path();
-    if !opts.system
+    if (!opts.system || opts.add_subids)
         && subgid_path.exists()
         && let Err(e) = append_subid_entry(&subgid_path, &opts.login, 65_536)
     {
         uucore::show_error!("warning: failed to add subordinate GID range: {e}");
+    }
+
+    // Mapped once the account exists, since semanage looks it up. Nothing below
+    // depends on it, but a mapping asked for and not made has to fail the command.
+    if let Some(seuser) = &opts.selinux_user {
+        shadow_core::selinux::add_login(&opts.login, seuser, opts.selinux_range.as_deref())
+            .map_err(|e| UseraddError::CannotMapSelinux(e.to_string()))?;
     }
 
     // Step 15: Add to supplementary groups.
@@ -751,7 +804,13 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
             .get("HOME_MODE")
             .and_then(|v| u32::from_str_radix(v.trim_start_matches("0o"), 8).ok())
             .unwrap_or(0o700);
-        create_home_directory(&resolved_home, &resolved_skel, uid, gid, home_mode)?;
+        create_home_directory(
+            &resolved_home,
+            &resolved_skel,
+            (uid, gid),
+            home_mode,
+            opts.btrfs_home,
+        )?;
     }
 
     // Step 17: Invalidate nscd caches.
@@ -1011,15 +1070,20 @@ fn append_subid_entry(path: &Path, name: &str, count: u64) -> UResult<()> {
 fn create_home_directory(
     home_path: &Path,
     skel_path: &Path,
-    uid: u32,
-    gid: u32,
+    (uid, gid): (u32, u32),
     mode: u32,
+    subvolume: bool,
 ) -> UResult<()> {
     // The mkdir, the umask handling and the O_NOFOLLOW chown live in
     // shadow_core::home because newusers(8) has to do exactly the same thing;
     // a second copy would be a second chance to get the ownership handover
     // wrong, silently.
-    let outcome = shadow_core::home::create(home_path, skel_path, uid, gid, mode)
+    let create = if subvolume {
+        shadow_core::home::create_subvolume
+    } else {
+        shadow_core::home::create
+    };
+    let outcome = create(home_path, skel_path, uid, gid, mode)
         .map_err(|e| UseraddError::CannotCreateHome(e.to_string()))?;
     if outcome == shadow_core::home::Outcome::AlreadyExisted {
         uucore::show_warning!(
@@ -1043,6 +1107,39 @@ pub fn uu_app() -> Command {
         .override_usage("useradd [options] LOGIN\n       useradd -D [options]")
         .version(shadow_core::cli::VERSION)
         .after_help(shadow_core::cli::AFTER_HELP)
+        .arg(
+            Arg::new(options::BADNAME)
+                .long("badname")
+                .help("Allow a bad name (deprecated)")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new(options::ADD_SUBIDS)
+                .short('F')
+                .long("add-subids-for-system")
+                .help("Add subordinate IDs for a system account too")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new(options::BTRFS_HOME)
+                .long("btrfs-subvolume-home")
+                .help("With -m, make the home a btrfs subvolume")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new(options::SELINUX_USER)
+                .short('Z')
+                .long("selinux-user")
+                .value_name("SEUSER")
+                .help("Map the new account to this SELinux user"),
+        )
+        .arg(
+            Arg::new(options::SELINUX_RANGE)
+                .long("selinux-range")
+                .value_name("SERANGE")
+                .requires(options::SELINUX_USER)
+                .help("Set the MLS range of the mapping (only with -Z)"),
+        )
         .arg(
             Arg::new(options::LOGIN)
                 .help("Login name to create")
@@ -1870,6 +1967,11 @@ mod tests {
 
         // Now add "testuser" to "wheel" and "users".
         let opts = UseraddOptions {
+            badname: false,
+            add_subids: false,
+            btrfs_home: false,
+            selinux_user: None,
+            selinux_range: None,
             login: "testuser".into(),
             comment: String::new(),
             home_dir: None,
@@ -1918,7 +2020,7 @@ mod tests {
         fs::create_dir_all(&skel).expect("create skel");
         fs::write(skel.join(".bashrc"), "# bashrc\n").expect("write bashrc");
 
-        create_home_directory(&home, &skel, 1000, 1000, 0o700).expect("create home");
+        create_home_directory(&home, &skel, (1000, 1000), 0o700, false).expect("create home");
 
         assert!(home.exists());
         assert!(home.join(".bashrc").exists());
@@ -1974,7 +2076,7 @@ mod tests {
         // umask when this scope exits.
         let _restore = UmaskRestore(rustix::process::umask(rustix::fs::Mode::empty()));
 
-        create_home_directory(&home, &skel, 1000, 1000, 0o700).expect("create home");
+        create_home_directory(&home, &skel, (1000, 1000), 0o700, false).expect("create home");
 
         let meta = fs::metadata(&home).expect("metadata");
         assert_eq!(
@@ -1996,8 +2098,14 @@ mod tests {
         fs::create_dir_all(&home).expect("create home");
 
         // Should succeed with a warning, not copy skel.
-        create_home_directory(&home, Path::new("/nonexistent/skel"), 1000, 1000, 0o700)
-            .expect("should succeed for existing home");
+        create_home_directory(
+            &home,
+            Path::new("/nonexistent/skel"),
+            (1000, 1000),
+            0o700,
+            false,
+        )
+        .expect("should succeed for existing home");
     }
 
     // -----------------------------------------------------------------------
@@ -2015,6 +2123,11 @@ mod tests {
         let defs = LoginDefs::load(Path::new("/nonexistent")).expect("defs");
 
         let opts = UseraddOptions {
+            badname: false,
+            add_subids: false,
+            btrfs_home: false,
+            selinux_user: None,
+            selinux_range: None,
             login: "newuser".into(),
             comment: String::new(),
             home_dir: None,
@@ -2053,6 +2166,11 @@ mod tests {
         let defs = LoginDefs::load(Path::new("/nonexistent")).expect("defs");
 
         let opts = UseraddOptions {
+            badname: false,
+            add_subids: false,
+            btrfs_home: false,
+            selinux_user: None,
+            selinux_range: None,
             login: "alice".into(),
             comment: String::new(),
             home_dir: None,
@@ -2094,6 +2212,11 @@ mod tests {
         let defs = LoginDefs::load(Path::new("/nonexistent")).expect("defs");
 
         let opts = UseraddOptions {
+            badname: false,
+            add_subids: false,
+            btrfs_home: false,
+            selinux_user: None,
+            selinux_range: None,
             login: "alice".into(),
             comment: String::new(),
             home_dir: None,
@@ -2124,6 +2247,11 @@ mod tests {
         let defs = LoginDefs::load(Path::new("/nonexistent")).expect("defs");
 
         let opts = UseraddOptions {
+            badname: false,
+            add_subids: false,
+            btrfs_home: false,
+            selinux_user: None,
+            selinux_range: None,
             login: "user".into(),
             comment: String::new(),
             home_dir: None,
@@ -2161,6 +2289,11 @@ mod tests {
         let defs = LoginDefs::load(Path::new("/nonexistent")).expect("defs");
 
         let opts = UseraddOptions {
+            badname: false,
+            add_subids: false,
+            btrfs_home: false,
+            selinux_user: None,
+            selinux_range: None,
             login: "user".into(),
             comment: String::new(),
             home_dir: None,
@@ -2200,6 +2333,11 @@ mod tests {
         let defs = LoginDefs::load(Path::new("/nonexistent")).expect("defs");
 
         let opts = UseraddOptions {
+            badname: false,
+            add_subids: false,
+            btrfs_home: false,
+            selinux_user: None,
+            selinux_range: None,
             login: "user".into(),
             comment: String::new(),
             home_dir: None,
@@ -2238,6 +2376,11 @@ mod tests {
         let defs = LoginDefs::load(Path::new("/nonexistent")).expect("defs");
 
         let opts = UseraddOptions {
+            badname: false,
+            add_subids: false,
+            btrfs_home: false,
+            selinux_user: None,
+            selinux_range: None,
             login: "user".into(),
             comment: String::new(),
             home_dir: None,
@@ -2273,6 +2416,11 @@ mod tests {
 
     fn opts_for_uid_alloc(system: bool) -> UseraddOptions {
         UseraddOptions {
+            badname: false,
+            add_subids: false,
+            btrfs_home: false,
+            selinux_user: None,
+            selinux_range: None,
             login: "user".into(),
             comment: String::new(),
             home_dir: None,
@@ -2468,6 +2616,11 @@ mod tests {
         );
         // Prefer same-as-UID is blocked (9200 taken), so allocate from range.
         let opts = UseraddOptions {
+            badname: false,
+            add_subids: false,
+            btrfs_home: false,
+            selinux_user: None,
+            selinux_range: None,
             login: "newgrp".into(),
             comment: String::new(),
             home_dir: None,

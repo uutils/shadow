@@ -17,7 +17,7 @@
 //! crate and names the selector.
 //!
 //! What the kernel requires of the write is in `user_namespaces(7)`. What the
-//! helper must check before writing was established by running the GNU
+//! helper must check before writing was established by running the upstream
 //! helper: the caller must own the target process, every requested range must
 //! sit inside a range granted to the caller, and root is exempt from neither.
 
@@ -80,7 +80,7 @@ impl Tool {
 // Error type
 // ---------------------------------------------------------------------------
 
-/// Every failure exits 1, as the GNU helpers do; the variants keep the
+/// Every failure exits 1, as the upstream helpers do; the variants keep the
 /// messages apart.
 #[derive(Debug)]
 enum MapError {
@@ -178,7 +178,7 @@ fn parse_args(tool: Tool, args: &[String]) -> Result<(Target, Vec<Mapping>), Map
 
     let rest = &args[1..];
     if rest.is_empty() || !rest.len().is_multiple_of(3) {
-        // The GNU wording, which reports the count that did not divide.
+        // The upstream wording, which reports the count that did not divide.
         return Err(MapError::Usage(format!(
             "ranges: {} is wrong for argc: {}",
             rest.len().div_ceil(3),
@@ -190,7 +190,7 @@ fn parse_args(tool: Tool, args: &[String]) -> Result<(Target, Vec<Mapping>), Map
         let inside = parse_u32(inside).ok_or_else(|| usage(tool))?;
         let outside = parse_u32(outside).ok_or_else(|| usage(tool))?;
         // Not a number at all is a usage error; a number that is not a
-        // positive count is reported the way the GNU helper reports it.
+        // positive count is reported the way the upstream helper reports it.
         let count = parse_u32(count).ok_or_else(|| usage(tool))?;
         if count == 0 {
             return Err(MapError::NotAllowed(format!(
@@ -369,7 +369,7 @@ fn open_target(target: Target, caller: &Caller) -> Result<OwnedFd, MapError> {
             "the fd: argument must be a descriptor open on a /proc/<pid> directory".into(),
         ));
     }
-    // GNU's exact wording, which names all three ids on each side so an
+    // Upstream's exact wording, which names all three ids on each side so an
     // administrator can see which of them disagrees.
     if st.st_uid != caller.uid
         || st.st_uid != caller.pw_uid
@@ -570,7 +570,7 @@ mod tests {
 
     /// Operands that are not triples, and numbers that are not plain
     /// decimals, are usage errors; a count that is not positive is the
-    /// overflow message, as the GNU helper words it.
+    /// overflow message, as the upstream helper words it.
     #[test]
     fn test_parse_rejections() {
         assert!(matches!(

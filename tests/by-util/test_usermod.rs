@@ -344,7 +344,7 @@ fn test_home_not_owned_by_user_is_left_alone() {
             }
 
             let code = run_with_prefix(&dir, &[args[0], args[1], "testuser"]);
-            // GNU: a home that is the user's through a symlink is not walked,
+            // Upstream: a home that is the user's through a symlink is not walked,
             // and that is exit 12, with /etc/passwd written all the same.
             assert_eq!(
                 code,
@@ -1275,7 +1275,7 @@ fn test_rechown_never_follows_an_entry_swapped_mid_walk() {
     }
 }
 
-/// GNU decides whether the home is the user's through a symlink. A home the
+/// Upstream decides whether the home is the user's through a symlink. A home the
 /// user owns that cannot be walked without following a link, or that is not
 /// a directory, is exit 12; a home that is not the user's, missing, or a
 /// dangling link, is left alone with exit 0.
@@ -2131,4 +2131,56 @@ fn test_password_that_breaks_the_file_exits_1_and_writes_nothing() {
     ] {
         assert_refused(&dir, args, 1);
     }
+}
+
+fn setup_two_users() -> tempfile::TempDir {
+    setup_prefix(
+        "a:x:1000:1000::/h:/bin/sh\nb:x:1001:1000::/h:/bin/sh\n",
+        "a:x:1:0:99999:7:::\nb:x:1:0:99999:7:::\n",
+        "a:x:1000:\n",
+    )
+}
+
+#[test]
+fn test_non_unique_needs_uid() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    assert_eq!(run_with_prefix(&setup_two_users(), &["-o", "b"]), 2);
+}
+
+#[test]
+fn test_non_unique_allows_a_uid_in_use() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_two_users();
+    assert_eq!(run_with_prefix(&dir, &["-u", "1000", "b"]), 4);
+    assert_eq!(run_with_prefix(&dir, &["-o", "-u", "1000", "b"]), 0);
+    assert!(read_passwd(&dir).contains("b:x:1000:"));
+}
+
+#[test]
+fn test_badname_allows_a_bad_name_only_with_it() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_two_users();
+    assert_eq!(run_with_prefix(&dir, &["-l", "a@b", "b"]), 3);
+    assert_eq!(run_with_prefix(&dir, &["-b", "-l", "a:b", "b"]), 3);
+    assert_eq!(run_with_prefix(&dir, &["-b", "-l", "a@b", "b"]), 0);
+    assert!(read_passwd(&dir).contains("a@b:x:1001:"));
+}
+
+#[test]
+fn test_selinux_user_needs_a_selinux_kernel() {
+    if crate::common::skip_unless_root() || shadow_core::selinux::kernel_enabled() {
+        return;
+    }
+    assert_eq!(run(&["usermod", "-Z", "user_u", "no_such_user_9f3a"]), 3);
+}
+
+#[test]
+fn test_selinux_range_needs_selinux_user() {
+    assert_eq!(run(&["usermod", "--selinux-range", "s0", "root"]), 2);
 }

@@ -138,7 +138,7 @@ pub fn civil_from_days(days: i64) -> Option<(i64, i64, i64)> {
 /// `Jan 01, 2026`.
 ///
 /// `None` for a value that is not a representable date; every caller displays
-/// `never` in that case, which is also what GNU `chage` shows for a field it
+/// `never` in that case, which is also what upstream `chage` shows for a field it
 /// cannot make sense of.
 #[must_use]
 pub fn format_human(days: i64) -> Option<String> {

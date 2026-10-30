@@ -203,7 +203,7 @@ fn test_change_reports_password_changed_on_stdout() {
     if crate::common::skip_unless_root() {
         return;
     }
-    // GNU passwd prints "passwd: password changed." on stdout for every
+    // Upstream passwd prints "passwd: password changed." on stdout for every
     // change it writes, and nothing with -q.
     for (args, expected) in [
         (&["-l", "testuser"][..], "password changed.\n"),

@@ -47,12 +47,13 @@ X86="uu_shadow-x86_64-unknown-linux-gnu"
 ARM="uu_shadow-aarch64-unknown-linux-gnu"
 MUSL="uu_shadow-x86_64-unknown-linux-musl-static"
 
-WORK=$(mktemp -d)
+WORK=$(mktemp -d) || exit 1
 trap 'rm -rf "$WORK"' EXIT
 cd "$WORK" || exit 1
 
 echo "=== release $TAG: assets ==="
-if ! gh release download "$TAG" --repo "$REPO" --pattern '*.tar.gz' --pattern '*.tar.gz.sha256' >/dev/null 2>&1; then
+# gh's own message is the only thing that says why a download failed.
+if ! gh release download "$TAG" --repo "$REPO" --pattern '*.tar.gz' --pattern '*.tar.gz.sha256' >/dev/null; then
     echo "error: could not download the assets of $TAG from $REPO" >&2
     exit 1
 fi

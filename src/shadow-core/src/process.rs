@@ -341,6 +341,55 @@ pub fn getpwnam(name: &str) -> io::Result<Option<crate::passwd::PasswdEntry>> {
 }
 
 // ---------------------------------------------------------------------------
+// btrfs
+// ---------------------------------------------------------------------------
+
+/// `BTRFS_IOC_SUBVOL_CREATE`: `_IOW(0x94, 14, struct btrfs_ioctl_vol_args)`.
+const BTRFS_IOC_SUBVOL_CREATE: u32 = 0x5000_940E;
+
+/// `struct btrfs_ioctl_vol_args` from `linux/btrfs.h`.
+#[repr(C)]
+struct BtrfsVolArgs {
+    fd: i64,
+    name: [libc::c_char; 4088],
+}
+
+/// Create the subvolume `name` in the directory `parent`.
+///
+/// # Errors
+///
+/// Returns the error of opening `parent` or of the ioctl: `ENOTTY` when `parent`
+/// is not on btrfs, `EEXIST` when `name` is taken.
+pub fn btrfs_create_subvolume(parent: &std::path::Path, name: &std::ffi::OsStr) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+
+    let bytes = name.as_bytes();
+    let mut args = BtrfsVolArgs {
+        fd: 0,
+        name: [0; 4088],
+    };
+    if bytes.is_empty() || bytes.len() >= args.name.len() {
+        return Err(io::Error::from_raw_os_error(libc::ENAMETOOLONG));
+    }
+    for (to, from) in args.name.iter_mut().zip(bytes) {
+        *to = libc::c_char::from_ne_bytes([*from]);
+    }
+
+    let dir = std::fs::File::open(parent)?;
+    // SAFETY: `dir` is an open descriptor for the call, and `args` is a live,
+    // correctly laid out and NUL-terminated btrfs_ioctl_vol_args, which is all
+    // this request reads. The request number's type differs between glibc and
+    // musl, and the value fits both.
+    #[allow(clippy::cast_lossless, clippy::cast_possible_wrap)]
+    let ret = unsafe { libc::ioctl(dir.as_raw_fd(), BTRFS_IOC_SUBVOL_CREATE as _, &raw mut args) };
+    if ret < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // exec
 // ---------------------------------------------------------------------------
 

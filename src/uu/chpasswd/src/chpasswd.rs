@@ -6,7 +6,7 @@
 
 //! `chpasswd` — update passwords in batch mode.
 //!
-//! Drop-in replacement for GNU shadow-utils `chpasswd(8)`.
+//! Drop-in replacement for upstream shadow `chpasswd(8)`.
 //! Reads `username:password` pairs from stdin and updates `/etc/shadow`.
 
 use std::fmt;
@@ -37,7 +37,7 @@ mod options {
 
 /// Errors that the `chpasswd` utility can produce.
 ///
-/// GNU `chpasswd(8)` exits 1 for all errors.
+/// Upstream `chpasswd(8)` exits 1 for all errors.
 #[derive(Debug)]
 enum ChpasswdError {
     /// Exit 1 — insufficient privileges.

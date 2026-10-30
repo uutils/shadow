@@ -6,7 +6,7 @@
 
 //! `grpck` -- verify integrity of group files.
 //!
-//! Drop-in replacement for GNU shadow-utils `grpck(8)`.
+//! Drop-in replacement for upstream shadow `grpck(8)`.
 //!
 //! Checks `/etc/group` and `/etc/gshadow` for consistency:
 //! - Correct field count (parsed via structured types)
@@ -32,6 +32,7 @@ mod options {
     pub const READ_ONLY: &str = "read-only";
     pub const SORT: &str = "sort";
     pub const QUIET: &str = "quiet";
+    pub const SILENCE: &str = "silence-warnings";
     pub const ROOT: &str = "root";
     pub const GROUP_FILE: &str = "group_file";
     pub const GSHADOW_FILE: &str = "gshadow_file";
@@ -85,6 +86,7 @@ impl UError for GrpckError {
 // ---------------------------------------------------------------------------
 
 struct GrpckOptions {
+    silence: bool,
     sort: bool,
     read_only: bool,
     group_path: PathBuf,
@@ -94,7 +96,7 @@ struct GrpckOptions {
 
 impl GrpckOptions {
     fn from_matches(matches: &clap::ArgMatches) -> Self {
-        // grpck has no --prefix, matching GNU; --root is a real chroot, done
+        // grpck has no --prefix, matching upstream; --root is a real chroot, done
         // before this runs, so paths resolve against the new root.
         let root = SysRoot::default();
 
@@ -106,6 +108,7 @@ impl GrpckOptions {
             .map_or_else(|| root.gshadow_path(), PathBuf::from);
 
         Self {
+            silence: matches.get_flag(options::SILENCE),
             sort: matches.get_flag(options::SORT),
             read_only: matches.get_flag(options::READ_ONLY),
             group_path,
@@ -182,7 +185,9 @@ fn run_checks(opts: &GrpckOptions) -> UResult<()> {
             Ok(entries) => {
                 errors += check_group_gshadow_consistency(&group_entries, &entries);
                 errors += check_password_fields(&group_entries, &entries, opts);
-                report_member_differences(&group_entries, &entries, opts);
+                if !opts.silence {
+                    report_member_differences(&group_entries, &entries, opts);
+                }
                 gshadow_entries = entries;
             }
             Err(e @ shadow_core::error::ShadowError::Parse(_)) => {
@@ -366,7 +371,7 @@ fn report_member_differences(
 /// NOTE: Sorting operates on parsed entries and discards any comments or
 /// blank lines from the original file. A lossless (comment-preserving)
 /// sort would require a significantly different parser that tracks raw
-/// lines alongside parsed entries. This matches GNU `grpck -s` behavior.
+/// lines alongside parsed entries. This matches upstream `grpck -s` behavior.
 fn sort_and_write(group_path: &Path, gshadow_path: &Path) -> UResult<()> {
     // The transaction re-reads under the lock: the entries checked above were
     // read before it. The layout keeps comments, blank lines and NIS compat
@@ -505,6 +510,13 @@ pub fn uu_app() -> Command {
                 .short('q')
                 .long("quiet")
                 .help("Accepted; the report is the same with it")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new(options::SILENCE)
+                .short('S')
+                .long("silence-warnings")
+                .help("Do not report members who differ between the two files")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -648,6 +660,7 @@ mod tests {
         std::fs::write(&group_path, "root:x:0:\nusers:x:100:\n").expect("write group");
 
         let opts = GrpckOptions {
+            silence: false,
             sort: false,
             read_only: true,
             group_path,
@@ -667,6 +680,7 @@ mod tests {
         std::fs::write(&group_path, "root:x:0:\nbadentry:x\n").expect("write group");
 
         let opts = GrpckOptions {
+            silence: false,
             sort: false,
             read_only: true,
             group_path,
@@ -686,6 +700,7 @@ mod tests {
         let gshadow_path = dir.path().join("gshadow_nonexistent");
 
         let opts = GrpckOptions {
+            silence: false,
             sort: true,
             read_only: false,
             group_path: group_path.clone(),

@@ -101,6 +101,20 @@ changes that are specified on the command line.
     password. If that would leave the field empty, the account stays locked with a
     warning, and the exit status is 0. A field with no '!' is left as it is.
 
+**-o**, **--non-unique**
+:   Allow **-u** to give a UID another account has. Without **-u** the exit status
+    is 2.
+
+**-b**, **--badname**
+:   Accept a name for **-l** that would be refused, deprecated as it is upstream.
+
+**-Z**, **--selinux-user** *SEUSER*
+:   Map the account to an SELinux user by running **semanage login**, with
+    **--selinux-range** *SERANGE* for its MLS range. An empty *SEUSER* removes the
+    mapping. On a kernel without SELinux the exit status is 3, before anything else.
+    If **semanage** is missing or fails it is 1, with the other changes written. It
+    cannot be used with **-P**. **--selinux-range** without **-Z** is exit status 2.
+
 ## SUBORDINATE IDS
 
 **-v**, **--add-subuids** *FIRST-LAST*
@@ -194,10 +208,6 @@ moves it.
 a newline exits 1, as upstream does. Upstream has written /etc/passwd by then, so
 what **-l** or **-c** asked for stays, and a rename leaves /etc/shadow with the old
 name. Here nothing is written.
-
-**Some options are not implemented.** **-o**/**--non-unique**,
-**-b**/**--badname**, **-Z**/**--selinux-user** and **--selinux-range** are
-refused as unknown options, exit 2.
 
 ## FILES
 

@@ -54,7 +54,7 @@ pub fn is_valid_account_name(name: &str, max_len: usize) -> bool {
 ///   accounts (`MACHINE$`)
 /// - must not end with a period, and must not consist only of periods
 ///
-/// Upper case is accepted: `useradd Alice` succeeds on GNU shadow-utils
+/// Upper case is accepted: `useradd Alice` succeeds on upstream shadow
 /// (verified), and rejecting it made us refuse accounts that already exist on
 /// real systems. Lower case remains the recommendation, not a rule.
 ///
@@ -235,7 +235,7 @@ mod tests {
         assert!(validate_username("-user").is_err());
     }
 
-    // GNU shadow-utils accepts these (verified against useradd(8)); refusing
+    // upstream shadow accepts these (verified against useradd(8)); refusing
     // them made us reject accounts that exist on real systems.
     #[test]
     fn test_uppercase_and_machine_accounts_accepted() {

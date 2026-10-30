@@ -6,7 +6,7 @@
 
 //! `newusers` — create or update users in batch.
 //!
-//! Drop-in replacement for GNU shadow-utils `newusers(8)`. Reads lines of
+//! Drop-in replacement for upstream shadow `newusers(8)`. Reads lines of
 //! seven colon-separated fields from stdin and creates the accounts they
 //! describe, or updates them where they already exist.
 //!
@@ -110,7 +110,7 @@ struct Line {
 
 /// Split one line into its seven fields.
 ///
-/// Exactly seven: six or eight are both "invalid line" to the GNU tool, and a
+/// Exactly seven: six or eight are both "invalid line" to the upstream tool, and a
 /// line that lost a field to a stray colon would otherwise be read as a
 /// different account than the one intended.
 fn parse_line(line: &str, number: usize) -> Result<Line, NewusersError> {
@@ -181,7 +181,7 @@ fn validate(line: &Line, relaxed: bool) -> Result<(), NewusersError> {
 
     // An empty password would be hashed into something a bare Enter matches,
     // which is an account anyone can log into rather than one with no
-    // password. GNU hands the empty field to PAM, which refuses it after the
+    // password. Upstream hands the empty field to PAM, which refuses it after the
     // account has already been created.
     if line.password.is_empty() {
         return Err(NewusersError::InvalidInput(format!(
@@ -427,7 +427,7 @@ fn resolve_gid(
 ) -> Result<u32, NewusersError> {
     // A number names a group directly. If no group has it, one is created
     // carrying the user's name -- otherwise the account would be left pointing
-    // at a group that does not exist, which is what the GNU tool does here and
+    // at a group that does not exist, which is what the upstream tool does here and
     // what grpck then reports.
     if let Some(gid) = parse_id(&line.gid) {
         if !group.entries().iter().any(|g| g.gid == gid) {
@@ -436,7 +436,7 @@ fn resolve_gid(
         return Ok(gid);
     }
 
-    // A name must already exist. GNU silently falls back to the user's own ID
+    // A name must already exist. Upstream silently falls back to the user's own ID
     // and leaves no group behind at all, so the account ends up with a
     // dangling GID; naming a group that is not there is a mistake worth
     // reporting rather than papering over.

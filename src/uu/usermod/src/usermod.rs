@@ -6,7 +6,7 @@
 
 //! `usermod` — modify a user account.
 //!
-//! Drop-in replacement for GNU shadow-utils `usermod(8)`.
+//! Drop-in replacement for upstream shadow `usermod(8)`.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -44,6 +44,10 @@ mod options {
     pub const ROOT: &str = "root";
     pub const PREFIX: &str = "prefix";
     pub const USER: &str = "USER";
+    pub const NON_UNIQUE: &str = "non-unique";
+    pub const BADNAME: &str = "badname";
+    pub const SELINUX_USER: &str = "selinux-user";
+    pub const SELINUX_RANGE: &str = "selinux-range";
     pub const ADD_SUBUIDS: &str = "add-subuids";
     pub const DEL_SUBUIDS: &str = "del-subuids";
     pub const ADD_SUBGIDS: &str = "add-subgids";
@@ -119,6 +123,16 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let Some(login) = matches.get_one::<String>(options::USER) else {
         return Err(shadow_core::cli::AlreadyPrinted(2).into());
     };
+    let selinux_user = matches.get_one::<String>(options::SELINUX_USER);
+    if selinux_user.is_some() && !shadow_core::selinux::kernel_enabled() {
+        return Err(UsermodError::BadArgument("-Z requires SELinux enabled kernel".into()).into());
+    }
+    let badname = matches.get_flag(options::BADNAME);
+    if badname {
+        uucore::show_error!(
+            "WARNING: -b, --badname and --badnames are deprecated and will be removed"
+        );
+    }
     // --root DIR is a real chroot: the account files come from the new root,
     // and so does every absolute path read out of them. Done before anything
     // else, so nothing has resolved a path against the old root yet.
@@ -215,7 +229,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         if uid == u32::MAX {
             return Err(UsermodError::BadArgument(format!("invalid UID '{uid}'")).into());
         }
-        if entries.iter().any(|e| e.uid == uid && e.name != *login) {
+        if !matches.get_flag(options::NON_UNIQUE)
+            && entries.iter().any(|e| e.uid == uid && e.name != *login)
+        {
             return Err(UsermodError::UidInUse(format!("UID {uid} already in use")).into());
         }
         entries[idx].uid = uid;
@@ -256,8 +272,12 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     }
     let new_login = matches.get_one::<String>(options::LOGIN);
     if let Some(new_name) = new_login {
-        validate::validate_username(new_name)
-            .map_err(|e| UsermodError::BadArgument(format!("invalid login name: {e}")))?;
+        if badname {
+            validate::validate_field("login name", new_name)
+        } else {
+            validate::validate_username(new_name)
+        }
+        .map_err(|e| UsermodError::BadArgument(format!("invalid login name: {e}")))?;
         // usermod(8) exit 9: the new name must not already be taken, or the
         // rename would produce two entries with the same login.
         if entries
@@ -285,6 +305,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         || !subid_changes.is_empty()
         || matches.contains_id(options::GROUPS)
         || matches.contains_id(options::PASSWORD)
+        || selinux_user.is_some()
         || matches.get_flag(options::LOCK)
         || matches.get_flag(options::UNLOCK);
 
@@ -501,6 +522,18 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     apply_subid_changes(&root, login, &subid_changes)?;
 
+    // usermod(8): an empty -Z removes the mapping.
+    if let Some(seuser) = selinux_user {
+        let current = new_login.unwrap_or(login);
+        let range = matches.get_one::<String>(options::SELINUX_RANGE);
+        let mapped = if seuser.is_empty() {
+            shadow_core::selinux::remove_login(current)
+        } else {
+            shadow_core::selinux::set_login(current, seuser, range.map(String::as_str))
+        };
+        mapped.map_err(|e| UsermodError::CantUpdate(e.to_string()))?;
+    }
+
     // usermod(8) -m: the account files are already updated, as with upstream,
     // when the move itself fails.
     let home_change = if move_to.is_some() {
@@ -560,6 +593,13 @@ fn check_flag_combinations(matches: &clap::ArgMatches) -> Result<(), UsermodErro
     if exclusive.iter().filter(|set| **set).count() > 1 {
         return syntax("the -L, -p, and -U flags are exclusive");
     }
+    if matches.get_flag(options::NON_UNIQUE) && !matches.contains_id(options::UID) {
+        return syntax("-o flag is only allowed with the -u flag");
+    }
+    // -Z changes the policy of the system tool runs on, not of a tree under -P.
+    if matches.contains_id(options::SELINUX_USER) && matches.contains_id(options::PREFIX) {
+        return syntax("-Z cannot be used with -P");
+    }
     if matches.get_flag(options::MOVE_HOME) && !matches.contains_id(options::HOME) {
         return syntax("-m flag is only allowed with the -d flag");
     }
@@ -605,7 +645,7 @@ fn parse_subid_changes(matches: &clap::ArgMatches) -> Result<Vec<SubIdChange>, U
 /// Apply the subordinate id changes, each file in its own transaction.
 ///
 /// The entries are keyed by the login name as given on the command line. The
-/// GNU tool does the same, and does not rename them on `-l` either: a range
+/// upstream tool does the same, and does not rename them on `-l` either: a range
 /// is a grant to a name, and the administrator who renames the account
 /// re-grants it if that is what they meant.
 fn apply_subid_changes(
@@ -1482,6 +1522,34 @@ pub fn uu_app() -> Command {
                 .value_name("FIRST-LAST")
                 .action(ArgAction::Append)
                 .help("remove a range of subordinate gids"),
+        )
+        .arg(
+            Arg::new(options::NON_UNIQUE)
+                .short('o')
+                .long("non-unique")
+                .help("Allow a UID another account has (only with -u)")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new(options::BADNAME)
+                .short('b')
+                .long("badname")
+                .help("Allow a bad name for -l (deprecated)")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new(options::SELINUX_USER)
+                .short('Z')
+                .long("selinux-user")
+                .value_name("SEUSER")
+                .help("Set the SELinux user mapping; empty removes it"),
+        )
+        .arg(
+            Arg::new(options::SELINUX_RANGE)
+                .long("selinux-range")
+                .value_name("SERANGE")
+                .requires(options::SELINUX_USER)
+                .help("Set the MLS range of the mapping (only with -Z)"),
         )
         .arg(
             Arg::new(options::USER)

@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # spell-checker:ignore timeformat tempdir ldd passwd pwck
 #
-# Benchmark script for shadow-rs vs GNU shadow-utils.
+# Benchmark script for shadow-rs vs upstream shadow.
 #
 # Compares performance, binary size, and shared library dependencies
-# between shadow-rs (Rust) and GNU shadow-utils (C) implementations.
+# between shadow-rs (Rust) and upstream shadow (C) implementations.
 #
 # Usage:
 #   docker compose run --rm debian bash benches/benchmark.sh
 #
 # Requirements:
-#   - Must run inside Docker (needs both GNU shadow-utils and shadow-rs)
+#   - Must run inside Docker (needs both upstream shadow and shadow-rs)
 #   - Must run as root (passwd -S and pwck require root or shadow access)
 #
-# The script builds shadow-rs in release mode, locates GNU shadow-utils
+# The script builds shadow-rs in release mode, locates upstream shadow
 # binaries, and runs comparative benchmarks.
 
 set -euo pipefail
@@ -76,9 +76,9 @@ bench_command() {
 # Locate binaries
 # ---------------------------------------------------------------------------
 
-find_gnu_binary() {
+find_upstream_binary() {
     local name=$1
-    # GNU shadow-utils binaries are typically in /usr/sbin or /usr/bin.
+    # Upstream shadow binaries are typically in /usr/sbin or /usr/bin.
     for path in /usr/sbin/"$name" /usr/bin/"$name" /sbin/"$name" /bin/"$name"; do
         if [ -x "$path" ]; then
             # Make sure it is NOT our shadow-rs binary (check for ELF or "shadow-rs").
@@ -122,16 +122,16 @@ if [ ! -x "$RS_PWCK" ] && [ -x "$SHADOW_RS_DIR/shadow-rs" ]; then
     RS_PWCK="$SHADOW_RS_DIR/shadow-rs"
 fi
 
-# Locate GNU binaries.
-GNU_PASSWD=$(find_gnu_binary passwd) || GNU_PASSWD=""
-GNU_PWCK=$(find_gnu_binary pwck) || GNU_PWCK=""
+# Locate upstream binaries.
+UPSTREAM_PASSWD=$(find_upstream_binary passwd) || UPSTREAM_PASSWD=""
+UPSTREAM_PWCK=$(find_upstream_binary pwck) || UPSTREAM_PWCK=""
 
 separator
 log "Binary locations:"
 printf '  %-20s %s\n' "shadow-rs passwd:" "${RS_PASSWD:-NOT FOUND}"
 printf '  %-20s %s\n' "shadow-rs pwck:" "${RS_PWCK:-NOT FOUND}"
-printf '  %-20s %s\n' "GNU passwd:" "${GNU_PASSWD:-NOT FOUND}"
-printf '  %-20s %s\n' "GNU pwck:" "${GNU_PWCK:-NOT FOUND}"
+printf '  %-20s %s\n' "upstream passwd:" "${UPSTREAM_PASSWD:-NOT FOUND}"
+printf '  %-20s %s\n' "upstream pwck:" "${UPSTREAM_PWCK:-NOT FOUND}"
 separator
 
 # ---------------------------------------------------------------------------
@@ -158,8 +158,8 @@ report_size() {
 report_size "shadow-rs multicall" "$SHADOW_RS_DIR/shadow-rs"
 report_size "shadow-rs passwd" "$RS_PASSWD"
 report_size "shadow-rs pwck" "$RS_PWCK"
-report_size "GNU passwd" "$GNU_PASSWD"
-report_size "GNU pwck" "$GNU_PWCK"
+report_size "upstream passwd" "$UPSTREAM_PASSWD"
+report_size "upstream pwck" "$UPSTREAM_PWCK"
 printf '\n'
 
 # ---------------------------------------------------------------------------
@@ -186,7 +186,7 @@ report_deps() {
 }
 
 report_deps "shadow-rs passwd" "$RS_PASSWD"
-report_deps "GNU passwd" "$GNU_PASSWD"
+report_deps "upstream passwd" "$UPSTREAM_PASSWD"
 separator
 
 # ---------------------------------------------------------------------------
@@ -203,14 +203,14 @@ separator
 # -- passwd -S root --
 
 rs_passwd_time=""
-gnu_passwd_time=""
+upstream_passwd_time=""
 
 if [ -x "$RS_PASSWD" ]; then
     rs_passwd_time=$(bench_command "shadow-rs: passwd -S root" "$PASSWD_STATUS_ITERS" "$RS_PASSWD" -S root)
 fi
 
-if [ -x "$GNU_PASSWD" ]; then
-    gnu_passwd_time=$(bench_command "GNU: passwd -S root" "$PASSWD_STATUS_ITERS" "$GNU_PASSWD" -S root)
+if [ -x "$UPSTREAM_PASSWD" ]; then
+    upstream_passwd_time=$(bench_command "upstream: passwd -S root" "$PASSWD_STATUS_ITERS" "$UPSTREAM_PASSWD" -S root)
 fi
 
 printf '\n'
@@ -218,14 +218,14 @@ printf '\n'
 # -- pwck -r --
 
 rs_pwck_time=""
-gnu_pwck_time=""
+upstream_pwck_time=""
 
 if [ -x "$RS_PWCK" ]; then
     rs_pwck_time=$(bench_command "shadow-rs: pwck -r" "$PWCK_ITERS" "$RS_PWCK" -r)
 fi
 
-if [ -x "$GNU_PWCK" ]; then
-    gnu_pwck_time=$(bench_command "GNU: pwck -r" "$PWCK_ITERS" "$GNU_PWCK" -r)
+if [ -x "$UPSTREAM_PWCK" ]; then
+    upstream_pwck_time=$(bench_command "upstream: pwck -r" "$PWCK_ITERS" "$UPSTREAM_PWCK" -r)
 fi
 
 printf '\n'
@@ -237,7 +237,7 @@ printf '\n'
 separator
 log "SUMMARY"
 printf '\n'
-printf '  %-30s %12s %12s %12s\n' "Benchmark" "shadow-rs" "GNU" "Ratio"
+printf '  %-30s %12s %12s %12s\n' "Benchmark" "shadow-rs" "Upstream" "Ratio"
 separator
 
 compute_ratio() {
@@ -250,19 +250,19 @@ compute_ratio() {
     fi
 }
 
-ratio_passwd=$(compute_ratio "${rs_passwd_time:-}" "${gnu_passwd_time:-}")
-ratio_pwck=$(compute_ratio "${rs_pwck_time:-}" "${gnu_pwck_time:-}")
+ratio_passwd=$(compute_ratio "${rs_passwd_time:-}" "${upstream_passwd_time:-}")
+ratio_pwck=$(compute_ratio "${rs_pwck_time:-}" "${upstream_pwck_time:-}")
 
 printf '  %-30s %11ss %11ss %12s\n' \
     "passwd -S root (${PASSWD_STATUS_ITERS}x)" \
     "${rs_passwd_time:-N/A}" \
-    "${gnu_passwd_time:-N/A}" \
+    "${upstream_passwd_time:-N/A}" \
     "$ratio_passwd"
 
 printf '  %-30s %11ss %11ss %12s\n' \
     "pwck -r (${PWCK_ITERS}x)" \
     "${rs_pwck_time:-N/A}" \
-    "${gnu_pwck_time:-N/A}" \
+    "${upstream_pwck_time:-N/A}" \
     "$ratio_pwck"
 
 printf '\n'

@@ -6,10 +6,10 @@
 
 //! `chage` — change user password aging information.
 //!
-//! Drop-in replacement for GNU shadow-utils `chage(1)`.
+//! Drop-in replacement for upstream shadow `chage(1)`.
 
 use std::fmt;
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::path::Path;
 
 use clap::{Arg, ArgAction, Command};
@@ -55,13 +55,15 @@ mod exit_codes {
 
 /// Errors that the `chage` utility can produce.
 ///
-/// Each variant maps to a specific exit code matching GNU `chage(1)`:
+/// Each variant maps to a specific exit code matching upstream `chage(1)`:
 ///   1 = permission denied, 2 = invalid syntax, 3 = unexpected failure,
 ///   5 = file busy (lock), 15 = can't find shadow entry.
 #[derive(Debug)]
 enum ChageError {
     /// Exit 1 — insufficient privileges.
     PermissionDenied(String),
+    /// Exit 1 — an answer in interactive mode that does not parse.
+    BadFields(String),
     /// Exit 3 — an unexpected runtime failure.
     UnexpectedFailure(String),
     /// Exit 5 — could not acquire the shadow lock file.
@@ -71,7 +73,7 @@ enum ChageError {
     /// Exit 1 — the account does not exist.
     ///
     /// chage(1) reserves 15 for "can't find the shadow password file"; a
-    /// missing *account* is an ordinary failure, and GNU exits 1 for it.
+    /// missing *account* is an ordinary failure, and upstream exits 1 for it.
     UserNotFound(String),
     /// Exit 2 — a numeric option was given a value outside its range.
     InvalidArgument(String),
@@ -81,6 +83,7 @@ impl fmt::Display for ChageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PermissionDenied(msg)
+            | Self::BadFields(msg)
             | Self::UnexpectedFailure(msg)
             | Self::FileBusy(msg)
             | Self::ShadowNotFound(msg)
@@ -98,7 +101,7 @@ impl UError for ChageError {
             // A missing account is an ordinary failure, and shares the general
             // failure code with a refused one; chage(1) reserves 15 for the
             // shadow *file*.
-            Self::PermissionDenied(_) | Self::UserNotFound(_) => 1,
+            Self::PermissionDenied(_) | Self::BadFields(_) | Self::UserNotFound(_) => 1,
             Self::UnexpectedFailure(_) => 3,
             Self::FileBusy(_) => 5,
             Self::ShadowNotFound(_) => 15,
@@ -200,11 +203,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     }
 
     if !has_modifications {
-        // GNU chage enters interactive mode when no flags are given.
-        return Err(ChageError::UnexpectedFailure(
-            "no aging fields specified (interactive mode not yet supported)".into(),
-        )
-        .into());
+        return cmd_interactive(&root, login);
     }
 
     // The aging fields count days: only -1, meaning "unset", may be negative.
@@ -368,6 +367,144 @@ pub fn uu_app() -> Command {
 // ---------------------------------------------------------------------------
 
 /// `chage -l LOGIN` — display aging information, with `-i` in `YYYY-MM-DD`.
+/// One field as asked for in interactive mode: `-1` stands for an empty one.
+fn field_value(field: Option<i64>) -> i64 {
+    field.unwrap_or(-1)
+}
+
+/// Read one answer. `None` is the end of input, or an empty answer: keep the value.
+fn read_answer(input: &mut impl BufRead) -> Result<Option<String>, ChageError> {
+    let mut line = String::new();
+    input
+        .read_line(&mut line)
+        .map_err(|e| ChageError::UnexpectedFailure(format!("cannot read an answer: {e}")))?;
+    let answer = line.trim();
+    Ok((!answer.is_empty()).then(|| answer.to_owned()))
+}
+
+/// Parse a day count: a number, -1 at the lowest.
+fn parse_days(answer: &str) -> Option<i64> {
+    answer.parse().ok().filter(|days| *days >= -1)
+}
+
+/// Ask for the six fields in turn, on `output`, starting from the values in
+/// `entry`. An empty answer or the end of input keeps a value. Any answer that
+/// does not parse fails the lot: the caller writes nothing.
+fn ask_fields(
+    entry: &mut ShadowEntry,
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> Result<(), ChageError> {
+    let fields_error = || ChageError::BadFields("error changing fields".into());
+    let mut ask = |label: &str, shown: String| -> Result<Option<String>, ChageError> {
+        let _ = write!(output, "\t{label} [{shown}]: ");
+        let _ = output.flush();
+        read_answer(input)
+    };
+    let shown_date = |field: Option<i64>| match field {
+        Some(days) => date::format_iso(days).unwrap_or_else(|| days.to_string()),
+        None => "-1".to_owned(),
+    };
+    let stored = |value: i64| (value != -1).then_some(value);
+
+    if let Some(answer) = ask(
+        "Minimum Password Age",
+        field_value(entry.min_age).to_string(),
+    )? {
+        entry.min_age = stored(parse_days(&answer).ok_or_else(fields_error)?);
+    }
+    if let Some(answer) = ask(
+        "Maximum Password Age",
+        field_value(entry.max_age).to_string(),
+    )? {
+        entry.max_age = stored(parse_days(&answer).ok_or_else(fields_error)?);
+    }
+    if let Some(answer) = ask(
+        "Last Password Change (YYYY-MM-DD)",
+        shown_date(entry.last_change),
+    )? {
+        entry.last_change = stored(parse_date_arg(&answer).map_err(|_| fields_error())?);
+    }
+    if let Some(answer) = ask(
+        "Password Expiration Warning",
+        field_value(entry.warn_days).to_string(),
+    )? {
+        entry.warn_days = stored(parse_days(&answer).ok_or_else(fields_error)?);
+    }
+    if let Some(answer) = ask(
+        "Password Inactive",
+        field_value(entry.inactive_days).to_string(),
+    )? {
+        entry.inactive_days = stored(parse_days(&answer).ok_or_else(fields_error)?);
+    }
+    if let Some(answer) = ask(
+        "Account Expiration Date (YYYY-MM-DD)",
+        shown_date(entry.expire_date),
+    )? {
+        entry.expire_date = stored(parse_date_arg(&answer).map_err(|_| fields_error())?);
+    }
+    Ok(())
+}
+
+/// `chage LOGIN`: prompt for each field, as upstream does, and write them
+/// together. The files are read first and locked only for the write, so a prompt
+/// left unanswered holds nothing up. An answered field wins over what changed
+/// meanwhile; a field left alone is not touched.
+fn cmd_interactive(root: &SysRoot, login: &str) -> UResult<()> {
+    let passwd_path = root.passwd_path();
+    let in_passwd = shadow_core::passwd::read_passwd_file(&passwd_path)
+        .is_ok_and(|users| users.iter().any(|u| u.name == login));
+    if !in_passwd {
+        return Err(ChageError::UserNotFound(format!(
+            "user '{login}' does not exist in {}",
+            passwd_path.display()
+        ))
+        .into());
+    }
+
+    let shadow_path = root.shadow_path();
+    let entries =
+        shadow::read_shadow_file(&shadow_path).map_err(|e| open_error(e, &shadow_path))?;
+    let Some(before) = entries.into_iter().find(|e| e.name == login) else {
+        return Err(ChageError::UserNotFound(format!(
+            "user '{login}' does not exist in {}",
+            shadow_path.display()
+        ))
+        .into());
+    };
+
+    let mut output = std::io::stdout().lock();
+    let _ = write!(
+        output,
+        "Changing the aging information for {login}\n\
+         Enter the new value, or press ENTER for the default\n\n"
+    );
+    let mut asked = before.clone();
+    ask_fields(&mut asked, &mut std::io::stdin().lock(), &mut output)?;
+
+    mutate_shadow(root, login, |entry| {
+        if asked.min_age != before.min_age {
+            entry.min_age = asked.min_age;
+        }
+        if asked.max_age != before.max_age {
+            entry.max_age = asked.max_age;
+        }
+        if asked.last_change != before.last_change {
+            entry.last_change = asked.last_change;
+        }
+        if asked.warn_days != before.warn_days {
+            entry.warn_days = asked.warn_days;
+        }
+        if asked.inactive_days != before.inactive_days {
+            entry.inactive_days = asked.inactive_days;
+        }
+        if asked.expire_date != before.expire_date {
+            entry.expire_date = asked.expire_date;
+        }
+        Ok(())
+    })
+}
+
 fn cmd_list(root: &SysRoot, login: &str, iso: bool) -> UResult<()> {
     let shadow_path = root.shadow_path();
     let entries = shadow::read_shadow_file(&shadow_path).map_err(|e| {
@@ -386,11 +523,11 @@ fn cmd_list(root: &SysRoot, login: &str, iso: bool) -> UResult<()> {
 /// A `max_age` at or above this many days disables expiry.
 ///
 /// chage(1) prints `never` for the two password lines at this value and a real
-/// date one day below it, verified against GNU shadow 4.17: `-M 9999` shows a
+/// date one day below it, verified against upstream shadow 4.17: `-M 9999` shows a
 /// date, `-M 10000` shows `never`.
 const MAX_AGE_NEVER: i64 = 10_000;
 
-/// Print the aging information to stdout in the GNU `chage -l` format.
+/// Print the aging information to stdout in the upstream `chage -l` format.
 fn print_aging_info(entry: &ShadowEntry, iso: bool) {
     let mut out = std::io::stdout().lock();
     write_aging_info(entry, &mut out, iso);
@@ -728,7 +865,7 @@ mod tests {
     // -----------------------------------------------------------------------
     // `chage -l` output
     //
-    // The expected text is GNU shadow 4.17's, captured from the Debian image:
+    // The expected text is upstream shadow 4.17's, captured from the Debian image:
     // the label columns, the "password must be changed" wording and the
     // `never` threshold all have to match for scripts that parse this.
     // -----------------------------------------------------------------------
@@ -762,7 +899,7 @@ mod tests {
 
     #[test]
     fn test_aging_output_iso8601() {
-        // `chage -l -i`, checked against GNU shadow 4.17 for the same entry.
+        // `chage -l -i`, checked against upstream shadow 4.17 for the same entry.
         let entry = ShadowEntry {
             inactive_days: Some(5),
             expire_date: Some(shadow_core::date::days_from_civil(2030, 12, 31)),
@@ -828,7 +965,7 @@ mod tests {
         assert_eq!(lines[3], "Account expires|Jan 01, 1970");
     }
 
-    /// GNU shows a date at `-M 9999` and `never` at `-M 10000`.
+    /// Upstream shows a date at `-M 9999` and `never` at `-M 10000`.
     #[test]
     fn test_max_age_never_threshold_is_10000() {
         let base = shadow_core::date::days_from_civil(2026, 1, 1);
@@ -913,7 +1050,7 @@ mod tests {
             exit_codes::SHADOW_NOT_FOUND
         );
         // A missing account is not a missing shadow file: chage(1) reserves 15
-        // for the file, and GNU exits 1 for an unknown login.
+        // for the file, and upstream exits 1 for an unknown login.
         assert_eq!(
             ChageError::UserNotFound("test".into()).code(),
             exit_codes::USER_NOT_FOUND

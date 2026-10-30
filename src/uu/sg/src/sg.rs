@@ -6,10 +6,10 @@
 
 //! `sg` — run a command with a different primary group.
 //!
-//! Drop-in replacement for GNU shadow-utils `sg(1)`. `sg` is `newgrp(1)` for a
+//! Drop-in replacement for upstream shadow `sg(1)`. `sg` is `newgrp(1)` for a
 //! single command: it authorizes the caller into the group the same way, then
 //! runs one command in it instead of replacing the caller's shell. On a
-//! distribution shipping the GNU suite the two are literally the same binary,
+//! distribution shipping the upstream suite the two are literally the same binary,
 //! and here they are the same [`shadow_core::group_switch`] call.
 
 use std::ffi::CString;
@@ -41,7 +41,7 @@ struct Operands<'a> {
 ///
 /// `-c` is optional -- `sg staff 'id -gn'` and `sg staff -c 'id -gn'` are the
 /// same request -- and anything after the command is ignored, both of which
-/// match what the GNU tool accepts.
+/// match what the upstream tool accepts.
 fn parse_operands(operands: &[String]) -> Operands<'_> {
     let command = match operands {
         [_, flag, command, ..] if flag == "-c" => Some(command.as_str()),
@@ -216,7 +216,7 @@ mod tests {
     }
 
     /// The command is one operand, however many words it holds, and trailing
-    /// operands after it are ignored -- as they are by the GNU tool.
+    /// operands after it are ignored -- as they are by the upstream tool.
     #[test]
     fn test_command_is_one_operand_and_extras_are_ignored() {
         for cli in [

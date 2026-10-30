@@ -48,7 +48,7 @@ pub struct ShadowEntry {
 impl ShadowEntry {
     /// Whether the account password is locked.
     ///
-    /// GNU shadow-utils considers a password locked if it:
+    /// upstream shadow considers a password locked if it:
     /// - starts with `!` (explicitly locked via `passwd -l`)
     /// - equals `*` (system account, no valid password)
     /// - equals `!!` (never had a password set)
@@ -69,7 +69,7 @@ impl ShadowEntry {
     /// leaves one marker, not a second. Prepending unconditionally meant two
     /// locks needed two unlocks, and since `passwd -u` refuses to unlock an
     /// account that would stay locked, an account locked twice could not be
-    /// unlocked with the tool at all. Verified against GNU shadow 4.17, where
+    /// unlocked with the tool at all. Verified against upstream shadow 4.17, where
     /// three locks leave a single `!` that one unlock removes.
     pub fn lock(&mut self) {
         if !self.passwd.starts_with('!') {
@@ -366,7 +366,7 @@ mod tests {
     /// Locking is idempotent, as `passwd -l` is. Adding a second marker meant
     /// two locks needed two unlocks, and `passwd -u` refuses to unlock an
     /// account that would stay locked, so a twice-locked account could not be
-    /// unlocked with the tool at all. Verified against GNU shadow 4.17: three
+    /// unlocked with the tool at all. Verified against upstream shadow 4.17: three
     /// locks leave one `!`, and one unlock removes it.
     #[test]
     fn test_locking_twice_leaves_one_marker() {

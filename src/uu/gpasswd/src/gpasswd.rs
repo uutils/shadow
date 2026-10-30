@@ -6,7 +6,7 @@
 
 //! `gpasswd` — administer `/etc/group` and `/etc/gshadow`.
 //!
-//! Drop-in replacement for GNU shadow-utils `gpasswd(1)`.
+//! Drop-in replacement for upstream shadow `gpasswd(1)`.
 
 use std::fmt;
 use std::io::{self, Write as _};
@@ -268,7 +268,7 @@ fn do_gpasswd(matches: &clap::ArgMatches) -> UResult<()> {
         }
     }
 
-    // GNU gpasswd always prints the removing line for -d, then fails if the
+    // Upstream gpasswd always prints the removing line for -d, then fails if the
     // user is not already a member (including names absent from passwd).
     if let Some(ref user) = req.del_user
         && !group_entries[idx].members.iter().any(|m| m == user)
@@ -295,7 +295,7 @@ fn do_gpasswd(matches: &clap::ArgMatches) -> UResult<()> {
             &old_group_passwd,
         );
         apply_gshadow_changes(gs, &req);
-        // The password now lives in gshadow, matching GNU when it creates the
+        // The password now lives in gshadow, matching upstream when it creates the
         // line.
         if created {
             group_file.entries_mut()[idx].passwd = "x".to_string();
@@ -316,7 +316,7 @@ fn do_gpasswd(matches: &clap::ArgMatches) -> UResult<()> {
     nscd::invalidate_cache("group");
     audit::log_user_event("MOD_GROUP", &group_name, modified_gid, true);
 
-    // GNU prints these on stdout, so a script capturing it keeps working.
+    // Upstream prints these on stdout, so a script capturing it keeps working.
     let mut out = io::stdout().lock();
     if let Some(ref user) = req.add_user {
         let _ = writeln!(out, "Adding user {user} to group {group_name}");
@@ -493,7 +493,7 @@ fn prompt_and_hash_password(root: &SysRoot, group_name: &str) -> Result<String, 
         if *pass1 == *pass2 {
             break pass1;
         }
-        // GNU gpasswd retries instead of exiting on a mismatch.
+        // Upstream gpasswd retries instead of exiting on a mismatch.
         let _ = writeln!(io::stderr(), "They don't match; try again");
     };
 
@@ -558,7 +558,7 @@ pub fn uu_app() -> Command {
                 .action(ArgAction::SetTrue),
         )
         .arg(
-            // GNU gpasswd uses -Q for --root (-R is --restrict).
+            // Upstream gpasswd uses -Q for --root (-R is --restrict).
             Arg::new(options::ROOT)
                 .short('Q')
                 .long("root")

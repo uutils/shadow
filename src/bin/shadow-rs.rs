@@ -29,7 +29,7 @@ type Applet = fn(&[OsString]) -> i32;
 /// Applets that keep euid 0 for an unprivileged caller: the eight that
 /// `make install` marks setuid, and the two it marks setgid `shadow`. `sg` is
 /// here for the reason `newgrp` is -- it has to read `/etc/gshadow` to check
-/// a group password, and the GNU suite ships it as a symlink to the setuid
+/// a group password, and the upstream suite ships it as a symlink to the setuid
 /// `newgrp` for exactly that. The two id mappers are here because writing a
 /// namespace's map beyond the caller's own id needs `CAP_SETUID`/`CAP_SETGID`
 /// in the parent namespace. `expiry` and `chage -l` read the caller's own
