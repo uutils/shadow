@@ -16,7 +16,9 @@ change the password for any account. **passwd** also changes the account
 or associated password validity period.
 
 When invoked without a LOGIN argument, **passwd** changes the password for
-the current user.
+the current user. The options that change an account, **-d**, **-l**, **-u**,
+**-e**, **-n**, **-x**, **-w** and **-i**, need a LOGIN, for root as well: without
+one the exit status is 2.
 
 A change made by **-l**, **-u**, **-d**, **-e** or an aging option prints
 *passwd: password changed.* on standard output, unless **-q** is given.
@@ -24,7 +26,7 @@ A change made by **-l**, **-u**, **-d**, **-e** or an aging option prints
 ## OPTIONS
 
 **-a**, **--all**
-:   Report password status on all accounts. Requires **-S**.
+:   Report password status on all accounts. Requires **-S** and no LOGIN.
 
 **-d**, **--delete**
 :   Delete the password for the named account. This makes the account
@@ -52,8 +54,9 @@ A change made by **-l**, **-u**, **-d**, **-e** or an aging option prints
 :   Quiet mode.
 
 **-r**, **--repository** *REPOSITORY*
-:   Accepted for compatibility. Only the local files are supported, whatever
-    *REPOSITORY* says.
+:   Change the password in *REPOSITORY*. Only *files* is supported, and it changes
+    nothing. Anything else is refused, exit status 6, for any caller and before
+    anything else is looked at.
 
 **-R**, **--root** *CHROOT_DIR*
 :   Apply changes in the *CHROOT_DIR* directory and use the configuration
@@ -72,14 +75,20 @@ A change made by **-l**, **-u**, **-d**, **-e** or an aging option prints
 :   Read the new password token from standard input.
 
 **-u**, **--unlock**
-:   Unlock the password of the named account. This removes the '!' prefix
-    from the encrypted password.
+:   Unlock the password of the named account. This removes one '!' from the front
+    of the encrypted password. A field with none is left as it is. If that would
+    leave the field empty, nothing is written and the exit status is 3.
 
 **-w**, **--warndays** *WARN_DAYS*
 :   Set the number of days of warning before a password change is required.
 
 **-x**, **--maxdays** *MAX_DAYS*
 :   Set the maximum number of days a password remains valid.
+
+**-d**, **-u** and **-l** can be combined, in any order. They are applied as
+delete, then unlock, then lock, in one write: **-d -l** removes the hash and leaves
+the account locked. **-e** and the aging options can go with them. **-S** and **-k**
+cannot go with any of these, or with each other.
 
 ## EXIT STATUS
 
@@ -106,12 +115,6 @@ A change made by **-l**, **-u**, **-d**, **-e** or an aging option prints
 
 **10**
 :   PAM reported an error.
-
-## DIFFERENCES FROM UPSTREAM SHADOW
-
-**-d -l** and **-l -u** conflict here, exit 2. Upstream exits 0 for the first and
-3 for the second. **-r** with a repository other than the local files is accepted
-here; upstream exits 6.
 
 ## FILES
 

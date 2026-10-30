@@ -225,6 +225,30 @@ compare_output "usermod with the values the account has" \
 compare_exit "passwd -u on a field with no lock" \
     "$RS/passwd -u root" "/usr/bin/passwd -u root"
 
+# passwd's options. Everything here is refused, or leaves the field as it found it.
+compare_exit "passwd -r with another repository" \
+    "$RS/passwd -r other $PROBE" "/usr/bin/passwd -r other $PROBE"
+compare_exit "passwd -r with another repository and an unknown login" \
+    "$RS/passwd -r other no_such_user_9f3a" "/usr/bin/passwd -r other no_such_user_9f3a"
+compare_exit "passwd -r other -d -S" \
+    "$RS/passwd -r other -d -S $PROBE" "/usr/bin/passwd -r other -d -S $PROBE"
+compare_exit "passwd -r files -S" "$RS/passwd -r files -S $PROBE" "/usr/bin/passwd -r files -S $PROBE"
+compare_exit "passwd -d with no login" "$RS/passwd -d" "/usr/bin/passwd -d"
+compare_exit "passwd -S -k" "$RS/passwd -S -k $PROBE" "/usr/bin/passwd -S -k $PROBE"
+compare_exit "passwd -k -d" "$RS/passwd -k -d $PROBE" "/usr/bin/passwd -k -d $PROBE"
+compare_exit "passwd -a -S with a login" "$RS/passwd -a -S $PROBE" "/usr/bin/passwd -a -S $PROBE"
+compare_exit "passwd with two logins" "$RS/passwd $PROBE root" "/usr/bin/passwd $PROBE root"
+for args in "-d -l" "-l -d" "-d -u" "-l -u" "-u -l" "-d -l -u" "-e -l" "-e -d"; do
+    # Each tool starts from the same field; what it leaves is read back as status.
+    # shellcheck disable=SC2086
+    compare_output "passwd $args" \
+        "/usr/sbin/usermod -p abc $PROBE; $RS/passwd $args $PROBE; $RS/passwd -S $PROBE | cut -d' ' -f1,2" \
+        "/usr/sbin/usermod -p abc $PROBE; /usr/bin/passwd $args $PROBE; /usr/bin/passwd -S $PROBE | cut -d' ' -f1,2"
+done
+/usr/sbin/usermod -p '!' "$PROBE" >/dev/null 2>&1
+compare_exit "passwd -l -u when the field would come out empty" \
+    "$RS/passwd -l -u $PROBE" "/usr/bin/passwd -l -u $PROBE"
+
 # Member lists: both tools refuse a name that is not a user, and nothing is left
 # behind, so the two runs start from the same files.
 compare_exit "groupmod -U with a user that does not exist" \

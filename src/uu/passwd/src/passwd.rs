@@ -83,8 +83,11 @@ enum PasswdError {
     /// Exit 10 — PAM returned an error.
     #[cfg_attr(not(feature = "pam"), allow(dead_code))]
     PamError(String),
-    /// Exit 6 — a numeric option was given a value outside its range.
+    /// Exit 6 — a numeric option was given a value outside its range, or a
+    /// repository other than the local files was asked for.
     InvalidArgument(String),
+    /// Exit 2 — options that exclude each other, or a required one missing.
+    BadSyntax(String),
 }
 
 impl fmt::Display for PasswdError {
@@ -96,7 +99,8 @@ impl fmt::Display for PasswdError {
             | Self::FileMissing(msg)
             | Self::FileBusy(msg)
             | Self::PamError(msg)
-            | Self::InvalidArgument(msg) => f.write_str(msg),
+            | Self::InvalidArgument(msg)
+            | Self::BadSyntax(msg) => f.write_str(msg),
         }
     }
 }
@@ -112,6 +116,7 @@ impl UError for PasswdError {
             Self::FileBusy(_) => 5,
             Self::PamError(_) => 10,
             Self::InvalidArgument(_) => 6,
+            Self::BadSyntax(_) => 2,
         }
     }
 }
@@ -173,7 +178,7 @@ fn apply_landlock(root: &SysRoot) {
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     shadow_core::hardening::harden_process();
 
-    // GNU passwd exits 2 for conflicting options, 6 for unknown/invalid.
+    // Upstream exits 2 for conflicting options, 6 for unknown/invalid.
     let Some(matches) = shadow_core::cli::parse_args(uu_app(), args, |e| match e.kind() {
         clap::error::ErrorKind::ArgumentConflict
         | clap::error::ErrorKind::MissingRequiredArgument => 2,
@@ -182,6 +187,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     else {
         return Ok(());
     };
+
+    // Nothing has been looked at yet, so what these say depends on the command
+    // line alone, whoever is running it.
+    check_usage(&matches)?;
 
     // Handle --root / -R: chroot before anything else.
     if let Some(chroot_dir) = matches.get_one::<String>(options::ROOT) {
@@ -267,18 +276,20 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // single `mutate_shadow` call so neither set of changes is lost.
     if has_mutation || has_aging {
         return mutate_shadow(&root, &target_user, quiet, |entry| {
-            // Apply the mutation operation.
+            // Apply the mutation operations, in upstream's order. The order of
+            // the options does not matter, and locking comes last, so a command
+            // that asks for a lock always ends with one. A failure here writes
+            // nothing.
+            if has_delete {
+                entry.delete_password();
+            }
+            if has_unlock && !entry.unlock() {
+                return Err("unlocking the password would result in a passwordless account".into());
+            }
             if has_lock {
                 entry.lock();
-            } else if has_unlock {
-                if !entry.unlock() {
-                    return Err(
-                        "unlocking the password would result in a passwordless account".into(),
-                    );
-                }
-            } else if has_delete {
-                entry.delete_password();
-            } else if has_expire {
+            }
+            if has_expire {
                 entry.expire();
             }
 
@@ -319,6 +330,64 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     cmd_pam_change(&matches, &target_user)
 }
 
+/// Refuse what the command line alone says is wrong, with upstream's codes.
+///
+/// A repository other than the local files comes first: upstream refuses it
+/// before anything else, for any caller, so the answer cannot tell a caller
+/// whether a login exists. This only ever refuses. The privilege checks are all
+/// still ahead, on the commands that get through.
+fn check_usage(matches: &clap::ArgMatches) -> Result<(), PasswdError> {
+    if let Some(repository) = matches.get_one::<String>(options::REPOSITORY)
+        && repository != "files"
+    {
+        return Err(PasswdError::InvalidArgument(format!(
+            "repository {repository} not supported"
+        )));
+    }
+
+    let usage = |msg: &str| Err(PasswdError::BadSyntax(msg.to_owned()));
+    let logins = matches
+        .get_many::<String>(options::USER)
+        .map_or(0, Iterator::count);
+    let status = matches.get_flag(options::STATUS);
+    let keep_tokens = matches.get_flag(options::KEEP_TOKENS);
+    let changes_account = [
+        options::DELETE,
+        options::LOCK,
+        options::UNLOCK,
+        options::EXPIRE,
+    ]
+    .iter()
+    .any(|flag| matches.get_flag(flag))
+        || [
+            options::MINDAYS,
+            options::MAXDAYS,
+            options::WARNDAYS,
+            options::INACTIVE,
+        ]
+        .iter()
+        .any(|option| matches.contains_id(option));
+
+    if logins > 1 {
+        return usage("only one LOGIN may be given");
+    }
+    if matches.get_flag(options::ALL) && (!status || logins > 0) {
+        return usage("-a needs -S and no LOGIN");
+    }
+    if status && (changes_account || keep_tokens) {
+        return usage("-S cannot be used with an option that changes the account, or with -k");
+    }
+    if keep_tokens && changes_account {
+        return usage("-k cannot be used with an option that changes the account");
+    }
+    // Guessing the account from who is running would make a bare `passwd -d`
+    // delete the password of whoever typed it.
+    if changes_account && logins == 0 {
+        return usage("this option needs a LOGIN");
+    }
+    Ok(())
+}
+
 /// Build the clap `Command` for `passwd`.
 #[must_use]
 #[allow(clippy::too_many_lines)]
@@ -333,7 +402,6 @@ pub fn uu_app() -> Command {
                 .short('a')
                 .long("all")
                 .help("show status for every user (combine with -S)")
-                .requires(options::STATUS)
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -341,7 +409,6 @@ pub fn uu_app() -> Command {
                 .short('d')
                 .long("delete")
                 .help("erase the password field on the target account")
-                .conflicts_with_all([options::LOCK, options::UNLOCK, options::STATUS])
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -349,12 +416,6 @@ pub fn uu_app() -> Command {
                 .short('e')
                 .long("expire")
                 .help("mark the target account's password as expired")
-                .conflicts_with_all([
-                    options::LOCK,
-                    options::UNLOCK,
-                    options::DELETE,
-                    options::STATUS,
-                ])
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -378,7 +439,6 @@ pub fn uu_app() -> Command {
                 .short('l')
                 .long("lock")
                 .help("disable login by locking the password field")
-                .conflicts_with_all([options::UNLOCK, options::DELETE, options::STATUS])
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -401,7 +461,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::REPOSITORY)
                 .short('r')
                 .long("repository")
-                .help("accepted for compatibility; only the local files backend is supported")
+                .help("change the password in REPOSITORY; only \"files\" is supported")
                 .value_name("REPOSITORY"),
         )
         .arg(
@@ -423,7 +483,6 @@ pub fn uu_app() -> Command {
                 .short('S')
                 .long("status")
                 .help("print the password status of the target account")
-                .conflicts_with_all([options::LOCK, options::UNLOCK, options::DELETE])
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -431,7 +490,6 @@ pub fn uu_app() -> Command {
                 .short('u')
                 .long("unlock")
                 .help("re-enable login by unlocking the password field")
-                .conflicts_with_all([options::LOCK, options::DELETE, options::STATUS])
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -462,7 +520,8 @@ pub fn uu_app() -> Command {
         .arg(
             Arg::new(options::USER)
                 .help("Account whose password to change")
-                .index(1),
+                .index(1)
+                .action(ArgAction::Append),
         )
 }
 
@@ -850,51 +909,6 @@ mod tests {
     // -----------------------------------------------------------------------
     // Clap validation tests — conflict groups and flag parsing
     // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_conflicting_flags() {
-        let result = uu_app().try_get_matches_from(["passwd", "-l", "-u"]);
-        assert!(result.is_err());
-
-        let result = uu_app().try_get_matches_from(["passwd", "-l", "-d"]);
-        assert!(result.is_err());
-
-        let result = uu_app().try_get_matches_from(["passwd", "-S", "-d"]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_all_requires_status() {
-        let result = uu_app().try_get_matches_from(["passwd", "-a"]);
-        assert!(result.is_err());
-
-        let result = uu_app().try_get_matches_from(["passwd", "-S", "-a"]);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_expire_conflicts_with_lock() {
-        let result = uu_app().try_get_matches_from(["passwd", "-e", "-l", "user"]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_expire_conflicts_with_unlock() {
-        let result = uu_app().try_get_matches_from(["passwd", "-e", "-u", "user"]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_expire_conflicts_with_delete() {
-        let result = uu_app().try_get_matches_from(["passwd", "-e", "-d", "user"]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_expire_conflicts_with_status() {
-        let result = uu_app().try_get_matches_from(["passwd", "-e", "-S", "user"]);
-        assert!(result.is_err());
-    }
 
     #[test]
     fn test_stdin_flag_parses() {
