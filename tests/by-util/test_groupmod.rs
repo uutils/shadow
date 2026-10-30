@@ -290,7 +290,7 @@ fn test_users_update_gshadow() {
     let dir = setup_root(
         "mygrp:x:2000:user1\n",
         "mygrp:!::user1\n",
-        "root:x:0:0:root:/root:/bin/bash\n",
+        "user2:x:1002:1002::/h:/bin/sh\nuser3:x:1003:1003::/h:/bin/sh\n",
     );
 
     let prefix = dir.path().to_str().expect("temp dir path is valid UTF-8");
@@ -353,4 +353,155 @@ fn test_change_gid_and_name_together() {
         !content.contains("oldgrp"),
         "old group name should not remain"
     );
+}
+
+// Probed on Ubuntu 26.04's groupmod: every name in -U has to be a user, and an
+// empty name is not one, wherever in the list it stands. Nothing changes.
+#[test]
+fn test_users_refuses_a_bad_name_and_changes_nothing() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    for bad in [
+        "ghost",
+        "alice,ghost",
+        "",
+        ",",
+        "alice,",
+        ",alice",
+        "alice,,bob",
+        " alice",
+    ] {
+        for extra in [&[][..], &["-a"][..]] {
+            let dir = setup_root(
+                "mygrp:x:2000:bob\n",
+                "mygrp:!::bob\n",
+                "alice:x:1000:1000::/h:/bin/sh\nbob:x:1001:1001::/h:/bin/sh\n",
+            );
+            let prefix = dir.path().to_str().expect("temp dir path is valid UTF-8");
+            let mut args = vec!["groupmod", "-U", bad, "-P", prefix, "mygrp"];
+            args.extend_from_slice(extra);
+            assert_eq!(run(&args), 10, "-U {bad:?} {extra:?} should exit 10");
+            assert_eq!(
+                read_group(&dir),
+                "mygrp:x:2000:bob\n",
+                "-U {bad:?} {extra:?}"
+            );
+            assert_eq!(read_gshadow(&dir), "mygrp:!::bob\n", "-U {bad:?} {extra:?}");
+        }
+    }
+}
+
+// A prefixed run manages the files under the prefix: a user of this system
+// that is not in them does not count, which root in every container shows.
+#[test]
+fn test_users_under_a_prefix_looks_only_at_the_prefix() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root(
+        "mygrp:x:2000:\n",
+        "mygrp:!::\n",
+        "onlyhere:x:1000:1000::/h:/bin/sh\n",
+    );
+    let prefix = dir.path().to_str().expect("temp dir path is valid UTF-8");
+    assert_eq!(run(&["groupmod", "-U", "root", "-P", prefix, "mygrp"]), 10);
+    assert_eq!(read_group(&dir), "mygrp:x:2000:\n");
+    assert_eq!(
+        run(&["groupmod", "-U", "onlyhere", "-P", prefix, "mygrp"]),
+        0
+    );
+    assert_eq!(read_group(&dir), "mygrp:x:2000:onlyhere\n");
+}
+
+// The group has to exist first, and -g and -n are refused before the names are
+// looked at: the code says which of them was wrong.
+#[test]
+fn test_users_is_checked_after_the_group_the_gid_and_the_name() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root(
+        "mygrp:x:2000:\nother:x:2001:\n",
+        "mygrp:!::\nother:!::\n",
+        "alice:x:1000:1000::/h:/bin/sh\n",
+    );
+    let prefix = dir.path().to_str().expect("temp dir path is valid UTF-8");
+    assert_eq!(
+        run(&["groupmod", "-U", "ghost", "-P", prefix, "nogroup"]),
+        6
+    );
+    assert_eq!(
+        run(&[
+            "groupmod", "-U", "ghost", "-g", "2001", "-P", prefix, "mygrp"
+        ]),
+        4
+    );
+    assert_eq!(
+        run(&[
+            "groupmod", "-U", "ghost", "-n", "other", "-P", prefix, "mygrp"
+        ]),
+        9
+    );
+}
+
+#[test]
+fn test_users_listed_twice_is_written_once() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root(
+        "mygrp:x:2000:\n",
+        "mygrp:!::\n",
+        "alice:x:1000:1000::/h:/bin/sh\n",
+    );
+    let prefix = dir.path().to_str().expect("temp dir path is valid UTF-8");
+    assert_eq!(
+        run(&["groupmod", "-U", "alice,alice", "-P", prefix, "mygrp"]),
+        0
+    );
+    assert_eq!(read_group(&dir), "mygrp:x:2000:alice\n");
+    assert_eq!(read_gshadow(&dir), "mygrp:!::alice\n");
+}
+
+// Ubuntu 26.04's groupmod takes -a on its own, and with -n, and does nothing
+// with it: exit 0, the member list as it was.
+#[test]
+fn test_append_without_users_is_accepted_and_does_nothing() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root(
+        "mygrp:x:2000:bob\n",
+        "mygrp:!::bob\n",
+        "bob:x:1001:1001::/h:/bin/sh\n",
+    );
+    let prefix = dir.path().to_str().expect("temp dir path is valid UTF-8");
+    assert_eq!(run(&["groupmod", "-a", "-P", prefix, "mygrp"]), 0);
+    assert_eq!(read_group(&dir), "mygrp:x:2000:bob\n");
+    assert_eq!(run(&["groupmod", "-a", "-P", prefix, "nogroup"]), 6);
+    assert_eq!(
+        run(&["groupmod", "-a", "-n", "renamed", "-P", prefix, "mygrp"]),
+        0
+    );
+    assert_eq!(read_group(&dir), "renamed:x:2000:bob\n");
+}
+
+// A password that would break the file format is refused with the code of a
+// failed write, 10, as Ubuntu 26.04's groupmod does, and nothing is written.
+#[test]
+fn test_password_with_a_colon_exits_10() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root("mygrp:x:2000:\n", "mygrp:!::\n", "");
+    let prefix = dir.path().to_str().expect("temp dir path is valid UTF-8");
+    assert_eq!(run(&["groupmod", "-p", "a:b", "-P", prefix, "mygrp"]), 10);
+    assert_eq!(read_gshadow(&dir), "mygrp:!::\n");
 }

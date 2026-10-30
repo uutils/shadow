@@ -130,19 +130,6 @@ fn do_groupadd(matches: &clap::ArgMatches) -> UResult<()> {
         .get_one::<String>(options::PASSWORD)
         .cloned()
         .unwrap_or_else(|| "!".to_string());
-    shadow_core::validate::validate_field("password", &password)
-        .map_err(|e| GroupaddError::BadArgument(e.to_string()))?;
-
-    let users: Vec<String> = matches
-        .get_one::<String>(options::USERS)
-        .map(|v| {
-            v.split(',')
-                .map(str::trim)
-                .filter(|u| !u.is_empty())
-                .map(ToOwned::to_owned)
-                .collect()
-        })
-        .unwrap_or_default();
 
     let prefix = matches.get_one::<String>(options::PREFIX).map(Path::new);
     let root = SysRoot::new(prefix);
@@ -201,6 +188,17 @@ fn do_groupadd(matches: &clap::ArgMatches) -> UResult<()> {
         &defs,
         scope,
     )?;
+
+    // Refused with the code of a failed write, and after the checks above, so
+    // the code names what was wrong first. Nothing has been written.
+    let users = matches
+        .get_one::<String>(options::USERS)
+        .map(|list| shadow_core::group::resolve_member_list(&root, list))
+        .transpose()
+        .map_err(|e| GroupaddError::CantUpdate(e.to_string()))?
+        .unwrap_or_default();
+    shadow_core::validate::validate_field("password", &password)
+        .map_err(|e| GroupaddError::CantUpdate(e.to_string()))?;
 
     // Write to /etc/group.
     groups.entries_mut().push(GroupEntry {

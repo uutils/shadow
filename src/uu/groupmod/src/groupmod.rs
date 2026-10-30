@@ -129,10 +129,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         shadow_core::validate::validate_username(name)
             .map_err(|e| GroupmodError::BadArgument(format!("{e}")))?;
     }
-    if let Some(password) = new_password {
-        shadow_core::validate::validate_field("password", password)
-            .map_err(|e| GroupmodError::BadArgument(e.to_string()))?;
-    }
 
     // Parse new GID if provided. u32::MAX is (gid_t)-1, the "no change"
     // sentinel of chown/setresgid, and must never be stored.
@@ -175,18 +171,12 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         LockedFile::<GroupEntry>::open(&group_path).map_err(cant_update(&group_path))?;
 
     // groupmod(8) -U sets the member list; with -a the users are added to it.
-    let new_members: Option<Vec<String>> = matches.get_one::<String>(options::USERS).map(|users| {
-        users
-            .split(',')
-            .map(str::trim)
-            .filter(|u| !u.is_empty())
-            .map(ToOwned::to_owned)
-            .collect()
-    });
+    // Without -U, -a has nothing to do.
+    let users = matches.get_one::<String>(options::USERS);
     let append = matches.get_flag(options::APPEND);
 
     // gshadow is only touched by a rename, a password change or new members.
-    let touches_gshadow = new_name.is_some() || new_password.is_some() || new_members.is_some();
+    let touches_gshadow = new_name.is_some() || new_password.is_some() || users.is_some();
     let mut gshadow = if gshadow_path.exists() && touches_gshadow {
         Some(LockedFile::<GshadowEntry>::open(&gshadow_path).map_err(cant_update(&gshadow_path))?)
     } else {
@@ -227,12 +217,19 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         entries[idx].name.clone_from(name);
     }
 
+    // Refused with the code of a failed write, like a password that would not
+    // fit the file below, and after the checks above, so the code names what
+    // was wrong first. Nothing has been written.
+    let new_members = users
+        .map(|list| shadow_core::group::resolve_member_list(&root, list))
+        .transpose()
+        .map_err(|e| GroupmodError::CantUpdate(e.to_string()))?;
     if let Some(requested) = &new_members {
-        for name in requested {
-            shadow_core::validate::validate_username(name)
-                .map_err(|e| GroupmodError::BadArgument(format!("invalid member name: {e}")))?;
-        }
         set_members(&mut entries[idx].members, requested, append);
+    }
+    if let Some(password) = new_password {
+        shadow_core::validate::validate_field("password", password)
+            .map_err(|e| GroupmodError::CantUpdate(e.to_string()))?;
     }
 
     // Without a gshadow file the password belongs in the group file, which is
@@ -347,7 +344,6 @@ pub fn uu_app() -> Command {
             Arg::new(options::APPEND)
                 .short('a')
                 .long("append")
-                .requires(options::USERS)
                 .help("With -U, add the users instead of replacing the member list")
                 .action(ArgAction::SetTrue),
         )

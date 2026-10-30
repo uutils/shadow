@@ -19,7 +19,48 @@ use std::str::FromStr;
 
 use crate::error::ShadowError;
 pub use crate::records::Layout;
+use crate::sysroot::SysRoot;
 use crate::validate::{validate_field, validate_list_item};
+
+/// Turn the comma-separated argument of `-U` into a member list.
+///
+/// Every name has to be a user: an empty name is not one, so neither an empty
+/// argument nor a stray comma means "no members", and spaces are part of the
+/// name. A name listed twice is kept once.
+///
+/// On this system a user may come from the name service as well as from
+/// `/etc/passwd`. A `--prefix` run manages another system's files, so only the
+/// `passwd` under the prefix counts, the same split as
+/// [`uid_alloc::Scope`](crate::uid_alloc::Scope).
+///
+/// # Errors
+///
+/// Returns `ShadowError::Validation` naming the first name that is not a user.
+pub fn resolve_member_list(root: &SysRoot, list: &str) -> Result<Vec<String>, ShadowError> {
+    let local = crate::passwd::read_passwd_file(&root.passwd_path()).unwrap_or_default();
+    let is_user = |name: &str| {
+        // A name that could not be stored is not looked up. The name service
+        // is outside this crate's control, and the writer would refuse it.
+        !name.is_empty()
+            && validate_field("member name", name).is_ok()
+            && (local.iter().any(|u| u.name == name)
+                || (!root.is_prefixed()
+                    && crate::process::getpwnam(name).is_ok_and(|u| u.is_some())))
+    };
+
+    let mut members: Vec<String> = Vec::new();
+    for name in list.split(',') {
+        if !is_user(name) {
+            return Err(ShadowError::Validation(
+                format!("invalid member username '{name}'").into(),
+            ));
+        }
+        if !members.iter().any(|m| m == name) {
+            members.push(name.to_owned());
+        }
+    }
+    Ok(members)
+}
 
 /// A single entry from `/etc/group`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
