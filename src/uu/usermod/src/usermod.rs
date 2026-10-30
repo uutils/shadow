@@ -140,6 +140,15 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         }
     }
 
+    // usermod(8) exit 3. A relative home would be resolved against the directory
+    // root runs this from. An empty one is allowed, like upstream: no home.
+    if matches
+        .get_one::<String>(options::HOME)
+        .is_some_and(|home| !home.is_empty() && !home.starts_with('/'))
+    {
+        return Err(UsermodError::BadArgument("homedir must be an absolute path".into()).into());
+    }
+
     // Subordinate id ranges are validated with the other arguments, before any
     // file is written; usermod(8) exits 3 for an invalid one.
     let subid_changes = parse_subid_changes(&matches)?;

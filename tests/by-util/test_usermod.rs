@@ -1459,3 +1459,23 @@ fn test_rechown_leaves_the_group_of_someone_elses_hard_link() {
         assert_eq!(owner_of(&home.join("given")), given, "{args:?}");
     }
 }
+
+/// usermod(8) exit 3. A relative path would be resolved against wherever root
+/// happens to be running this, and now that the new home is re-owned, that
+/// directory is what would change hands.
+#[test]
+fn test_relative_home_is_refused() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "testuser:x:1000:\n",
+    );
+    let before = read_passwd(&dir);
+    let code = run_with_prefix(&dir, &["-d", "rel/path", "-u", "1500", "testuser"]);
+    assert_eq!(code, 3);
+    assert_eq!(read_passwd(&dir), before, "nothing should be written");
+}
