@@ -285,3 +285,97 @@ fn test_derived_dates_are_the_sums_of_their_fields() {
     assert_eq!(field(&dir, 2), "Apr 01, 2026");
     assert_eq!(field(&dir, 3), "May 01, 2026");
 }
+
+/// Run `chage -P DIR alice` with `answers` on standard input; the row starts with
+/// the fields 1, 90, 2026-01-01 (20454), 7, 3 and 2030-01-01 (21915).
+fn chage_interactive(answers: &str, login: &str) -> (crate::common::Output, String) {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let etc = dir.path().join("etc");
+    std::fs::create_dir_all(&etc).expect("failed to create etc dir");
+    std::fs::write(etc.join("passwd"), "alice:x:1000:1000::/h:/bin/sh\n").expect("write passwd");
+    std::fs::write(etc.join("shadow"), "alice:abc:20454:1:90:7:3:21915:\n").expect("write shadow");
+    let input = dir.path().join("answers");
+    std::fs::write(&input, answers).expect("write answers");
+
+    let mut cmd = crate::common::tool("chage");
+    cmd.arg("-P")
+        .arg(dir.path())
+        .arg(login)
+        .stdin(std::fs::File::open(&input).expect("open answers"));
+    let out = crate::common::run_cmd(&mut cmd);
+    let shadow = std::fs::read_to_string(etc.join("shadow")).expect("read shadow");
+    (out, shadow)
+}
+
+// Probed on Ubuntu 26.04: the prompts, in this order, on stdout.
+#[test]
+fn test_interactive_prompts_like_upstream_and_keeps_empty_answers() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let (out, shadow) = chage_interactive("\n\n\n\n\n\n", "alice");
+    assert_eq!(
+        (out.code, out.stdout.as_str(), out.stderr.as_str()),
+        (
+            0,
+            "Changing the aging information for alice\n\
+             Enter the new value, or press ENTER for the default\n\n\
+             \tMinimum Password Age [1]: \tMaximum Password Age [90]: \
+             \tLast Password Change (YYYY-MM-DD) [2026-01-01]: \
+             \tPassword Expiration Warning [7]: \tPassword Inactive [3]: \
+             \tAccount Expiration Date (YYYY-MM-DD) [2030-01-01]: ",
+            ""
+        )
+    );
+    assert_eq!(shadow, "alice:abc:20454:1:90:7:3:21915:\n");
+}
+
+#[test]
+fn test_interactive_writes_every_answer() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let (out, shadow) = chage_interactive("5\n100\n2020-02-02\n8\n4\n 2031-01-01 \n", "alice");
+    assert_eq!(out.code, 0);
+    assert_eq!(shadow, "alice:abc:18294:5:100:8:4:22280:\n");
+}
+
+#[test]
+fn test_interactive_minus_one_empties_a_field() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let (out, shadow) = chage_interactive("-1\n-1\n-1\n-1\n-1\n-1\n", "alice");
+    assert_eq!(out.code, 0);
+    assert_eq!(shadow, "alice:abc:::::::\n");
+}
+
+#[test]
+fn test_interactive_end_of_input_keeps_the_rest() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let (out, shadow) = chage_interactive("3\n", "alice");
+    assert_eq!(out.code, 0);
+    assert_eq!(shadow, "alice:abc:20454:3:90:7:3:21915:\n");
+}
+
+#[test]
+fn test_interactive_bad_answer_exits_1_and_writes_nothing() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    for answers in ["abc\n", "5\nabc\n", "-5\n", "5\n5\nbad-date\n"] {
+        let (out, shadow) = chage_interactive(answers, "alice");
+        assert_eq!(out.code, 1, "{answers:?}");
+        assert_eq!(shadow, "alice:abc:20454:1:90:7:3:21915:\n", "{answers:?}");
+    }
+}
+
+#[test]
+fn test_interactive_unknown_login_exits_1() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    assert_eq!(chage_interactive("", "nosuch").0.code, 1);
+}
