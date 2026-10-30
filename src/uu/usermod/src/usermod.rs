@@ -177,11 +177,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         return Err(UsermodError::UserNotFound(format!("user '{login}' does not exist")).into());
     };
 
-    // Save the old UID, GID and home dir before mutation so we can chown if needed.
+    // Save the old UID and GID before mutation so we can chown if needed.
     let old_uid = entries[idx].uid;
     let old_primary_gid = entries[idx].gid;
-    let home_for_chown = entries[idx].home.clone();
-    let home_is_changing = matches.get_one::<String>(options::HOME).is_some();
 
     // Check UID collision before mutating.
     if let Some(&uid) = matches.get_one::<u32>(options::UID) {
@@ -240,6 +238,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     let new_uid = entries[idx].uid;
     let new_primary_gid = entries[idx].gid;
+    let home_for_chown = entries[idx].home.clone();
 
     passwd_file
         .commit()
@@ -248,14 +247,15 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // Restore signals before potentially long-running recursive chown.
     drop(signals);
 
-    // If the UID or the primary group changed and the home directory was not
-    // explicitly moved, recursively chown the existing home directory.
+    // If the UID or the primary group changed, recursively chown the home the
+    // account now has, which is the one -d gave if it gave one. A previous home
+    // stays as it is, like upstream: nothing was moved, and it may not be this
+    // user's to change any more.
     // usermod(8): only files owned by the old UID get the new UID, and only
     // files in the old primary group get the new group.
     // A home that cannot be re-owned is reported at the end, like upstream:
     // the account files are written regardless.
     let home_chown = if (new_uid != old_uid || new_primary_gid != old_primary_gid)
-        && !home_is_changing
         && !home_for_chown.is_empty()
     {
         rechown_home(

@@ -1460,6 +1460,115 @@ fn test_rechown_leaves_the_group_of_someone_elses_hard_link() {
     }
 }
 
+/// `-d` with `-u` or `-g` re-owns the home the account ends up with, whether
+/// that is the same value or an existing directory of the user's elsewhere.
+/// Without `-m` nothing moves, so a previous home stays as it is: it may well
+/// not be the user's to give away any more.
+#[test]
+fn test_rechown_follows_the_home_given_with_d() {
+    use std::os::unix::fs::chown;
+
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let cases: [(&[&str], (u32, u32)); 3] = [
+        (&["-u", "1500"], (1500, 1000)),
+        (&["-g", "dev"], (1000, 2000)),
+        (&["-u", "1500", "-g", "dev"], (1500, 2000)),
+    ];
+    for (id_args, changed) in cases {
+        let setup = || {
+            let dir = setup_prefix(
+                "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+                "testuser:$6$hash:19500:0:99999:7:::\n",
+                "testuser:x:1000:\ndev:x:2000:\n",
+            );
+            for name in ["testuser", "other"] {
+                let home = dir.path().join("home").join(name);
+                std::fs::create_dir_all(home.join("sub")).expect("failed to create dirs");
+                std::fs::write(home.join("sub/f"), "").expect("failed to write file");
+                for path in [home.join("sub/f"), home.join("sub"), home] {
+                    chown(path, Some(1000), Some(1000)).expect("chown failed");
+                }
+            }
+            dir
+        };
+        let check = |dir: &tempfile::TempDir, name: &str, expected: (u32, u32), case: &str| {
+            let home = dir.path().join("home").join(name);
+            for path in [home.clone(), home.join("sub"), home.join("sub/f")] {
+                assert_eq!(owner_of(&path), expected, "{case} {id_args:?}: {name}");
+            }
+        };
+
+        // The same value: as if -d had not been given.
+        let dir = setup();
+        let args = [&["-d", "/home/testuser"], id_args, &["testuser"]].concat();
+        assert_eq!(run_with_prefix(&dir, &args), 0, "same value {id_args:?}");
+        check(&dir, "testuser", changed, "same value");
+        check(&dir, "other", (1000, 1000), "same value");
+
+        // An existing directory of the user's: that one changes, not the old.
+        let dir = setup();
+        let args = [&["-d", "/home/other"], id_args, &["testuser"]].concat();
+        assert_eq!(run_with_prefix(&dir, &args), 0, "existing {id_args:?}");
+        check(&dir, "other", changed, "existing");
+        check(&dir, "testuser", (1000, 1000), "existing");
+        assert!(read_passwd(&dir).contains(":/home/other:"));
+
+        // A directory that is not there: nothing to do, nothing else touched.
+        let dir = setup();
+        let args = [&["-d", "/home/absent"], id_args, &["testuser"]].concat();
+        assert_eq!(run_with_prefix(&dir, &args), 0, "absent {id_args:?}");
+        check(&dir, "testuser", (1000, 1000), "absent");
+        check(&dir, "other", (1000, 1000), "absent");
+    }
+}
+
+/// The checks on the home apply to the new one as they do to the current one:
+/// not the user's is left alone, and a symlink is exit 12 and not walked.
+#[test]
+fn test_rechown_new_home_that_cannot_be_walked() {
+    use std::os::unix::fs::{chown, symlink};
+
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let setup = || {
+        let dir = setup_prefix(
+            "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+            "testuser:$6$hash:19500:0:99999:7:::\n",
+            "testuser:x:1000:\n",
+        );
+        std::fs::create_dir_all(dir.path().join("home")).expect("failed to create /home");
+        dir
+    };
+
+    // Someone else's directory, with a file of the user's in it.
+    let dir = setup();
+    let other = dir.path().join("home/other");
+    std::fs::create_dir(&other).expect("failed to create dir");
+    std::fs::write(other.join("f"), "").expect("failed to write file");
+    chown(other.join("f"), Some(1000), Some(1000)).expect("chown failed");
+    chown(&other, Some(1100), Some(100)).expect("chown failed");
+    let code = run_with_prefix(&dir, &["-d", "/home/other", "-u", "1500", "testuser"]);
+    assert_eq!(code, 0);
+    assert_eq!(owner_of(&other), (1100, 100));
+    assert_eq!(owner_of(&other.join("f")), (1000, 1000));
+
+    // A symlink to a directory of the user's.
+    let dir = setup();
+    let real = dir.path().join("real");
+    std::fs::create_dir(&real).expect("failed to create dir");
+    chown(&real, Some(1000), Some(1000)).expect("chown failed");
+    symlink(&real, dir.path().join("home/other")).expect("failed to create symlink");
+    let code = run_with_prefix(&dir, &["-d", "/home/other", "-u", "1500", "testuser"]);
+    assert_eq!(code, 12);
+    assert_eq!(owner_of(&real), (1000, 1000));
+    assert!(read_passwd(&dir).contains("testuser:x:1500:1000:Test:/home/other:"));
+}
+
 /// usermod(8) exit 3. A relative path would be resolved against wherever root
 /// happens to be running this, and now that the new home is re-owned, that
 /// directory is what would change hands.
