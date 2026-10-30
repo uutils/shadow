@@ -550,11 +550,16 @@ fn rechown_home(home: &Path, owner: (u32, u32), group: (u32, u32)) -> Result<(),
             "Failed to change ownership of the home directory".into(),
         ));
     };
+    let Ok(top_stat) = rustix::fs::fstat(&top) else {
+        return Err(UsermodError::CantChownHome(
+            "Failed to change ownership of the home directory".into(),
+        ));
+    };
     // Swapped for something else since the check: not the user's any more.
-    if !rustix::fs::fstat(&top).is_ok_and(|st| st.st_uid == owner.0) {
+    if top_stat.st_uid != owner.0 {
         return Ok(());
     }
-    chown_matching(&top, owner, group);
+    chown_matching(&top, &top_stat, owner, group);
 
     // Directories still to read, by name under a parent held open. A parent
     // stays open only while children of it wait, so the descriptors held
@@ -566,7 +571,10 @@ fn rechown_home(home: &Path, owner: (u32, u32), group: (u32, u32)) -> Result<(),
             continue;
         };
         drop(parent);
-        chown_matching(&dir, owner, group);
+        let Ok(st) = rustix::fs::fstat(&dir) else {
+            continue;
+        };
+        chown_matching(&dir, &st, owner, group);
         queue_entries(&Rc::new(dir), &mut pending, owner, group);
     }
     Ok(())
@@ -597,24 +605,28 @@ fn queue_entries(
         ) else {
             continue;
         };
-        let is_dir = rustix::fs::fstat(&entry)
-            .is_ok_and(|st| FileType::from_raw_mode(st.st_mode) == FileType::Directory);
-        if is_dir {
+        let Ok(st) = rustix::fs::fstat(&entry) else {
+            continue;
+        };
+        if FileType::from_raw_mode(st.st_mode) == FileType::Directory {
             pending.push((std::rc::Rc::clone(dir), name));
         } else {
-            chown_matching(&entry, owner, group);
+            chown_matching(&entry, &st, owner, group);
         }
     }
 }
 
 /// Give the file behind `fd` the new UID if it has the old one, and the new
-/// GID if it has the old one. `fd` may be an `O_PATH` descriptor, so the
-/// change goes through `fchownat` with `AT_EMPTY_PATH`, which works on one
-/// and, for a symlink, changes the link itself.
-fn chown_matching(fd: impl rustix::fd::AsFd, owner: (u32, u32), group: (u32, u32)) {
-    let Ok(st) = rustix::fs::fstat(&fd) else {
-        return;
-    };
+/// GID if it has the old one. `st` is the `fstat` of this same descriptor, so
+/// the inode checked is the inode changed. `fd` may be an `O_PATH` descriptor,
+/// so the change goes through `fchownat` with `AT_EMPTY_PATH`, which works on
+/// one and, for a symlink, changes the link itself.
+fn chown_matching(
+    fd: impl rustix::fd::AsFd,
+    st: &rustix::fs::Stat,
+    owner: (u32, u32),
+    group: (u32, u32),
+) {
     let (old_owner, new_owner) = owner;
     let (old_group, new_group) = group;
     let set_owner = (old_owner != new_owner && st.st_uid == old_owner)
