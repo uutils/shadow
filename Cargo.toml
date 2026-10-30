@@ -179,7 +179,7 @@ usermod = { version = "0.6.0", package = "uu_usermod", path = "src/uu/usermod" }
 pwck = { version = "0.6.0", package = "uu_pwck", path = "src/uu/pwck" }
 grpck = { version = "0.6.0", package = "uu_grpck", path = "src/uu/grpck" }
 shadow-core = { package = "uu_shadow_core", path = "src/shadow-core", version = "0.6.0" }
-rustix = { workspace = true }
+rustix = { workspace = true, features = ["thread"] }
 tempfile = { workspace = true }
 
 [profile.release]

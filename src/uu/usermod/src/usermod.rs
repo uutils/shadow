@@ -571,6 +571,8 @@ fn rechown_home(home: &Path, owner: (u32, u32), group: (u32, u32)) -> Result<(),
             continue;
         };
         drop(parent);
+        // Already re-owned when it was found, unless the name now holds a
+        // directory that was swapped in since.
         let Ok(st) = rustix::fs::fstat(&dir) else {
             continue;
         };
@@ -580,8 +582,7 @@ fn rechown_home(home: &Path, owner: (u32, u32), group: (u32, u32)) -> Result<(),
     Ok(())
 }
 
-/// Re-own every entry of `dir` that is not a directory, and queue the
-/// directories: they are re-owned once opened as directories themselves.
+/// Re-own every entry of `dir`, and queue the directories to be walked.
 fn queue_entries(
     dir: &std::rc::Rc<uucore::safe_traversal::DirFd>,
     pending: &mut Vec<(
@@ -608,10 +609,12 @@ fn queue_entries(
         let Ok(st) = rustix::fs::fstat(&entry) else {
             continue;
         };
+        // A directory is re-owned now, before it is opened: one that cannot be
+        // opened then still changes hands, and this descriptor never followed
+        // anything to get here.
+        chown_matching(&entry, &st, owner, group);
         if FileType::from_raw_mode(st.st_mode) == FileType::Directory {
             pending.push((std::rc::Rc::clone(dir), name));
-        } else {
-            chown_matching(&entry, &st, owner, group);
         }
     }
 }

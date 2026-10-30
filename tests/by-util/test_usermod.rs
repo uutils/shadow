@@ -1128,3 +1128,86 @@ fn test_rechown_trailing_slash_on_a_symlinked_home() {
     assert_eq!(owner_of(&home), (1500, 1000));
     assert_eq!(owner_of(&home.join("file")), (1500, 1000));
 }
+
+/// Run `usermod` on a thread of its own with `dropped` removed from the
+/// effective capabilities, which are per thread. Root otherwise gets past every
+/// permission check, and the failures a walk has to survive cannot be made.
+fn run_without_capabilities(
+    dir: &tempfile::TempDir,
+    args: &[&str],
+    dropped: rustix::thread::CapabilitySet,
+) -> i32 {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let mut caps = rustix::thread::capabilities(None).expect("capget failed");
+                caps.effective.remove(dropped);
+                rustix::thread::set_capabilities(None, caps).expect("capset failed");
+                run_with_prefix(dir, args)
+            })
+            .join()
+            .expect("usermod thread panicked")
+    })
+}
+
+/// A home holding a directory root cannot open once it has no way around the
+/// mode: `blocked` is mode 000, with `inner` in it, next to `plain` and
+/// `open/f`.
+fn home_with_a_blocked_directory(dir: &tempfile::TempDir) -> std::path::PathBuf {
+    use std::os::unix::fs::{PermissionsExt, chown};
+
+    let home = dir.path().join("home/testuser");
+    let blocked = home.join("blocked");
+    std::fs::create_dir_all(&blocked).expect("failed to create blocked");
+    std::fs::create_dir(home.join("open")).expect("failed to create open");
+    for file in [
+        blocked.join("inner"),
+        home.join("plain"),
+        home.join("open/f"),
+    ] {
+        std::fs::write(&file, "").expect("failed to write file");
+        chown(&file, Some(1000), Some(1000)).expect("chown failed");
+    }
+    for path in [&blocked, &home.join("open"), &home] {
+        chown(path, Some(1000), Some(1000)).expect("chown failed");
+    }
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000))
+        .expect("chmod failed");
+    home
+}
+
+/// A directory the walk cannot open cannot be walked, but it can still be
+/// re-owned through the descriptor that found it, which needs no permission
+/// on the directory and follows nothing.
+#[test]
+fn test_rechown_reowns_a_directory_it_cannot_open() {
+    use rustix::thread::CapabilitySet;
+
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:$6$hash:19500:0:99999:7:::\n",
+        "testuser:x:1000:\n",
+    );
+    let home = home_with_a_blocked_directory(&dir);
+
+    run_without_capabilities(
+        &dir,
+        &["-u", "1500", "testuser"],
+        CapabilitySet::DAC_OVERRIDE | CapabilitySet::DAC_READ_SEARCH,
+    );
+
+    assert_eq!(owner_of(&home.join("blocked")), (1500, 1000));
+    assert_eq!(
+        owner_of(&home.join("blocked/inner")),
+        (1000, 1000),
+        "the walk could not have reached this"
+    );
+    assert_eq!(owner_of(&home), (1500, 1000));
+    assert_eq!(owner_of(&home.join("plain")), (1500, 1000));
+    assert_eq!(owner_of(&home.join("open")), (1500, 1000));
+    assert_eq!(owner_of(&home.join("open/f")), (1500, 1000));
+}
