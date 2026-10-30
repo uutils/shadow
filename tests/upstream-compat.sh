@@ -246,6 +246,84 @@ compare_exit "groupadd -U with an empty list" \
 compare_exit "groupadd -f -U on a group that exists" \
     "$RS/groupadd -f -U no_such_user_9f3a $PROBE_GRP" "/usr/sbin/groupadd -f -U no_such_user_9f3a $PROBE_GRP"
 
+# pwck and grpck, on files of their own, read-only: without -r upstream would ask
+# to repair them. Where its report is one line per problem, what a script reads on
+# standard output has to be the same. Where it adds an offer to repair, the code.
+compare_stdout() {
+    local name="$1" ours="$2" gnu="$3"
+    local our_out gnu_out our_rc=0 gnu_rc=0
+    our_out=$(eval "$ours" 2>/dev/null) || our_rc=$?
+    gnu_out=$(eval "$gnu" 2>/dev/null) || gnu_rc=$?
+    if [ "$our_out" = "$gnu_out" ] && [ "$our_rc" = "$gnu_rc" ]; then
+        pass "$name (exit $our_rc)"
+    else
+        fail "$name (ours=$our_rc, upstream=$gnu_rc)"
+        diff <(printf '%s\n' "$gnu_out") <(printf '%s\n' "$our_out") \
+            | sed 's/^/      /' | head -20
+    fi
+}
+
+CHECK_DIR=$(mktemp -d)
+check_pwck() {
+    local name="$1" passwd="$2" shadow="$3"
+    printf '%b' "$passwd" >"$CHECK_DIR/passwd"
+    printf '%b' "$shadow" >"$CHECK_DIR/shadow"
+    chmod 600 "$CHECK_DIR/shadow"
+    for flags in "-r" "-r -q"; do
+        compare_stdout "pwck $flags: $name" \
+            "$RS/pwck $flags $CHECK_DIR/passwd $CHECK_DIR/shadow" \
+            "/usr/sbin/pwck $flags $CHECK_DIR/passwd $CHECK_DIR/shadow"
+    done
+}
+check_pwck_exit() {
+    local name="$1" passwd="$2" shadow="$3"
+    printf '%b' "$passwd" >"$CHECK_DIR/passwd"
+    printf '%b' "$shadow" >"$CHECK_DIR/shadow"
+    chmod 600 "$CHECK_DIR/shadow"
+    for flags in "-r" "-r -q"; do
+        compare_exit "pwck $flags: $name" \
+            "$RS/pwck $flags $CHECK_DIR/passwd $CHECK_DIR/shadow" \
+            "/usr/sbin/pwck $flags $CHECK_DIR/passwd $CHECK_DIR/shadow"
+    done
+}
+check_grpck() {
+    local kind="$1" name="$2" group="$3" gshadow="$4"
+    printf '%b' "$group" >"$CHECK_DIR/group"
+    printf '%b' "$gshadow" >"$CHECK_DIR/gshadow"
+    for flags in "-r" "-r -q"; do
+        "$kind" "grpck $flags: $name" \
+            "$RS/grpck $flags $CHECK_DIR/group $CHECK_DIR/gshadow" \
+            "/usr/sbin/grpck $flags $CHECK_DIR/group $CHECK_DIR/gshadow"
+    done
+}
+SHADOW_ROW='probe:*:19000:0:99999:7:::\n'
+check_pwck "clean" 'probe:x:0:0::/:/bin/sh\n' "$SHADOW_ROW"
+check_pwck "no primary group" 'probe:x:0:4242::/:/bin/sh\n' "$SHADOW_ROW"
+check_pwck "no home" 'probe:x:0:0::/no/such/home:/bin/sh\n' "$SHADOW_ROW"
+check_pwck "no shell" 'probe:x:0:0::/:/no/such/shell\n' "$SHADOW_ROW"
+check_pwck "last change in the future" 'probe:x:0:0::/:/bin/sh\n' 'probe:*:99999:0:99999:7:::\n'
+check_pwck_exit "password field not x" 'probe:*:0:0::/:/bin/sh\n' "$SHADOW_ROW"
+check_pwck_exit "bad line in passwd" 'probe:x:0:0::/:/bin/sh\ngarbage:line\n' "$SHADOW_ROW"
+check_pwck_exit "bad line in shadow" 'probe:x:0:0::/:/bin/sh\n' "${SHADOW_ROW}garbage:line\n"
+check_pwck_exit "no shadow row" 'probe:x:0:0::/:/bin/sh\n' 'other:*:19000:0:99999:7:::\n'
+check_pwck_exit "shadow row with no account" 'probe:x:0:0::/:/bin/sh\n' "${SHADOW_ROW}other:*:19000:0:99999:7:::\n"
+check_pwck_exit "duplicate account" 'probe:x:0:0::/:/bin/sh\nprobe:x:0:0::/:/bin/sh\n' "$SHADOW_ROW"
+check_pwck_exit "bad user name" 'a@b:x:0:0::/:/bin/sh\n' 'a@b:*:19000:0:99999:7:::\n'
+check_pwck_exit "user name upstream takes" '1abc:x:0:0::/:/bin/sh\n' '1abc:*:19000:0:99999:7:::\n'
+check_grpck compare_stdout "clean" 'probe:x:1:root\n' 'probe:!::root\n'
+check_grpck compare_stdout "members differ" 'probe:x:1:root\n' 'probe:!::\n'
+check_grpck compare_exit "member not a user" 'probe:x:1:no_such_user_9f3a\n' 'probe:!::no_such_user_9f3a\n'
+check_grpck compare_exit "gshadow member not a user" 'probe:x:1:\n' 'probe:!::no_such_user_9f3a\n'
+check_grpck compare_exit "gshadow admin not a user" 'probe:x:1:\n' 'probe:!:no_such_user_9f3a:\n'
+check_grpck compare_exit "duplicate group" 'probe:x:1:\nprobe:x:2:\n' 'probe:!::\n'
+check_grpck compare_exit "duplicate gshadow row" 'probe:x:1:\n' 'probe:!::\nprobe:!::\n'
+check_grpck compare_exit "no gshadow row" 'probe:x:1:\n' 'other:!::\n'
+check_grpck compare_exit "password field not x" 'probe:*:1:\n' 'probe:!::\n'
+check_grpck compare_exit "bad line" 'probe:x:1:\ngarbage\n' 'probe:!::\n'
+check_grpck compare_exit "bad group name" 'a@b:x:1:\n' 'a@b:!::\n'
+check_grpck compare_exit "group name upstream takes" '1abc:x:1:\n' '1abc:!::\n'
+rm -rf "$CHECK_DIR"
+
 # ── Deliberate differences ──────────────────────────────────────────
 
 echo "=== deliberate differences ==="

@@ -16,7 +16,7 @@
 
 use std::collections::HashSet;
 use std::fmt;
-use std::io::BufRead;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use clap::{Arg, ArgAction, Command};
@@ -85,7 +85,6 @@ impl UError for GrpckError {
 // ---------------------------------------------------------------------------
 
 struct GrpckOptions {
-    quiet: bool,
     sort: bool,
     read_only: bool,
     group_path: PathBuf,
@@ -107,7 +106,6 @@ impl GrpckOptions {
             .map_or_else(|| root.gshadow_path(), PathBuf::from);
 
         Self {
-            quiet: matches.get_flag(options::QUIET),
             sort: matches.get_flag(options::SORT),
             read_only: matches.get_flag(options::READ_ONLY),
             group_path,
@@ -138,6 +136,15 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     run_checks(&opts)
 }
 
+/// Say one thing about the files: on standard output, as upstream does. What goes
+/// wrong with the run itself, a file that cannot be opened, goes to standard error.
+fn report(message: fmt::Arguments<'_>) {
+    let _ = writeln!(std::io::stdout(), "{message}");
+}
+
+/// The longest group name `grpck` takes, as seen on Ubuntu 26.04's.
+const MAX_GROUP_NAME_LEN: usize = 32;
+
 /// Core logic, separated from argument parsing.
 fn run_checks(opts: &GrpckOptions) -> UResult<()> {
     let group_lines = read_raw_lines(&opts.group_path).map_err(|e| {
@@ -153,28 +160,37 @@ fn run_checks(opts: &GrpckOptions) -> UResult<()> {
         match raw_line.parse::<GroupEntry>() {
             Ok(entry) => group_entries.push(entry),
             Err(e) => {
-                // grpck(8) -q: "Report errors only." Errors are always shown.
-                uucore::show_error!("invalid group file entry at line {line_num}: {e}");
+                report(format_args!(
+                    "invalid group file entry at line {line_num}: {e}"
+                ));
                 errors += 1;
             }
         }
     }
 
     // Check for duplicate group names.
-    errors += check_duplicate_names(&group_entries, opts.quiet);
+    errors += check_duplicate_names(&group_entries);
 
-    // Check for valid GIDs (the parser already validates u32, but check for
-    // groups with GID 0 that are not "root").
-    errors += check_gid_consistency(&group_entries, opts.quiet);
+    errors += check_names_are_valid(&group_entries);
 
     // Load and check gshadow whenever the file is there. Keying the check on
     // "did any entry parse" meant a malformed or empty gshadow next to a
     // populated group file reported nothing at all.
+    let mut gshadow_entries = Vec::new();
     if opts.gshadow_path.exists() {
         match gshadow::read_gshadow_file(&opts.gshadow_path) {
-            Ok(gshadow_entries) => {
-                errors +=
-                    check_group_gshadow_consistency(&group_entries, &gshadow_entries, opts.quiet);
+            Ok(entries) => {
+                errors += check_group_gshadow_consistency(&group_entries, &entries);
+                errors += check_password_fields(&group_entries, &entries, opts);
+                report_member_differences(&group_entries, &entries, opts);
+                gshadow_entries = entries;
+            }
+            Err(e @ shadow_core::error::ShadowError::Parse(_)) => {
+                report(format_args!(
+                    "cannot read {}: {e}",
+                    opts.gshadow_path.display()
+                ));
+                errors += 1;
             }
             Err(e) => {
                 uucore::show_error!("cannot read {}: {e}", opts.gshadow_path.display());
@@ -184,11 +200,14 @@ fn run_checks(opts: &GrpckOptions) -> UResult<()> {
     }
 
     // Members and administrators must name real users.
-    errors += check_members_exist(&group_entries, &opts.root);
+    errors += check_members_exist(&group_entries, &gshadow_entries, &opts.root);
 
     // Never rewrite the files when errors were found: sorting works on the
     // entries that parsed, so writing would drop every line just reported.
     if errors > 0 {
+        // Like upstream, say so on stdout. -q changes nothing about it, or about
+        // anything in this report.
+        report(format_args!("grpck: no changes"));
         return Err(GrpckError::BadEntry(String::new()).into());
     }
 
@@ -221,15 +240,13 @@ fn read_raw_lines(path: &Path) -> Result<Vec<String>, std::io::Error> {
 }
 
 /// Check for duplicate group names.
-fn check_duplicate_names(entries: &[GroupEntry], quiet: bool) -> u32 {
+fn check_duplicate_names(entries: &[GroupEntry]) -> u32 {
     let mut seen: HashSet<&str> = HashSet::new();
     let mut errors: u32 = 0;
 
     for entry in entries {
         if !seen.insert(&entry.name) {
-            if !quiet {
-                uucore::show_error!("duplicate group entry: '{}'", entry.name);
-            }
+            report(format_args!("duplicate group entry: '{}'", entry.name));
             errors += 1;
         }
     }
@@ -237,17 +254,13 @@ fn check_duplicate_names(entries: &[GroupEntry], quiet: bool) -> u32 {
     errors
 }
 
-/// Check GID consistency (warn on multiple groups with GID 0).
-fn check_gid_consistency(entries: &[GroupEntry], quiet: bool) -> u32 {
+/// Check that each group name is one `grpck` takes.
+fn check_names_are_valid(entries: &[GroupEntry]) -> u32 {
     let mut errors: u32 = 0;
 
-    // Check for empty group names (the parser generally rejects these,
-    // but be defensive).
     for entry in entries {
-        if entry.name.is_empty() {
-            if !quiet {
-                uucore::show_error!("group entry has empty name (GID {})", entry.gid);
-            }
+        if !shadow_core::validate::is_valid_account_name(&entry.name, MAX_GROUP_NAME_LEN) {
+            report(format_args!("invalid group name '{}'", entry.name));
             errors += 1;
         }
     }
@@ -255,38 +268,97 @@ fn check_gid_consistency(entries: &[GroupEntry], quiet: bool) -> u32 {
     errors
 }
 
-/// Check that every group has a matching gshadow entry and vice versa.
+/// Check that every group has a matching gshadow entry and vice versa, and that
+/// gshadow names no group twice.
 fn check_group_gshadow_consistency(
     group_entries: &[GroupEntry],
     gshadow_entries: &[GshadowEntry],
-    quiet: bool,
 ) -> u32 {
     let mut errors: u32 = 0;
 
     let group_names: HashSet<&str> = group_entries.iter().map(|g| g.name.as_str()).collect();
-    let gshadow_names: HashSet<&str> = gshadow_entries.iter().map(|g| g.name.as_str()).collect();
+    let mut gshadow_names: HashSet<&str> = HashSet::new();
+    for entry in gshadow_entries {
+        if !gshadow_names.insert(entry.name.as_str()) {
+            report(format_args!(
+                "duplicate shadow group entry: '{}'",
+                entry.name
+            ));
+            errors += 1;
+        }
+    }
 
-    // Groups without gshadow entries.
-    for name in &group_names {
-        if !gshadow_names.contains(name) {
-            if !quiet {
-                uucore::show_error!("no matching gshadow entry for group '{name}'");
-            }
+    // Groups without gshadow entries, in file order so the report is stable.
+    let mut said: HashSet<&str> = HashSet::new();
+    for entry in group_entries {
+        let name = entry.name.as_str();
+        if !gshadow_names.contains(name) && said.insert(name) {
+            report(format_args!("no matching gshadow entry for group '{name}'"));
             errors += 1;
         }
     }
 
     // Gshadow entries without matching groups.
-    for name in &gshadow_names {
-        if !group_names.contains(name) {
-            if !quiet {
-                uucore::show_error!("no matching group entry for gshadow '{name}'");
-            }
+    let mut said: HashSet<&str> = HashSet::new();
+    for entry in gshadow_entries {
+        let name = entry.name.as_str();
+        if !group_names.contains(name) && said.insert(name) {
+            report(format_args!("no matching group entry for gshadow '{name}'"));
             errors += 1;
         }
     }
 
     errors
+}
+
+/// With a gshadow entry, the password field in the group file should say so.
+fn check_password_fields(
+    group_entries: &[GroupEntry],
+    gshadow_entries: &[GshadowEntry],
+    opts: &GrpckOptions,
+) -> u32 {
+    let mut errors: u32 = 0;
+
+    for group in group_entries {
+        if group.passwd != "x" && gshadow_entries.iter().any(|g| g.name == group.name) {
+            report(format_args!(
+                "group {} has an entry in {}, but its password field in {} is not set to 'x'",
+                group.name,
+                opts.gshadow_path.display(),
+                opts.group_path.display()
+            ));
+            errors += 1;
+        }
+    }
+
+    errors
+}
+
+/// Say who is a member in one file and not the other. Upstream says so and calls
+/// it a success, with `-q` as well: exit 0, and no "no changes".
+fn report_member_differences(
+    group_entries: &[GroupEntry],
+    gshadow_entries: &[GshadowEntry],
+    opts: &GrpckOptions,
+) {
+    let (group_path, gshadow_path) = (opts.group_path.display(), opts.gshadow_path.display());
+    for group in group_entries {
+        let Some(shadow) = gshadow_entries.iter().find(|g| g.name == group.name) else {
+            continue;
+        };
+        for member in group.members.iter().filter(|m| !shadow.members.contains(m)) {
+            report(format_args!(
+                "'{member}' is a member of the '{}' group in {group_path} but not in {gshadow_path}",
+                group.name
+            ));
+        }
+        for member in shadow.members.iter().filter(|m| !group.members.contains(m)) {
+            report(format_args!(
+                "'{member}' is a member of the '{}' group in {gshadow_path} but not in {group_path}",
+                group.name
+            ));
+        }
+    }
 }
 
 /// Sort group entries by GID and write back atomically.
@@ -360,8 +432,13 @@ fn sort_gshadow_by_group(
 }
 
 /// grpck(8) verifies "a valid list of members and administrators": a name in
-/// either list that no account carries is a dangling reference.
-fn check_members_exist(entries: &[GroupEntry], root: &shadow_core::sysroot::SysRoot) -> u32 {
+/// any of the lists, in either file, that no account carries is a dangling
+/// reference. An account may come from the name service as well as the file.
+fn check_members_exist(
+    entries: &[GroupEntry],
+    gshadow_entries: &[GshadowEntry],
+    root: &shadow_core::sysroot::SysRoot,
+) -> u32 {
     let passwd_path = root.passwd_path();
     if !passwd_path.exists() {
         return 0;
@@ -369,15 +446,33 @@ fn check_members_exist(entries: &[GroupEntry], root: &shadow_core::sysroot::SysR
     let Ok(users) = shadow_core::passwd::read_passwd_file(&passwd_path) else {
         return 0;
     };
-    let known: std::collections::HashSet<&str> = users.iter().map(|u| u.name.as_str()).collect();
+    let known: HashSet<&str> = users.iter().map(|u| u.name.as_str()).collect();
+    let is_user = |name: &str| {
+        known.contains(name)
+            || shadow_core::process::getpwnam(name).is_ok_and(|account| account.is_some())
+    };
 
     let mut errors = 0;
     for group in entries {
-        for member in &group.members {
-            if !known.contains(member.as_str()) {
-                uucore::show_error!("group '{}': member '{member}' does not exist", group.name);
-                errors += 1;
-            }
+        for member in group.members.iter().filter(|m| !is_user(m)) {
+            report(format_args!("group {}: no user {member}", group.name));
+            errors += 1;
+        }
+    }
+    for group in gshadow_entries {
+        for member in group.members.iter().filter(|m| !is_user(m)) {
+            report(format_args!(
+                "shadow group {}: no user {member}",
+                group.name
+            ));
+            errors += 1;
+        }
+        for admin in group.admins.iter().filter(|a| !is_user(a)) {
+            report(format_args!(
+                "shadow group {}: no administrative user {admin}",
+                group.name
+            ));
+            errors += 1;
         }
     }
     errors
@@ -409,7 +504,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::QUIET)
                 .short('q')
                 .long("quiet")
-                .help("Suppress warnings; print errors only")
+                .help("Accepted; the report is the same with it")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -483,7 +578,7 @@ mod tests {
                 members: vec![],
             },
         ];
-        assert_eq!(check_duplicate_names(&entries, true), 1);
+        assert_eq!(check_duplicate_names(&entries), 1);
     }
 
     #[test]
@@ -502,7 +597,7 @@ mod tests {
                 members: vec![],
             },
         ];
-        assert_eq!(check_duplicate_names(&entries, true), 0);
+        assert_eq!(check_duplicate_names(&entries), 0);
     }
 
     #[test]
@@ -519,7 +614,7 @@ mod tests {
             admins: vec![],
             members: vec![],
         }];
-        assert_eq!(check_group_gshadow_consistency(&groups, &gshadow, true), 0);
+        assert_eq!(check_group_gshadow_consistency(&groups, &gshadow), 0);
     }
 
     #[test]
@@ -531,7 +626,7 @@ mod tests {
             members: vec![],
         }];
         let gshadow: Vec<GshadowEntry> = vec![];
-        assert_eq!(check_group_gshadow_consistency(&groups, &gshadow, true), 1);
+        assert_eq!(check_group_gshadow_consistency(&groups, &gshadow), 1);
     }
 
     #[test]
@@ -543,7 +638,7 @@ mod tests {
             admins: vec![],
             members: vec![],
         }];
-        assert_eq!(check_group_gshadow_consistency(&groups, &gshadow, true), 1);
+        assert_eq!(check_group_gshadow_consistency(&groups, &gshadow), 1);
     }
 
     #[test]
@@ -553,7 +648,6 @@ mod tests {
         std::fs::write(&group_path, "root:x:0:\nusers:x:100:\n").expect("write group");
 
         let opts = GrpckOptions {
-            quiet: false,
             sort: false,
             read_only: true,
             group_path,
@@ -573,7 +667,6 @@ mod tests {
         std::fs::write(&group_path, "root:x:0:\nbadentry:x\n").expect("write group");
 
         let opts = GrpckOptions {
-            quiet: true,
             sort: false,
             read_only: true,
             group_path,
@@ -593,7 +686,6 @@ mod tests {
         let gshadow_path = dir.path().join("gshadow_nonexistent");
 
         let opts = GrpckOptions {
-            quiet: false,
             sort: true,
             read_only: false,
             group_path: group_path.clone(),

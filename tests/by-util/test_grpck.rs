@@ -259,3 +259,116 @@ fn test_malformed_gshadow_is_reported() {
     let _ = &dir;
     assert_eq!(run(&["grpck", "-r", &gp, &gsp]), 2);
 }
+
+/// Run grpck as a child, so its streams can be read. `root` is a member and an
+/// admin who exists anywhere; `ghost` is one who does not.
+fn grpck_files(group: &str, gshadow: &str, extra: &[&str]) -> crate::common::Output {
+    let (_dir, gp, gsp) = setup_files(group, gshadow);
+    let mut cmd = crate::common::tool("grpck");
+    cmd.arg("-r").args(extra).arg(&gp).arg(&gsp);
+    crate::common::run_cmd(&mut cmd)
+}
+
+/// A report, the way Ubuntu 26.04's grpck ends one, with -q or without.
+fn assert_reported(group: &str, gshadow: &str, needle: &str) {
+    for extra in [&[][..], &["-q"]] {
+        let out = grpck_files(group, gshadow, extra);
+        out.assert_code(2).assert_stdout_contains(needle);
+        assert!(out.stdout.ends_with("grpck: no changes\n"), "{out:?}");
+        assert_eq!(out.stderr, "", "{out:?}");
+    }
+}
+
+#[test]
+fn test_clean_files_print_nothing() {
+    let out = grpck_files("root:x:0:root\n", "root:!::root\n", &[]);
+    assert_eq!(
+        (out.code, out.stdout.as_str(), out.stderr.as_str()),
+        (0, "", "")
+    );
+}
+
+#[test]
+fn test_problems_go_to_stdout_and_end_with_no_changes() {
+    assert_reported("a:x:1:\na:x:2:\n", "a:!::\n", "duplicate group entry");
+    assert_reported("a:x:1:\n", "", "no matching gshadow entry");
+    assert_reported("", "a:!::\n", "no matching group entry");
+    assert_reported("bad\n", "", "invalid group file entry");
+    assert_reported("a:x:1:\n", "not a gshadow line\n", "cannot read");
+}
+
+// Probed on Ubuntu 26.04: exit 2 on all of these, and the wording of the first
+// three is theirs, without the offer to delete.
+#[test]
+fn test_members_and_admins_have_to_be_users_in_both_files() {
+    assert_reported("a:x:1:ghost\n", "a:!::ghost\n", "group a: no user ghost\n");
+    assert_reported(
+        "a:x:1:\n",
+        "a:!::ghost\n",
+        "shadow group a: no user ghost\n",
+    );
+    assert_reported(
+        "a:x:1:\n",
+        "a:!:ghost:\n",
+        "shadow group a: no administrative user ghost\n",
+    );
+}
+
+#[test]
+fn test_duplicate_gshadow_entry() {
+    assert_reported("a:x:1:\n", "a:!::\na:!::\n", "duplicate shadow group entry");
+}
+
+#[test]
+fn test_group_password_field_not_x() {
+    for field in ["abc", ""] {
+        assert_reported(
+            &format!("a:{field}:1:\n"),
+            "a:!::\n",
+            "group a has an entry in",
+        );
+    }
+}
+
+// Membership that differs between the two files is said, but not a failure, on
+// Ubuntu 26.04: exit 0, with -q as well, and no "no changes".
+#[test]
+fn test_members_that_differ_are_reported_with_exit_0() {
+    for extra in [&[][..], &["-q"]] {
+        let out = grpck_files("a:x:1:root\n", "a:!::\n", extra);
+        assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+        assert!(
+            out.stdout
+                .starts_with("'root' is a member of the 'a' group in ")
+                && out.stdout.contains(" but not in "),
+            "{out:?}"
+        );
+
+        let out = grpck_files("a:x:1:\n", "a:!::root\n", extra);
+        assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+        assert!(out.stdout.contains("'root' is a member"), "{out:?}");
+    }
+}
+
+// The names Ubuntu 26.04's grpck takes and refuses. Unlike a user name, a group
+// name stops at 32 characters.
+#[test]
+fn test_group_names_upstream_accepts_and_refuses() {
+    let long_32 = "a".repeat(32);
+    let long_33 = "a".repeat(33);
+    for name in [
+        "Upper", "a.b", "1abc", "a$", ".a", "a.", "_", "1e5", &long_32,
+    ] {
+        let out = grpck_files(&format!("{name}:x:1:\n"), &format!("{name}:!::\n"), &[]);
+        assert_eq!(out.code, 0, "{name}: {out:?}");
+    }
+    for name in [
+        "a@b", "a b", "a,b", "é", "123", "0", "0x1", ".", "..", "$", "a$b", &long_33,
+    ] {
+        assert_reported(
+            &format!("{name}:x:1:\n"),
+            &format!("{name}:!::\n"),
+            "invalid group name",
+        );
+    }
+}

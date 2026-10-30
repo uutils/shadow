@@ -63,6 +63,7 @@ pub fn tool(name: &str) -> std::process::Command {
 }
 
 /// What a spawned tool did.
+#[derive(Debug)]
 pub struct Output {
     /// Exit status, or 1 if the process was killed by a signal.
     pub code: i32,

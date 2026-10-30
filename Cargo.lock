@@ -1124,6 +1124,7 @@ dependencies = [
  "nix",
  "os_display",
  "rustc-hash",
+ "rustix",
  "thiserror",
  "unic-langid",
  "unicode-width",

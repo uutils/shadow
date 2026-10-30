@@ -266,7 +266,7 @@ fn test_duplicate_uid_is_not_an_error_but_a_duplicate_name_is() {
             .arg(shared_name.path()),
     )
     .assert_code(2)
-    .assert_stderr_contains("duplicate password entry");
+    .assert_stdout_contains("duplicate password entry");
 }
 
 #[test]
@@ -474,4 +474,255 @@ fn test_problems_end_with_no_changes_even_with_quiet() {
             out.stdout
         );
     }
+}
+
+/// One clean account, and the home it names, for the report tests to break.
+fn setup_clean() -> tempfile::TempDir {
+    let dir = setup_root(
+        "alice:x:1000:1000::/home/alice:/bin/bash\n",
+        "alice:$6$hash:19000:0:99999:7:::\n",
+        "users:x:1000:\n",
+    );
+    std::fs::create_dir_all(dir.path().join("home/alice")).expect("mkdir alice home");
+    dir
+}
+
+/// Write one of the fixture's files.
+fn write_etc(dir: &tempfile::TempDir, name: &str, content: &str) {
+    std::fs::write(dir.path().join("etc").join(name), content).expect("write fixture file");
+}
+
+// Probed on Ubuntu 26.04: this much of a report is the same, byte for byte.
+#[test]
+fn test_report_goes_to_stdout_with_upstream_wording() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_clean();
+    write_etc(&dir, "group", "other:x:42:\n");
+    let out = pwck_rooted(&dir, &["-r"]);
+    assert_eq!(
+        (out.code, out.stdout.as_str(), out.stderr.as_str()),
+        (2, "user 'alice': no group 1000\npwck: no changes\n", "")
+    );
+
+    let dir = setup_clean();
+    write_etc(&dir, "passwd", "alice:x:1000:1000::/gone:/gone\n");
+    let out = pwck_rooted(&dir, &["-r"]);
+    assert_eq!(
+        (out.code, out.stdout.as_str(), out.stderr.as_str()),
+        (
+            2,
+            "user 'alice': directory '/gone' does not exist\n\
+             user 'alice': program '/gone' does not exist\n\
+             pwck: no changes\n",
+            ""
+        )
+    );
+}
+
+// On Ubuntu 26.04 these are reported without -q, exit 2, and with -q they are
+// not problems at all: nothing printed, exit 0.
+#[test]
+fn test_quiet_hides_what_upstream_hides() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let cases = [
+        (
+            "no group",
+            "passwd",
+            "alice:x:1000:42::/home/alice:/bin/bash\n",
+        ),
+        ("no home", "passwd", "alice:x:1000:1000::/gone:/bin/bash\n"),
+        (
+            "no shell",
+            "passwd",
+            "alice:x:1000:1000::/home/alice:/gone\n",
+        ),
+        (
+            "field *",
+            "passwd",
+            "alice:*:1000:1000::/home/alice:/bin/bash\n",
+        ),
+        (
+            "field !",
+            "passwd",
+            "alice:!:1000:1000::/home/alice:/bin/bash\n",
+        ),
+        (
+            "field empty",
+            "passwd",
+            "alice::1000:1000::/home/alice:/bin/bash\n",
+        ),
+        (
+            "hash",
+            "passwd",
+            "alice:abcdefgh:1000:1000::/home/alice:/bin/bash\n",
+        ),
+        ("future", "shadow", "alice:$6$hash:99999:0:99999:7:::\n"),
+    ];
+    for (what, file, content) in cases {
+        let dir = setup_clean();
+        write_etc(&dir, file, content);
+
+        let out = pwck_rooted(&dir, &["-r"]);
+        assert_eq!(out.code, 2, "{what}: {out:?}");
+        assert!(
+            out.stdout.ends_with("pwck: no changes\n"),
+            "{what}: {out:?}"
+        );
+
+        let out = pwck_rooted(&dir, &["-r", "-q"]);
+        assert_eq!(
+            (out.code, out.stdout.as_str(), out.stderr.as_str()),
+            (0, "", ""),
+            "{what}"
+        );
+    }
+}
+
+// These stay problems with -q, as on Ubuntu 26.04.
+#[test]
+fn test_quiet_keeps_what_upstream_keeps() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let cases = [
+        (
+            "bad line",
+            "passwd",
+            "alice:x:1000:1000::/home/alice:/bin/bash\ngarbage:line\n",
+        ),
+        (
+            "bad name",
+            "passwd",
+            "a b:x:1000:1000::/home/alice:/bin/bash\n",
+        ),
+        (
+            "no shadow row",
+            "shadow",
+            "other:$6$hash:19000:0:99999:7:::\n",
+        ),
+        (
+            "bad shadow line",
+            "shadow",
+            "alice:$6$hash:19000:0:99999:7:::\ngarbage:line\n",
+        ),
+    ];
+    for (what, file, content) in cases {
+        let dir = setup_clean();
+        write_etc(&dir, file, content);
+        for args in [&["-r"][..], &["-r", "-q"]] {
+            let out = pwck_rooted(&dir, args);
+            assert_eq!(out.code, 2, "{what} {args:?}: {out:?}");
+            assert!(
+                out.stdout.ends_with("pwck: no changes\n"),
+                "{what}: {out:?}"
+            );
+            assert_eq!(out.stderr, "", "{what}");
+        }
+    }
+}
+
+// A line that cannot be parsed is a bad entry, as in passwd: it does not stop the
+// run, and it is not "cannot open".
+#[test]
+fn test_bad_shadow_line_does_not_stop_the_other_checks() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_clean();
+    write_etc(&dir, "group", "other:x:42:\n");
+    write_etc(
+        &dir,
+        "shadow",
+        "alice:$6$hash:19000:0:99999:7:::\ngarbage:line\n",
+    );
+    let out = pwck_rooted(&dir, &["-r"]);
+    out.assert_code(2)
+        .assert_stdout_contains("invalid shadow password file entry")
+        .assert_stdout_contains("no group 1000");
+}
+
+// The names Ubuntu 26.04's pwck takes and refuses. The rule is wider than the
+// one for a new account: 1abc, or 40 letters, may already be on a system.
+#[test]
+fn test_user_names_upstream_accepts_and_refuses() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let long_40 = "a".repeat(40);
+    let long_256 = "a".repeat(256);
+    for name in [
+        "Upper", "a.b", "1abc", "a$", "-x", ".a", "a.", "_", "1e5", "1.5", &long_40,
+    ] {
+        let dir = setup_clean();
+        write_etc(
+            &dir,
+            "passwd",
+            &format!("{name}:x:1000:1000::/home/alice:/bin/bash\n"),
+        );
+        write_etc(
+            &dir,
+            "shadow",
+            &format!("{name}:$6$hash:19000:0:99999:7:::\n"),
+        );
+        let out = pwck_rooted(&dir, &["-r"]);
+        assert_eq!(out.code, 0, "{name}: {out:?}");
+    }
+    for name in [
+        "a@b", "a b", "a,b", "é", "123", "0", "0x1", ".", "..", "$", "a$b", "a$$", &long_256,
+    ] {
+        let dir = setup_clean();
+        write_etc(
+            &dir,
+            "passwd",
+            &format!("{name}:x:1000:1000::/home/alice:/bin/bash\n"),
+        );
+        write_etc(
+            &dir,
+            "shadow",
+            &format!("{name}:$6$hash:19000:0:99999:7:::\n"),
+        );
+        let out = pwck_rooted(&dir, &["-r", "-q"]);
+        assert_eq!(out.code, 2, "{name}: {out:?}");
+        out.assert_stdout_contains("invalid user name");
+    }
+}
+
+// With no shadow file there is nothing for the password field to be checked
+// against.
+#[test]
+fn test_password_field_is_not_checked_without_a_shadow_file() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_clean();
+    write_etc(
+        &dir,
+        "passwd",
+        "alice:abcdefgh:1000:1000::/home/alice:/bin/bash\n",
+    );
+    std::fs::remove_file(dir.path().join("etc/shadow")).expect("remove shadow");
+    assert_eq!(pwck_rooted(&dir, &["-r"]).code, 0);
+}
+
+// A check upstream does not have stays out of its report: standard error, exit 0.
+#[test]
+fn test_shadow_mode_warning_stays_on_stderr() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_clean();
+    let shadow = dir.path().join("etc/shadow");
+    let mut perms = std::fs::metadata(&shadow)
+        .expect("stat shadow")
+        .permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o666);
+    std::fs::set_permissions(&shadow, perms).expect("chmod shadow");
+
+    let out = pwck_rooted(&dir, &["-r"]);
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""));
+    assert!(out.stderr.contains("bad permissions"), "{out:?}");
 }

@@ -54,6 +54,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `pwck` and `grpck` report on standard output, as upstream does, in upstream's
+  words where it uses one line: `user 'alice': no group 1000`. They used standard
+  error. A file that cannot be opened stays on standard error
+
+- `pwck -q` is what upstream's is: a primary group, a home or a shell that does not
+  exist, a password field other than `x` and a last change in the future are not
+  problems with it, exit 0 and nothing printed. It reported a missing primary group
+  and a bad password field, exit 2
+
+- `pwck` without `-q` exits 2 for a password field other than `x` on an account in
+  `shadow`, for a last change in the future, and, with `-q` too, for a name it
+  should not accept. All three were warnings, exit 0. The name rule is the one
+  upstream's tool was seen to use, wider than the one for a new account: `1abc`
+  passes, `a@b` and `123` do not. A line in `shadow` that cannot be parsed is a bad
+  entry, exit 2, and the other checks still run. It was exit 3
+
+- `grpck` prints `grpck: no changes` after a problem, as upstream does, and `-q`
+  no longer hides any of them. It also reports what it missed: a duplicate entry in
+  `gshadow`, a member or administrator in `gshadow` that does not exist, a group
+  password field other than `x`, and a group name it should not accept, all exit 2.
+  A member in one file and not the other gets a line, with exit 0
+
+- `pwck` and `grpck` count a group or a user that only the name service knows. A
+  directory account in a member list or a primary group was reported as missing
+
 - `usermod LOGIN` with no option is refused with `no options`, exit 2, as upstream
   does, and exit 6 if the login does not exist. It exited 0. With only `-P` or `-R`
   it stays exit 0

@@ -13,6 +13,37 @@ use crate::error::ShadowError;
 /// Maximum username length on Linux.
 const MAX_USERNAME_LEN: usize = 32;
 
+/// Whether a name already in an account file passes the checks of `pwck` and
+/// `grpck`, which take `max_len`: a user name may run to 255, a group name to 32.
+///
+/// This is wider than [`validate_username`], which judges a new account: `1abc`
+/// or 40 letters may be on a system already, and calling them bad would fail the
+/// whole check there. The rule is what Ubuntu 26.04's `pwck` and `grpck` were
+/// seen to do: ASCII letters, digits, `_`, `.` and `-`, with one `$` at the end,
+/// and not `.`, `..`, or something that reads as a number in base 10, 8 or 16
+/// (`123`, `0o7`, `0xABC`).
+#[must_use]
+pub fn is_valid_account_name(name: &str, max_len: usize) -> bool {
+    let body = name.strip_suffix('$').unwrap_or(name);
+    let reads_as_number = |text: &str, radix: u32| text.chars().all(|c| c.is_digit(radix));
+    let is_number = reads_as_number(name, 10)
+        || name
+            .strip_prefix("0x")
+            .is_some_and(|hex| reads_as_number(hex, 16))
+        || name
+            .strip_prefix("0o")
+            .is_some_and(|oct| reads_as_number(oct, 8));
+
+    !body.is_empty()
+        && name.len() <= max_len
+        && !is_number
+        && name != "."
+        && name != ".."
+        && body
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+}
+
 /// Validate a username or group name.
 ///
 /// Rules, from the CAVEATS of useradd(8) and groupadd(8):
@@ -245,5 +276,25 @@ mod tests {
         assert!(validate_list_item("member", "alice").is_ok());
         assert!(validate_list_item("member", "alice,bob").is_err());
         assert!(validate_list_item("member", "ali:ce").is_err());
+    }
+
+    #[test]
+    fn test_is_valid_account_name_follows_the_probe() {
+        for name in [
+            "Upper", "a.b", "1abc", "a$", "1$", ".$", "-x", ".a", "a.", "...", "_", "1e5", "1.5",
+            "1-1", "0X1", "0xg", "0b1", "a..b",
+        ] {
+            assert!(is_valid_account_name(name, 255), "{name} should pass");
+        }
+        for name in [
+            "", "a@b", "a b", "a,b", "é", "123", "0", "00", "0x", "0x1", "0xABC", "0o7", ".", "..",
+            "$", "a$b", "$a", "a$$", "a+b",
+        ] {
+            assert!(!is_valid_account_name(name, 255), "{name} should not pass");
+        }
+        assert!(is_valid_account_name(&"a".repeat(255), 255));
+        assert!(!is_valid_account_name(&"a".repeat(256), 255));
+        assert!(is_valid_account_name(&"a".repeat(32), 32));
+        assert!(!is_valid_account_name(&"a".repeat(33), 32));
     }
 }
