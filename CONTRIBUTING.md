@@ -38,6 +38,23 @@ When implementing a tool, reference ONLY these sources:
 **Process**: Read the POSIX spec and man page for behavioral requirements,
 then write an original implementation. Never search for or view the C source.
 
+### Establishing what upstream does
+
+A man page gives the intent; the exact wording, threshold and exit code come from
+running the packaged binary, which is observing behaviour and not reading source.
+The reference is **Ubuntu 26.04's `passwd`**. Debian's is a comparison, not the
+contract:
+
+```shell
+docker run --rm ubuntu:26.04 sh -c 'useradd -M probe; usermod -u 4294967295 probe; echo "exit=$?"'
+```
+
+The two have given the same results so far. `make test-upstream-compat` does this
+comparison for a fixed list of cases, against whatever package its container has,
+which in the `debian` image is Debian's. Quote what you ran in the pull request,
+and list a deliberate difference in the tool's man page under *Differences from
+upstream shadow*.
+
 ## Getting Started
 
 ### Requirements
@@ -82,7 +99,7 @@ docker compose run --rm debian make test-arm64      # cross-build arm64 and run 
 docker compose run --rm debian cargo build          # build
 docker compose run --rm debian cargo test --workspace  # test on Debian
 docker compose run --rm alpine cargo test --workspace  # test on Alpine (musl)
-docker compose run --rm fedora cargo test --workspace  # test on Fedora (SELinux)
+docker compose run --rm fedora cargo test --workspace  # test on Fedora
 ```
 
 All three must pass. The `alpine` image tests musl with dynamic linking; the

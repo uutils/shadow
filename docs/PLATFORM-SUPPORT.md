@@ -49,7 +49,14 @@ CI runs the full suite on three images:
 |---|---|---|---|---|
 | `debian` | `rust:1.99-trixie` | glibc | Linux-PAM | headers |
 | `alpine` | `rust:1.99-alpine3.23` | musl (dynamic) | Linux-PAM | none |
-| `fedora` | `fedora:44` | glibc | Linux-PAM | enforcing |
+| `fedora` | `fedora:46` | glibc | Linux-PAM | headers |
+
+SELinux is not enforced in any of them: a container has no `/sys/fs/selinux`
+unless its host runs SELinux.
+
+The images say where the suite runs, not what the behaviour reference is. That
+is Ubuntu 26.04's packaged `passwd`, with Debian as a comparison; see
+[CONTRIBUTING.md](../CONTRIBUTING.md).
 
 The base images are pinned. An unpinned tag lands a new toolchain on `main`
 with no pull request to run it against, and clippy gains lints between Rust
@@ -126,8 +133,8 @@ musl's crypt(3) implements DES, MD5, SHA-256, SHA-512 (including `rounds=`)
 and bcrypt, byte-identical to libxcrypt for all of them. It does not implement
 yescrypt.
 
-This is not a marginal format: **Debian 12+ and Ubuntu 24.04 use yescrypt as
-the default password hash.** A musl build can neither verify nor produce `$y$`
+This is not a marginal format: **Debian 12+, Ubuntu 24.04 and Ubuntu 26.04 use
+yescrypt as the default password hash.** A musl build can neither verify nor produce `$y$`
 hashes, so `newgrp`, `sg` and `gpasswd` fail against a `$y$` group password,
 `gpasswd` cannot set one on a host configured for yescrypt, and `-c YESCRYPT`
 is rejected by `chpasswd`, `chgpasswd` and `newusers`. The prefix guard in
