@@ -23,7 +23,9 @@ changes that are specified on the command line.
 :   Set the new value of the user's GECOS field.
 
 **-d**, **--home** *HOME_DIR*
-:   Set the new home directory for the user.
+:   Set the new home directory for the user. It must be an absolute path. With
+    **-u** or **-g**, files in this directory are the ones re-owned, if it
+    exists and is the user's. The previous home is left as it is.
 
 **-e**, **--expiredate** *EXPIRE_DATE*
 :   Set the account expiration date.

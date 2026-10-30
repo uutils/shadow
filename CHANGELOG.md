@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `usermod` records `res=failed` in the audit log and syslog when it exits 12
   over the home, rather than logging success and then failing
 
+- `usermod -d` with `-u` or `-g` re-owns the home it gives, as upstream does,
+  where it used to skip the re-own whenever `-d` was there, even with the same
+  value as the current home. The previous home is left as it is. A relative
+  path for `-d` is refused with exit 3, as upstream does; it was written to
+  `/etc/passwd`
+
 - A home written with a trailing slash in `/etc/passwd` is treated like the
   same home without one: a symlinked `/home/bob/` is now exit 12 with nothing
   walked, as `/home/bob` already was. upstream exits 0 and re-owns the target
