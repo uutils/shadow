@@ -858,6 +858,10 @@ fn test_rechown_never_follows_an_entry_swapped_mid_walk() {
             std::os::unix::fs::symlink(&outside, home.join(format!("l{i}")))
                 .expect("failed to create symlink");
         }
+        // Entries the swapper does not touch, to see the walk really walked.
+        std::fs::create_dir(home.join("keep")).expect("failed to create subdir");
+        std::fs::write(home.join("keep/f"), "").expect("failed to write file");
+        std::fs::write(home.join("plain"), "").expect("failed to write file");
         // chown -R by hand: everything in the home is the user's.
         for entry in std::fs::read_dir(&home).expect("read home") {
             let path = entry.expect("entry").path();
@@ -902,6 +906,20 @@ fn test_rechown_never_follows_an_entry_swapped_mid_walk() {
             (0, 0),
             "round {round}: outside dir re-owned"
         );
+        // Never following anything is easy for a walk that does nothing.
+        for path in [
+            home.clone(),
+            home.join("keep"),
+            home.join("keep/f"),
+            home.join("plain"),
+        ] {
+            assert_eq!(
+                owner_of(&path),
+                (1500, 1000),
+                "round {round}: {} not re-owned",
+                path.display()
+            );
+        }
     }
 }
 
