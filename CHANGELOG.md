@@ -34,8 +34,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `usermod -u` and `-g` exit 12 with "Failed to change ownership of the home
   directory" when the home is the user's but is a symlink or not a
-  directory, as GNU does, after writing the account files. They exited 0
-  (#351)
+  directory, as upstream does, after writing the account files. They exited
+  0 (#351). They now also exit 12 when part of the home could not be
+  re-owned: a file that refuses the change, a directory that cannot be opened
+  or read, running out of descriptors on a very deep tree. The walk carries on
+  and re-owns the rest first, where upstream stops at the first failure. An
+  entry the user deletes during the walk is not a failure, where upstream
+  exits 12
+
+- `usermod` records `res=failed` in the audit log and syslog when it exits 12
+  over the home, rather than logging success and then failing
+
+- A home written with a trailing slash in `/etc/passwd` is treated like the
+  same home without one: a symlinked `/home/bob/` is now exit 12 with nothing
+  walked, as `/home/bob` already was. upstream exits 0 and re-owns the target
+  of the link
 
 ### Security
 
@@ -48,6 +61,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-owned through one descriptor. A test swaps directories and symlinks
   for the whole run; the old walk re-owned a file outside the home within
   two rounds
+
+- `usermod -g` no longer regroups a hard link in the home to a file the user
+  does not own. It is one inode, so the file changed group where its owner
+  keeps it too, and a user could arrange that for any file they can write and
+  link. upstream does regroup it; this is a deliberate difference. The user's
+  own hard links change as before
 
 ## [0.6.0] - 2026-10-13
 

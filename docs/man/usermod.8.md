@@ -58,7 +58,10 @@ changes that are specified on the command line.
 :   Set the new login shell.
 
 **-u**, **--uid** *UID*
-:   Set the new numeric user ID.
+:   Set the new numeric user ID. Files in the user's home owned by the old
+    UID get the new one, as **-g** does for the old primary group. If part of
+    the home could not be changed, the account is still updated and the exit
+    status is 12.
 
 **-U**, **--unlock**
 :   Unlock the user's password by removing the '!' prefix from the
@@ -97,11 +100,45 @@ form.
 **2**
 :   Invalid command syntax.
 
+**3**
+:   Invalid argument to an option.
+
 **4**
 :   UID already in use.
 
 **6**
-:   User does not exist.
+:   User or group does not exist.
+
+**9**
+:   Login name already in use.
+
+**10**
+:   Cannot update the group file.
+
+**12**
+:   Cannot re-own the home directory. The account files were written.
+
+## DIFFERENCES FROM UPSTREAM SHADOW
+
+**A hard link to someone else's file keeps its group.** **-g** gives the new
+group to whatever in the home is in the old one. A file with more than one name
+that the user does not own is left as it is: it is the same inode as the name
+its owner keeps it under, and the user may have linked it there. upstream
+regroups it. The user's own files change however many names they have.
+
+**A home spelled with a trailing slash is the same home.** A symlinked home is
+not walked, exit 12. upstream does the same for */home/bob*, but for
+*/home/bob/* it exits 0 and re-owns what the link points to. Here both are
+refused.
+
+**A failure does not stop the walk.** upstream stops at the first file it cannot
+change and leaves the rest of the home. Here the rest is still re-owned, and the
+exit status is 12 either way.
+
+**Deleting a file during the walk is not a failure.** upstream exits 12 if an
+entry vanishes while it runs. Here it exits 0, as what was deleted needs no new
+owner. A directory the user replaces during the walk is treated the same way;
+what took its place is re-owned, and not followed.
 
 ## FILES
 
