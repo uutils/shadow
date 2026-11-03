@@ -687,7 +687,10 @@ fn test_user_names_upstream_accepts_and_refuses() {
         );
         let out = pwck_rooted(&dir, &["-r", "-q"]);
         assert_eq!(out.code, 2, "{name}: {out:?}");
-        out.assert_stdout_contains("invalid user name");
+        // Upstream's words, with the way out.
+        out.assert_stdout_contains(&format!(
+            "invalid user name '{name}': use --badname to ignore\n"
+        ));
     }
 }
 
