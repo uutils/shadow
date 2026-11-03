@@ -23,6 +23,8 @@ Checks performed include:
 - Matching group/gshadow entries
 - Members and administrators that exist, in both files
 - A password field of *x* in /etc/group for a group in /etc/gshadow
+- No line in /etc/gshadow starting with *+* or *-*. In /etc/group such a line is an
+  NIS compatibility entry and is not checked; /etc/gshadow has none
 
 Files with no problem produce no output. Each problem gets a line on standard
 output, and then **grpck** prints *grpck: no changes*, also on standard output, and
