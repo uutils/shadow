@@ -624,6 +624,41 @@ fn test_create_user_with_key_gid_range_for_user_group() {
     );
 }
 
+/// -e takes the date forms upstream's date parser reads, as well as
+/// YYYY-MM-DD and a day count, and -1 leaves the expire field blank.
+#[test]
+fn test_expiredate_accepts_other_date_forms() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    // 2030-01-02 is 21916 days after the epoch.
+    for (date, expire) in [
+        ("01/02/2030", "21916"),
+        ("2030/01/02", "21916"),
+        ("1/2/30", "21916"),
+        ("2 Jan 2030", "21916"),
+        ("January 2, 2030", "21916"),
+        ("2030-01-02", "21916"),
+        ("21916", "21916"),
+        ("-1", ""),
+    ] {
+        let dir = setup_root_dir();
+        let code = run_with_root(&dir, &["-e", date, "expuser"]);
+        assert_eq!(code, 0, "useradd -e '{date}' must be accepted");
+
+        let shadow = read_shadow(&dir);
+        let line = shadow
+            .lines()
+            .find(|l| l.starts_with("expuser:"))
+            .expect("expuser shadow entry");
+        // name:passwd:lstchg:min:max:warn:inactive:expire:reserved
+        let fields: Vec<&str> = line.split(':').collect();
+        assert_eq!(fields.len(), 9, "after useradd -e '{date}': {line}");
+        assert_eq!(fields[7], expire, "after useradd -e '{date}': {line}");
+    }
+}
+
 #[test]
 fn test_create_user_with_key_pass_max_days() {
     if crate::common::skip_unless_root() {
