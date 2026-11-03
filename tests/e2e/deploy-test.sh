@@ -902,6 +902,48 @@ test_gpasswd_group_admin() {
     userdel -r gp_member 2>/dev/null || true
 }
 
+# ── gpasswd and a user only the name service knows ──────────────────
+
+test_gpasswd_name_service_user() {
+    section "gpasswd and a user only the name service knows"
+
+    # Upstream accepts a user that LDAP or SSSD knows and /etc/passwd does not.
+    # libnss-extrausers stands in for the directory: its file is not one the
+    # tools read, so only getpwnam can find the user.
+    mkdir -p /var/lib/extrausers
+    echo 'nss_only:x:5000:5000::/nonexistent:/usr/sbin/nologin' > /var/lib/extrausers/passwd
+    : > /var/lib/extrausers/group
+    cp /etc/nsswitch.conf /tmp/nsswitch.conf.saved
+    sed -i 's/^passwd:.*/passwd: files extrausers/' /etc/nsswitch.conf
+    userdel -r nss_admin 2>/dev/null || true
+    groupdel nss_team 2>/dev/null || true
+
+    assert_ok "the name service knows nss_only" getent passwd nss_only
+    assert_file_not_contains "and /etc/passwd does not" /etc/passwd '^nss_only:'
+    assert_ok "groupadd nss_team" groupadd nss_team
+    assert_ok "gpasswd -a takes the user" gpasswd -a nss_only nss_team
+    assert_file_contains "nss_only is in /etc/group" /etc/group '^nss_team:.*:nss_only$'
+    assert_ok "gpasswd -d removes it" gpasswd -d nss_only nss_team
+    assert_ok "gpasswd -M takes the user" gpasswd -M nss_only,root nss_team
+    assert_file_contains "nss_only is in the member list" /etc/gshadow '^nss_team:[^:]*:[^:]*:nss_only,root$'
+    assert_ok "gpasswd -A takes the user" gpasswd -A nss_only nss_team
+    assert_file_contains "nss_only is an administrator" /etc/gshadow '^nss_team:[^:]*:nss_only:'
+    assert_fail "a user nobody knows is still refused" gpasswd -a nss_nobody nss_team
+
+    # The setuid path: an administrator who is not root adds the user.
+    assert_ok "useradd -m nss_admin" useradd -m nss_admin
+    assert_ok "gpasswd -A nss_admin" gpasswd -A nss_admin nss_team
+    assert_ok "gpasswd -M root" gpasswd -M root nss_team
+    assert_ok "an administrator adds the user without being root" \
+        su -s /bin/bash nss_admin -c "gpasswd -a nss_only nss_team"
+    assert_file_contains "nss_only is back in /etc/group" /etc/group '^nss_team:.*:root,nss_only$'
+
+    groupdel nss_team 2>/dev/null || true
+    userdel -r nss_admin 2>/dev/null || true
+    cp /tmp/nsswitch.conf.saved /etc/nsswitch.conf
+    rm -f /var/lib/extrausers/passwd /var/lib/extrausers/group
+}
+
 # ── usermod subordinate ids, and expiry ────────────────────────────
 
 test_subid_and_expiry() {
@@ -1491,6 +1533,7 @@ main() {
     test_pam_auth
     test_self_service
     test_gpasswd_group_admin
+    test_gpasswd_name_service_user
     test_sg_group_switch
     test_chgpasswd
     test_newusers

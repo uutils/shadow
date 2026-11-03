@@ -252,7 +252,16 @@ fn do_gpasswd(matches: &clap::ArgMatches) -> UResult<()> {
     } else {
         Vec::new()
     };
-    let user_exists = |name: &str| passwd_entries.iter().any(|p| p.name == name);
+    // A user may come from the name service as well as the file, as upstream
+    // accepts one known only to LDAP or SSSD. Under a prefix the running
+    // system's name service says nothing about the tree, so only its file counts.
+    // A name the files could not store is not looked up.
+    let user_exists = |name: &str| {
+        passwd_entries.iter().any(|p| p.name == name)
+            || (!root.is_prefixed()
+                && shadow_core::validate::validate_field("member name", name).is_ok()
+                && shadow_core::process::getpwnam(name).is_ok_and(|u| u.is_some()))
+    };
 
     if let Some(ref user) = req.add_user {
         require_user_exists(user, user_exists)?;

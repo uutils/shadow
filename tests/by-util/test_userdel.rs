@@ -505,3 +505,65 @@ fn test_selinux_user_needs_a_selinux_kernel() {
             .contains("priv:")
     );
 }
+
+// Probed on Ubuntu 26.04: a prefix with no /etc/passwd, or none at all, has no
+// users, exit 6 with "user 'u383' does not exist", with -r and -f too. A prefix
+// that is a file is still exit 1.
+#[test]
+fn test_prefix_without_a_passwd_file_exits_6() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let missing = dir.path().join("nonexistent");
+    let missing = missing.to_str().expect("non-UTF-8 temp path");
+    let empty = dir.path().to_str().expect("non-UTF-8 temp path");
+    for args in [
+        &["-P", missing, "u383"][..],
+        &["-r", "-P", missing, "u383"][..],
+        &["-f", "-P", missing, "u383"][..],
+        &["-P", empty, "u383"][..],
+    ] {
+        crate::common::run("userdel", args)
+            .assert_code(6)
+            .assert_stderr_contains("user 'u383' does not exist");
+    }
+
+    let file = dir.path().join("a-file");
+    std::fs::write(&file, "").expect("failed to write file");
+    let file = file.to_str().expect("non-UTF-8 temp path");
+    assert_eq!(run(&["userdel", "-P", file, "u383"]), 1);
+}
+
+// The user's private group was the last entry in gshadow: removing it left
+// nothing to write, and the zero-length guard failed the lot, exit 10, with the
+// account gone from passwd and its row still in gshadow. groupdel removes the
+// file in that case, and so does userdel now.
+#[test]
+fn test_last_private_group_in_gshadow_goes_with_the_file() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let etc = dir.path().join("etc");
+    std::fs::create_dir_all(&etc).expect("failed to create etc dir");
+    for (file, content) in [
+        (
+            "passwd",
+            "root:x:0:0::/root:/bin/sh\nu1:x:1000:1000::/home/u1:/bin/sh\n",
+        ),
+        ("shadow", "u1:!:20000:0:99999:7:::\n"),
+        ("group", "root:x:0:\nu1:x:1000:\n"),
+        ("gshadow", "u1:!::\n"),
+        ("login.defs", ""),
+    ] {
+        std::fs::write(etc.join(file), content).expect("failed to write file");
+    }
+    let prefix = dir.path().to_str().expect("non-UTF-8 temp path");
+    crate::common::run("userdel", &["-P", prefix, "u1"]).assert_code(0);
+    assert_eq!(
+        std::fs::read_to_string(etc.join("group")).expect("read group"),
+        "root:x:0:\n"
+    );
+    assert!(!etc.join("gshadow").exists());
+}

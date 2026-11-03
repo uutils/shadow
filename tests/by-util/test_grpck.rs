@@ -373,6 +373,31 @@ fn test_group_names_upstream_accepts_and_refuses() {
     }
 }
 
+// Probed on Ubuntu 26.04: a line starting with + or - is an NIS entry in the
+// group file, and accepted there, but an invalid entry in gshadow, exit 2.
+#[test]
+fn test_nis_lines_are_invalid_in_gshadow_only() {
+    for group in [
+        "root:x:0:\n-x:x:4000:\n",
+        "root:x:0:\n+x:x:4000:\n",
+        "root:x:0:\n+:::\n",
+    ] {
+        let out = grpck_files(group, "root:!::\n", &[]);
+        assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{group:?}");
+    }
+    for line in ["-x:!::", "+x:!::", "+", "-x", "--:!::"] {
+        assert_reported(
+            "root:x:0:\n-x:x:4000:\n",
+            &format!("root:!::\n{line}\n"),
+            &format!("invalid shadow group file entry: '{line}'"),
+        );
+    }
+    let out = grpck_files("root:x:0:\n", "root:!::\n-x:!::\n-y:!::\n", &[]);
+    out.assert_code(2)
+        .assert_stdout_contains("'-x:!::'")
+        .assert_stdout_contains("'-y:!::'");
+}
+
 #[test]
 fn test_silence_warnings_hides_only_members_that_differ() {
     for flag in ["-S", "--silence-warnings"] {

@@ -881,7 +881,11 @@ fn test_invalid_name_exits_19() {
 
 /// A tree to add accounts to, with empty subordinate ID files.
 fn setup_new_options() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    setup_new_options_in(&std::env::temp_dir())
+}
+
+fn setup_new_options_in(parent: &std::path::Path) -> tempfile::TempDir {
+    let dir = tempfile::tempdir_in(parent).expect("failed to create temp dir");
     let etc = dir.path().join("etc");
     std::fs::create_dir_all(&etc).expect("failed to create etc dir");
     for file in ["passwd", "shadow", "group", "gshadow", "login.defs"] {
@@ -949,6 +953,75 @@ fn test_btrfs_home_off_btrfs_exits_12_with_the_account_written() {
     );
     assert!(etc_file(&dir, "passwd").contains("u1:x:"));
     assert!(!dir.path().join("home/u1").exists());
+
+    // Upstream's words, probed on Ubuntu 26.04, and nothing on stdout.
+    let prefix = dir.path().to_str().expect("non-UTF-8 temp path");
+    let out = crate::common::run(
+        "useradd",
+        &[
+            "-P",
+            prefix,
+            "-m",
+            "--btrfs-subvolume-home",
+            "-d",
+            "/home/u3",
+            "u3",
+        ],
+    );
+    out.assert_code(12)
+        .assert_stdout_is("")
+        .assert_stderr_contains(&format!(
+            "home directory \"{prefix}/home/u3\" must be mounted on BTRFS\n"
+        ));
+}
+
+/// A directory on a mounted btrfs, from `SHADOW_TEST_BTRFS_DIR`. The test images
+/// have none: making one takes a loop device, so a privileged container, e.g.
+/// `truncate -s 300M img; mkfs.btrfs img; losetup -f --show img; mount -t btrfs`.
+fn btrfs_dir() -> Option<std::path::PathBuf> {
+    let dir = std::path::PathBuf::from(std::env::var_os("SHADOW_TEST_BTRFS_DIR")?);
+    assert!(
+        shadow_core::home::is_on_btrfs(&dir),
+        "SHADOW_TEST_BTRFS_DIR={} is not on btrfs",
+        dir.display()
+    );
+    Some(dir)
+}
+
+// Probed on Ubuntu 26.04: upstream runs `btrfs subvolume create`, and
+// `btrfs subvolume delete -C` for userdel -r, and their lines reach stdout:
+//   Create subvolume '/mnt/b386/u386'
+//   Delete subvolume 256 (commit): '/mnt/b386/u386'
+#[test]
+fn test_btrfs_home_says_create_and_delete_subvolume() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let Some(btrfs) = btrfs_dir() else {
+        return;
+    };
+    let dir = setup_new_options_in(&btrfs);
+    let prefix = dir.path().to_str().expect("non-UTF-8 temp path");
+    let home = format!("{prefix}/home/u1");
+
+    crate::common::run(
+        "useradd",
+        &["-P", prefix, "-m", "--btrfs-subvolume-home", "u1"],
+    )
+    .assert_code(0)
+    .assert_stdout_is(&format!("Create subvolume '{home}'\n"));
+    assert!(shadow_core::home::is_btrfs_subvolume(std::path::Path::new(
+        &home
+    )));
+    let id = shadow_core::home::btrfs_subvolume_id(std::path::Path::new(&home));
+
+    let out = crate::common::run("userdel", &["-P", prefix, "-r", "u1"]);
+    out.assert_code(0);
+    match id {
+        Some(id) => out.assert_stdout_is(&format!("Delete subvolume {id} (commit): '{home}'\n")),
+        None => out.assert_stdout_is(""),
+    };
+    assert!(!std::path::Path::new(&home).exists());
 }
 
 #[test]

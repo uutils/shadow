@@ -372,6 +372,64 @@ fn test_interactive_bad_answer_exits_1_and_writes_nothing() {
     }
 }
 
+// Probed on Ubuntu 26.04, with every field empty and so shown as [-1]: ENTER
+// and -1 keep a field empty, the end of input keeps the rest, and a line of
+// blanks is an answer that does not parse, exit 1 with nothing written. Blanks
+// around an answer are dropped.
+#[test]
+fn test_interactive_empty_fields_shown_as_minus_one() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let empty = |answers: &str| {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let etc = dir.path().join("etc");
+        std::fs::create_dir_all(&etc).expect("failed to create etc dir");
+        std::fs::write(etc.join("passwd"), "u:x:1000:1000::/h:/bin/sh\n").expect("write passwd");
+        std::fs::write(etc.join("shadow"), "u:!:::::::\n").expect("write shadow");
+        let input = dir.path().join("answers");
+        std::fs::write(&input, answers).expect("write answers");
+        let mut cmd = crate::common::tool("chage");
+        cmd.arg("-P")
+            .arg(dir.path())
+            .arg("u")
+            .stdin(std::fs::File::open(&input).expect("open answers"));
+        let out = crate::common::run_cmd(&mut cmd);
+        let shadow = std::fs::read_to_string(etc.join("shadow")).expect("read shadow");
+        (out, shadow)
+    };
+
+    let (out, shadow) = empty("\n\n\n\n\n\n");
+    out.assert_code(0).assert_stdout_is(
+        "Changing the aging information for u\n\
+         Enter the new value, or press ENTER for the default\n\n\
+         \tMinimum Password Age [-1]: \tMaximum Password Age [-1]: \
+         \tLast Password Change (YYYY-MM-DD) [-1]: \
+         \tPassword Expiration Warning [-1]: \tPassword Inactive [-1]: \
+         \tAccount Expiration Date (YYYY-MM-DD) [-1]: ",
+    );
+    assert_eq!(shadow, "u:!:::::::\n");
+    for answers in ["-1\n-1\n-1\n-1\n-1\n-1\n", "", " -1\n-1 \n"] {
+        let (out, shadow) = empty(answers);
+        assert_eq!(
+            (out.code, shadow.as_str()),
+            (0, "u:!:::::::\n"),
+            "{answers:?}"
+        );
+    }
+    let (out, shadow) = empty("\n\n0\n\n\n0\n");
+    assert_eq!((out.code, shadow.as_str()), (0, "u:!:0:::::0:\n"));
+    let (out, shadow) = empty(" 5\n\t2\n 2031-01-01 \n");
+    assert_eq!((out.code, shadow.as_str()), (0, "u:!:22280:5:2::::\n"));
+
+    for answers in [" \n", "\t\n", "\n\n \n", "\n\n\t\n", "-2\n"] {
+        let (out, shadow) = empty(answers);
+        out.assert_code(1)
+            .assert_stderr_contains("error changing fields");
+        assert_eq!(shadow, "u:!:::::::\n", "{answers:?}");
+    }
+}
+
 #[test]
 fn test_interactive_unknown_login_exits_1() {
     if crate::common::skip_unless_root() {

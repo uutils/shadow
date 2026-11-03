@@ -98,7 +98,25 @@ pub fn create_subvolume(
     gid: u32,
     mode: u32,
 ) -> Result<Outcome, ShadowError> {
+    use std::io::Write as _;
     use std::os::unix::fs::PermissionsExt as _;
+
+    // The directories above the home are made on the filesystem of the nearest
+    // one that exists, so that one says whether the home can be a subvolume.
+    // Upstream's words, exit 12 in useradd.
+    let not_btrfs = || {
+        ShadowError::Other(
+            format!(
+                "home directory \"{}\" must be mounted on BTRFS",
+                home_path.display()
+            )
+            .into(),
+        )
+    };
+    let nearest = home_path.ancestors().skip(1).find(|dir| dir.exists());
+    if !home_path.exists() && !nearest.is_some_and(is_on_btrfs) {
+        return Err(not_btrfs());
+    }
 
     create_with(home_path, skel_path, (uid, gid), mode, |path, mode| {
         if path.exists() {
@@ -109,8 +127,29 @@ pub fn create_subvolume(
             return Err(std::io::Error::other("it must be mounted on BTRFS"));
         };
         crate::process::btrfs_create_subvolume(parent, name)?;
+        // Upstream runs `btrfs subvolume create`, which says this on standard
+        // output; scripts that read it see the same line.
+        let _ = writeln!(std::io::stdout(), "Create subvolume '{}'", path.display());
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
     })
+}
+
+/// The ID of the btrfs subvolume `path` belongs to, if the kernel tells:
+/// `statx(2)` reports it from Linux 6.10 on.
+#[must_use]
+pub fn btrfs_subvolume_id(path: &Path) -> Option<u64> {
+    use rustix::fs::{AtFlags, CWD, StatxFlags};
+
+    // STATX_SUBVOL, which rustix has no name for yet.
+    const SUBVOL: u32 = 0x8000;
+    let stx = rustix::fs::statx(
+        CWD,
+        path,
+        AtFlags::SYMLINK_NOFOLLOW,
+        StatxFlags::from_bits_retain(SUBVOL),
+    )
+    .ok()?;
+    (stx.stx_mask & SUBVOL != 0).then_some(stx.stx_subvol)
 }
 
 /// What [`create`] and [`create_subvolume`] share; `make_dir` makes the directory.

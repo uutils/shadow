@@ -372,14 +372,19 @@ fn field_value(field: Option<i64>) -> i64 {
     field.unwrap_or(-1)
 }
 
-/// Read one answer. `None` is the end of input, or an empty answer: keep the value.
+/// Read one answer, without the blanks around it. `None` is the end of input, or
+/// an empty line: keep the value.
+///
+/// A line of blanks is not an empty one. Upstream takes it as an answer, which is
+/// neither a number nor a date: probed on Ubuntu 26.04, a space for a field shown
+/// as `[-1]` is "error changing fields", exit 1, where ENTER keeps it empty.
 fn read_answer(input: &mut impl BufRead) -> Result<Option<String>, ChageError> {
     let mut line = String::new();
     input
         .read_line(&mut line)
         .map_err(|e| ChageError::UnexpectedFailure(format!("cannot read an answer: {e}")))?;
-    let answer = line.trim();
-    Ok((!answer.is_empty()).then(|| answer.to_owned()))
+    let line = line.strip_suffix('\n').unwrap_or(&line);
+    Ok((!line.is_empty()).then(|| line.trim().to_owned()))
 }
 
 /// Parse a day count: a number, -1 at the lowest.

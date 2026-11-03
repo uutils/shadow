@@ -153,45 +153,18 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let signals = shadow_core::hardening::SignalBlocker::block_critical()
         .map_err(|e| UsermodError::CantUpdate(format!("cannot block signals: {e}")))?;
 
-    // A value that would add a field or a record to /etc/passwd is rejected
-    // before any file is locked or written; exit 3 like other bad arguments.
-    for (what, key) in [
-        ("comment", options::COMMENT),
-        ("home directory", options::HOME),
-        ("shell", options::SHELL),
-    ] {
-        if let Some(value) = matches.get_one::<String>(key) {
-            validate::validate_field(what, value)
-                .map_err(|e| UsermodError::BadArgument(e.to_string()))?;
-        }
-    }
-
-    // usermod(8) exit 3. A relative home would be resolved against the directory
-    // root runs this from. An empty one is allowed, like upstream: no home.
-    if matches
-        .get_one::<String>(options::HOME)
-        .is_some_and(|home| !home.is_empty() && !home.starts_with('/'))
-    {
-        return Err(UsermodError::BadArgument("homedir must be an absolute path".into()).into());
-    }
-
-    // Subordinate id ranges are validated with the other arguments, before any
-    // file is written; usermod(8) exits 3 for an invalid one.
-    let subid_changes = parse_subid_changes(&matches)?;
-
-    // Parse the expiry date before anything is written, so a malformed value
-    // cannot leave the passwd change committed and the shadow change not.
-    // usermod(8) documents YYYY-MM-DD; days since the epoch stays accepted.
-    let expire_date = match matches.get_one::<String>(options::EXPIREDATE) {
-        Some(exp) => Some(
-            shadow_core::date::parse_expire_date(exp)
-                .map_err(|e| UsermodError::BadArgument(e.to_string()))?,
-        ),
-        None => None,
-    };
+    // Every value is checked before any file is locked or written, and before
+    // the login is looked up, so a malformed one cannot leave the passwd change
+    // committed and the shadow change not.
+    let Values {
+        expire_date,
+        inactive,
+        uid: requested_uid,
+        gid: requested_group,
+        subid_changes,
+    } = check_values(&matches, &root, badname)?;
 
     // Modify /etc/passwd.
-    let group_path_for_lookup = root.group_path();
     let passwd_path = root.passwd_path();
     // The transaction locks, then reads, and releases on every path out --
     // including each early return below, where the file is left untouched.
@@ -224,11 +197,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let old_home = entries[idx].home.clone();
 
     // Check UID collision before mutating.
-    if let Some(&uid) = matches.get_one::<u32>(options::UID) {
-        // u32::MAX is (uid_t)-1, the "no change" sentinel of chown/setresuid.
-        if uid == u32::MAX {
-            return Err(UsermodError::BadArgument(format!("invalid UID '{uid}'")).into());
-        }
+    if let Some(uid) = requested_uid {
         if !matches.get_flag(options::NON_UNIQUE)
             && entries.iter().any(|e| e.uid == uid && e.name != *login)
         {
@@ -249,35 +218,11 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     if let Some(s) = matches.get_one::<String>(options::SHELL) {
         entries[idx].shell.clone_from(s);
     }
-    if let Some(group_arg) = matches.get_one::<String>(options::GID) {
-        // usermod(8): -g takes a group name or a GID, and the group "must
-        // exist". A numeric GID naming no group used to be written through,
-        // leaving a primary group that does not exist.
-        let groups = if group_path_for_lookup.exists() {
-            group::read_group_file(&group_path_for_lookup).unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-        let resolved = if let Ok(gid) = group_arg.parse::<u32>() {
-            groups.iter().find(|g| g.gid == gid).map(|g| g.gid)
-        } else {
-            groups.iter().find(|g| g.name == *group_arg).map(|g| g.gid)
-        };
-        let Some(gid) = resolved else {
-            return Err(
-                UsermodError::GroupNotFound(format!("group '{group_arg}' does not exist")).into(),
-            );
-        };
+    if let Some(gid) = requested_group {
         entries[idx].gid = gid;
     }
     let new_login = matches.get_one::<String>(options::LOGIN);
     if let Some(new_name) = new_login {
-        if badname {
-            validate::validate_field("login name", new_name)
-        } else {
-            validate::validate_username(new_name)
-        }
-        .map_err(|e| UsermodError::BadArgument(format!("invalid login name: {e}")))?;
         // usermod(8) exit 9: the new name must not already be taken, or the
         // rename would produce two entries with the same login.
         if entries
@@ -347,7 +292,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let shadow_path = root.shadow_path();
     let do_lock = matches.get_flag(options::LOCK);
     let do_unlock = matches.get_flag(options::UNLOCK);
-    let inactive = matches.get_one::<i64>(options::INACTIVE);
     let new_password = matches.get_one::<String>(options::PASSWORD);
 
     let login_changing = new_login.is_some();
@@ -386,7 +330,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             changing |= s.expire_date != parsed;
             s.expire_date = parsed;
         }
-        if let Some(&i) = inactive {
+        if let Some(i) = inactive {
             let days = if i < 0 { None } else { Some(i) };
             changing |= s.inactive_days != days;
             s.inactive_days = days;
@@ -615,23 +559,182 @@ struct SubIdChange {
     last: u64,
 }
 
-/// Read `-v`, `-V`, `-w` and `-W`, each of which may be given more than once.
-fn parse_subid_changes(matches: &clap::ArgMatches) -> Result<Vec<SubIdChange>, UsermodError> {
-    let mut changes = Vec::new();
-    for (key, gids, remove) in [
-        (options::ADD_SUBUIDS, false, false),
-        (options::DEL_SUBUIDS, false, true),
-        (options::ADD_SUBGIDS, true, false),
-        (options::DEL_SUBGIDS, true, true),
+/// The option values, as [`check_values`] found them.
+struct Values {
+    /// `-e`: `Some(None)` empties the field, as `None` stands for an empty
+    /// field in the shadow entry.
+    #[allow(clippy::option_option)]
+    expire_date: Option<Option<i64>>,
+    /// `-f`.
+    inactive: Option<i64>,
+    /// `-u`.
+    uid: Option<u32>,
+    /// `-g`, resolved to the GID of a group that exists.
+    gid: Option<u32>,
+    /// `-v`, `-V`, `-w` and `-W`, each of which may be given more than once.
+    subid_changes: Vec<SubIdChange>,
+}
+
+/// Check each option value in the order of the command line, and report the
+/// first that is wrong.
+///
+/// Upstream checks a value as it reads its option: probed on Ubuntu 26.04,
+/// `usermod -g nogrp -l a:b u` reports the group, exit 6, and `usermod -l a:b
+/// -g nogrp u` the name, exit 3. Both come before the login is looked up and
+/// before the options are checked against one another, so `usermod -g nogrp -a
+/// u` is 6 and not the 2 of `-a` without `-G`.
+fn check_values(
+    matches: &clap::ArgMatches,
+    root: &SysRoot,
+    badname: bool,
+) -> Result<Values, UsermodError> {
+    let mut values = Values {
+        expire_date: None,
+        inactive: None,
+        uid: None,
+        gid: None,
+        subid_changes: Vec::new(),
+    };
+
+    // Each option given, with its value, by its place on the command line.
+    let mut given: Vec<(usize, &str, &str)> = Vec::new();
+    for key in [
+        options::COMMENT,
+        options::HOME,
+        options::EXPIREDATE,
+        options::INACTIVE,
+        options::GID,
+        options::GROUPS,
+        options::LOGIN,
+        options::SHELL,
+        options::UID,
+        options::ADD_SUBUIDS,
+        options::DEL_SUBUIDS,
+        options::ADD_SUBGIDS,
+        options::DEL_SUBGIDS,
     ] {
-        for spec in matches.get_many::<String>(key).into_iter().flatten() {
-            let (first, last) = shadow_core::subid::parse_range(spec).ok_or_else(|| {
-                UsermodError::BadArgument(format!(
-                    "invalid subordinate {} range '{spec}'",
+        let (Some(indices), Some(found)) =
+            (matches.indices_of(key), matches.get_many::<String>(key))
+        else {
+            continue;
+        };
+        given.extend(
+            indices
+                .zip(found)
+                .map(|(index, value)| (index, key, value.as_str())),
+        );
+    }
+    given.sort_by_key(|(index, _, _)| *index);
+
+    // Read once, and only if -g or -G needs it. -g and -G take a name or a GID,
+    // and the group must exist (usermod(8) exit 6).
+    let mut groups: Option<Vec<GroupEntry>> = None;
+    let mut find_group = |wanted: &str| -> Option<u32> {
+        let groups = groups.get_or_insert_with(|| {
+            let path = root.group_path();
+            if path.exists() {
+                group::read_group_file(&path).unwrap_or_default()
+            } else {
+                Vec::new()
+            }
+        });
+        match wanted.parse::<u32>() {
+            Ok(gid) => groups.iter().find(|g| g.gid == gid),
+            Err(_) => groups.iter().find(|g| g.name == wanted),
+        }
+        .map(|g| g.gid)
+    };
+    for (_, key, value) in given {
+        check_value(&mut values, key, value, badname, &mut find_group)?;
+    }
+    Ok(values)
+}
+
+/// Check one option value for [`check_values`], and keep what it means.
+/// `find_group` gives the GID of a group named by name or GID, if it exists.
+fn check_value(
+    values: &mut Values,
+    key: &str,
+    value: &str,
+    badname: bool,
+    find_group: &mut impl FnMut(&str) -> Option<u32>,
+) -> Result<(), UsermodError> {
+    let bad = |message: String| UsermodError::BadArgument(message);
+    let no_group =
+        |name: &str| UsermodError::GroupNotFound(format!("group '{name}' does not exist"));
+
+    match key {
+        // A value that would add a field or a record to /etc/passwd.
+        options::COMMENT => {
+            validate::validate_field("comment", value).map_err(|e| bad(e.to_string()))?;
+        }
+        options::SHELL => {
+            validate::validate_field("shell", value).map_err(|e| bad(e.to_string()))?;
+        }
+        options::HOME => {
+            validate::validate_field("home directory", value).map_err(|e| bad(e.to_string()))?;
+            // A relative home would be resolved against the directory root
+            // runs this from. An empty one is allowed, like upstream: no home.
+            if !value.is_empty() && !value.starts_with('/') {
+                return Err(bad("homedir must be an absolute path".into()));
+            }
+        }
+        // usermod(8) documents YYYY-MM-DD; days since the epoch stays accepted.
+        options::EXPIREDATE => {
+            values.expire_date =
+                Some(shadow_core::date::parse_expire_date(value).map_err(|e| bad(e.to_string()))?);
+        }
+        options::INACTIVE => {
+            values.inactive = Some(
+                value
+                    .parse()
+                    .map_err(|_| bad(format!("invalid numeric argument '{value}'")))?,
+            );
+        }
+        options::UID => {
+            // u32::MAX is (uid_t)-1, the "no change" sentinel of
+            // chown/setresuid.
+            values.uid = Some(
+                value
+                    .parse()
+                    .ok()
+                    .filter(|uid| *uid != u32::MAX)
+                    .ok_or_else(|| bad(format!("invalid user ID '{value}'")))?,
+            );
+        }
+        options::GID => {
+            values.gid = Some(find_group(value).ok_or_else(|| no_group(value))?);
+        }
+        // An empty -G list removes every supplementary membership.
+        options::GROUPS => {
+            for name in value.split(',').map(str::trim).filter(|g| !g.is_empty()) {
+                find_group(name).ok_or_else(|| no_group(name))?;
+            }
+        }
+        options::LOGIN => {
+            if badname {
+                validate::validate_field("login name", value)
+                    .map_err(|e| bad(format!("invalid login name: {e}")))?;
+            } else if validate::validate_username(value).is_err() {
+                return Err(bad(format!(
+                    "invalid user name '{value}': use --badname to ignore"
+                )));
+            }
+        }
+        _ => {
+            let (gids, remove) = match key {
+                options::DEL_SUBUIDS => (false, true),
+                options::ADD_SUBGIDS => (true, false),
+                options::DEL_SUBGIDS => (true, true),
+                _ => (false, false),
+            };
+            let (first, last) = shadow_core::subid::parse_range(value).ok_or_else(|| {
+                bad(format!(
+                    "invalid subordinate {} range '{value}'",
                     if gids { "gid" } else { "uid" }
                 ))
             })?;
-            changes.push(SubIdChange {
+            values.subid_changes.push(SubIdChange {
                 gids,
                 remove,
                 first,
@@ -639,7 +742,7 @@ fn parse_subid_changes(matches: &clap::ArgMatches) -> Result<Vec<SubIdChange>, U
             });
         }
     }
-    Ok(changes)
+    Ok(())
 }
 
 /// Apply the subordinate id changes, each file in its own transaction.
@@ -1402,7 +1505,6 @@ pub fn uu_app() -> Command {
                 .short('f')
                 .long("inactive")
                 .value_name("INACTIVE")
-                .value_parser(clap::value_parser!(i64))
                 .help("Days the password may stay expired before disabling the account")
                 .allow_hyphen_values(true),
         )
@@ -1453,7 +1555,10 @@ pub fn uu_app() -> Command {
                 .short('l')
                 .long("login")
                 .value_name("NEW_LOGIN")
-                .help("Rename the account"),
+                .help("Rename the account")
+                // Taken as the name, as upstream does, and refused as one: exit
+                // 3 and not a usage error.
+                .allow_hyphen_values(true),
         )
         .arg(
             Arg::new(options::PASSWORD)
@@ -1474,7 +1579,6 @@ pub fn uu_app() -> Command {
                 .short('u')
                 .long("uid")
                 .value_name("UID")
-                .value_parser(clap::value_parser!(u32))
                 .help("Replace the numeric UID"),
         )
         .arg(
@@ -1578,7 +1682,10 @@ mod tests {
         let m = uu_app()
             .try_get_matches_from(["usermod", "-f", "-1", "-e", "-1", "u"])
             .expect("should parse -f -1 -e -1");
-        assert_eq!(m.get_one::<i64>(options::INACTIVE).copied(), Some(-1));
+        assert_eq!(
+            m.get_one::<String>(options::INACTIVE).map(String::as_str),
+            Some("-1")
+        );
         assert_eq!(
             m.get_one::<String>(options::EXPIREDATE).map(String::as_str),
             Some("-1")

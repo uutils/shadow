@@ -303,6 +303,25 @@ impl<T: Record> Commit for LockedFile<T> {
     }
 }
 
+/// A [`LockedFile`] that [`commit_all`] removes when nothing is left in it, as
+/// [`LockedFile::commit_or_remove`] does: for `/etc/group`, `/etc/gshadow` and
+/// the subid files, whose last entry can go.
+pub struct RemoveWhenEmpty<T: Record>(pub LockedFile<T>);
+
+impl<T: Record> Commit for RemoveWhenEmpty<T> {
+    fn validate(&self) -> Result<(), ShadowError> {
+        self.0.validate()
+    }
+
+    fn commit_boxed(self: Box<Self>) -> Result<(), ShadowError> {
+        self.0.commit_or_remove_if(true)
+    }
+
+    fn path(&self) -> &Path {
+        self.0.path()
+    }
+}
+
 /// Commit several locked files, or none of them.
 ///
 /// `/etc/group` and `/etc/gshadow` have to agree: a group present in one and

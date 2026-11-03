@@ -9,19 +9,21 @@
 //! Drop-in replacement for upstream shadow `userdel(8)`.
 
 use std::fmt;
+use std::io::Write as _;
 use std::path::Path;
 
 use clap::{Arg, ArgAction, Command};
 use uucore::error::{UError, UResult};
 
 use shadow_core::audit;
+use shadow_core::error::ShadowError;
 use shadow_core::group::GroupEntry;
 use shadow_core::gshadow::GshadowEntry;
 use shadow_core::nscd;
 use shadow_core::passwd::{self, PasswdEntry};
 use shadow_core::shadow::ShadowEntry;
 use shadow_core::sysroot::SysRoot;
-use shadow_core::transaction::{self, Commit, LockedFile, Record};
+use shadow_core::transaction::{self, Commit, LockedFile, Record, RemoveWhenEmpty};
 
 mod options {
     pub const FORCE: &str = "force";
@@ -121,8 +123,19 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // Read the account BEFORE removing it: home, uid and primary gid are
     // needed for home removal, the private-group cleanup and the audit event.
     let passwd_path = root.passwd_path();
-    let pre_entries = passwd::read_passwd_file(&passwd_path)
-        .map_err(|e| UserdelError::CantUpdatePasswd(format!("cannot read passwd: {e}")))?;
+    // A passwd file that is not there has no users in it: upstream says the user
+    // does not exist, exit 6, for a prefix with no /etc/passwd. One that is there
+    // and cannot be read is still exit 1.
+    let pre_entries = match passwd::read_passwd_file(&passwd_path) {
+        Err(ShadowError::Io(e) | ShadowError::IoPath(e, _))
+            if e.kind() == std::io::ErrorKind::NotFound =>
+        {
+            Vec::new()
+        }
+        read => {
+            read.map_err(|e| UserdelError::CantUpdatePasswd(format!("cannot read passwd: {e}")))?
+        }
+    };
 
     // userdel(8): exit 6 when the user does not exist, with -f too.
     let Some(target) = pre_entries.iter().find(|e| e.name == *login) else {
@@ -356,9 +369,31 @@ fn safe_remove_home(
         }
     }
 
+    // Upstream removes a subvolume with `btrfs subvolume delete -C`, which waits
+    // for the deletion to be committed and says so on standard output.
+    let subvolume = shadow_core::home::is_btrfs_subvolume(&canonical)
+        .then(|| shadow_core::home::btrfs_subvolume_id(&canonical));
+
     std::fs::remove_dir_all(&canonical).map_err(|e| {
         UserdelError::CantRemoveHome(format!("cannot remove '{}': {e}", canonical.display()))
     })?;
+
+    if let Some(id) = subvolume {
+        if let Some(parent) = canonical.parent()
+            && let Ok(dir) = std::fs::File::open(parent)
+        {
+            let _ = rustix::fs::syncfs(&dir);
+        }
+        // A kernel older than 6.10 does not tell the ID, and the line is not
+        // made up without it.
+        if let Some(id) = id {
+            let _ = writeln!(
+                std::io::stdout(),
+                "Delete subvolume {id} (commit): '{}'",
+                home.display()
+            );
+        }
+    }
 
     Ok(())
 }
@@ -477,14 +512,16 @@ fn remove_user_private_group(
     // and not the other is a broken system, and validating both before writing
     // either keeps a bad value from leaving them out of step.
     let gshadow_path = root.gshadow_path();
-    let mut files: Vec<Box<dyn Commit>> = vec![Box::new(groups)];
+    // The last group going leaves nothing to write, and an absent group or
+    // gshadow file means no groups, as groupdel has it.
+    let mut files: Vec<Box<dyn Commit>> = vec![Box::new(RemoveWhenEmpty(groups))];
     if gshadow_path.exists() {
         let mut gshadow = LockedFile::<GshadowEntry>::open(&gshadow_path)
             .map_err(|e| format!("cannot open gshadow: {e}"))?;
         let before = gshadow.entries().len();
         gshadow.entries_mut().retain(|g| g.name != login);
         if gshadow.entries().len() != before {
-            files.push(Box::new(gshadow));
+            files.push(Box::new(RemoveWhenEmpty(gshadow)));
         }
     }
 

@@ -71,6 +71,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `gpasswd -a`, `-A` and `-M` accept a user that only the name service knows, such
+  as one from LDAP or SSSD, as upstream does. They refused anyone missing from
+  /etc/passwd, exit 3 (#381)
+
+- `usermod` checks option values in the order of the command line, before the login
+  is looked up and before the options are checked against one another, as upstream
+  does: `usermod -g nogrp -a u` is 6 and `usermod -l a:b -a u` is 3, where both were
+  2. `-G` naming a group that does not exist no longer writes /etc/passwd before it
+  fails (#382)
+
+- `userdel -P DIR` with no /etc/passwd under DIR says the user does not exist, exit
+  6, as upstream does. It was exit 1 (#383)
+
+- `grpck` reports a line in /etc/gshadow that starts with `+` or `-`, exit 2, as
+  upstream does. Such a line is an NIS entry in /etc/group, where it stays accepted,
+  but gshadow has none (#384)
+
+- `useradd --btrfs-subvolume-home` prints `Create subvolume 'HOME'` and `userdel -r`
+  prints `Delete subvolume ID (commit): 'HOME'` for such a home, the lines upstream
+  shows, and off btrfs the refusal uses upstream's words (#386)
+
+- `chage LOGIN` takes a line of blanks as an answer that does not parse, exit 1 with
+  nothing written, as upstream does; only an empty line keeps a value (#387)
+
+- `userdel` removes a user whose private group is the last entry in /etc/gshadow.
+  It exited 10 with the account already gone from /etc/passwd
+
+- `pwck` adds upstream's `use --badname to ignore` to an invalid user name
+
 - `passwd -d`, `-l` and `-u` can be combined, as upstream's can, and `-e` with them.
   They are applied as delete, unlock, lock, whatever the order on the command line,
   so `-d -l` removes the hash and leaves the account locked. They were refused,

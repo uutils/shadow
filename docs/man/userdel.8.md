@@ -27,7 +27,11 @@ is also removed from membership lists in /etc/group and /etc/gshadow.
 :   Use *PREFIX_DIR* as a prefix for system file paths.
 
 **-r**, **--remove**
-:   Remove the user's home directory and mail spool.
+:   Remove the user's home directory and mail spool. A home that is a btrfs
+    subvolume, as **useradd --btrfs-subvolume-home** makes, is removed with it,
+    and *Delete subvolume ID (commit): 'HOME'* is printed on standard output once
+    the removal is committed, as upstream prints it. On a kernel older than 6.10,
+    which does not tell the subvolume's ID, the line is not printed.
 
 **-R**, **--root** *CHROOT_DIR*
 :   Apply changes in the *CHROOT_DIR* directory.

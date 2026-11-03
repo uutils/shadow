@@ -181,6 +181,7 @@ fn run_checks(opts: &GrpckOptions) -> UResult<()> {
     // populated group file reported nothing at all.
     let mut gshadow_entries = Vec::new();
     if opts.gshadow_path.exists() {
+        errors += check_gshadow_compat_lines(&opts.gshadow_path);
         match gshadow::read_gshadow_file(&opts.gshadow_path) {
             Ok(entries) => {
                 errors += check_group_gshadow_consistency(&group_entries, &entries);
@@ -242,6 +243,28 @@ fn read_raw_lines(path: &Path) -> Result<Vec<String>, std::io::Error> {
     }
 
     Ok(lines)
+}
+
+/// Report each line of the gshadow file that starts with `+` or `-`.
+///
+/// Such a line is an NIS compatibility entry in the group file, which upstream
+/// accepts there, but gshadow has none: probed on Ubuntu 26.04, a gshadow line
+/// `-x:!::` is "invalid shadow group file entry", exit 2, with a group file
+/// line `-x:x:4000:` or without one. If the file cannot be read, reading its
+/// entries says so.
+fn check_gshadow_compat_lines(path: &Path) -> u32 {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return 0;
+    };
+    let mut errors = 0;
+    for line in text
+        .lines()
+        .filter(|line| line.trim_start().starts_with(['+', '-']))
+    {
+        report(format_args!("invalid shadow group file entry: '{line}'"));
+        errors += 1;
+    }
+    errors
 }
 
 /// Check for duplicate group names.

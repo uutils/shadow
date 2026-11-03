@@ -494,7 +494,10 @@ fn check_passwd_entries(
         } else if !badname
             && !shadow_core::validate::is_valid_account_name(&entry.name, MAX_USER_NAME_LEN)
         {
-            report(format_args!("invalid user name '{}'", entry.name));
+            report(format_args!(
+                "invalid user name '{}': use --badname to ignore",
+                entry.name
+            ));
             errors += 1;
         }
 
