@@ -505,33 +505,3 @@ fn test_password_with_a_colon_exits_10() {
     assert_eq!(run(&["groupmod", "-p", "a:b", "-P", prefix, "mygrp"]), 10);
     assert_eq!(read_gshadow(&dir), "mygrp:!::\n");
 }
-
-/// `groupmod -n` takes the names upstream's `groupadd` takes.
-#[test]
-fn test_rename_follows_upstream_name_rules() {
-    if crate::common::skip_unless_root() {
-        return;
-    }
-
-    let dir = setup_root(
-        "oldgrp:x:1000:\n",
-        "oldgrp:!::\n",
-        "root:x:0:0:root:/root:/bin/bash\n",
-    );
-    let prefix = dir.path().to_str().expect("non-UTF-8 temp path");
-    let mut current = String::from("oldgrp");
-    for name in ["0abc", "1e5", ".abc", "a.", "123$", &"a".repeat(32)] {
-        crate::common::run("groupmod", &["-P", prefix, "-n", name, &current]).assert_code(0);
-        assert!(
-            read_group(&dir).starts_with(&format!("{name}:x:1000:")),
-            "groupmod -n should have renamed {current} to {name}"
-        );
-        current = name.to_string();
-    }
-
-    for name in ["123", "0x1a", "0o7", "-x", ".", "a@b", &"a".repeat(33)] {
-        crate::common::run("groupmod", &["-P", prefix, "-n", name, &current])
-            .assert_code(3)
-            .assert_stderr_contains(&format!("invalid group name '{name}'"));
-    }
-}

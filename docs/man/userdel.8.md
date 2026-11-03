@@ -33,10 +33,6 @@ is also removed from membership lists in /etc/group and /etc/gshadow.
     the removal is committed, as upstream prints it. On a kernel older than 6.10,
     which does not tell the subvolume's ID, the line is not printed.
 
-    A mail spool or home that is not there is not an error: *LOGIN mail spool
-    (PATH) not found* and *LOGIN home directory (PATH) not found* are printed on
-    standard error, in that order, and the exit status is unchanged.
-
 **-R**, **--root** *CHROOT_DIR*
 :   Apply changes in the *CHROOT_DIR* directory.
 

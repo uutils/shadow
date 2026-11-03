@@ -171,6 +171,9 @@ fn report(message: fmt::Arguments<'_>) {
     let _ = writeln!(std::io::stdout(), "{message}");
 }
 
+/// The longest user name `pwck` takes, as seen on Ubuntu 26.04's.
+const MAX_USER_NAME_LEN: usize = 255;
+
 /// Core logic, separated from argument parsing to keep `uumain` short.
 fn run_checks(opts: &PwckOptions) -> UResult<()> {
     let passwd_lines = read_raw_lines(&opts.passwd_path).map_err(|e| {
@@ -489,10 +492,7 @@ fn check_passwd_entries(
             ));
             errors += 1;
         } else if !badname
-            && !shadow_core::validate::is_valid_account_name(
-                &entry.name,
-                shadow_core::validate::MAX_USER_NAME_LEN,
-            )
+            && !shadow_core::validate::is_valid_account_name(&entry.name, MAX_USER_NAME_LEN)
         {
             report(format_args!(
                 "invalid user name '{}': use --badname to ignore",
