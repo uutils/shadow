@@ -167,6 +167,12 @@ form.
 **12**
 :   Cannot move or re-own the home directory. The account files were written.
 
+The values are checked first, in the order of the command line, and the first
+that is wrong gives the status: **-g nogrp -l a:b** is 6 and **-l a:b -g nogrp**
+is 3. Then the login is looked up, then the options are checked against one
+another, so **-g nogrp -a** is 6 and not 2. A name or UID already in use, and a
+password that would not fit, come last.
+
 ## DIFFERENCES FROM UPSTREAM SHADOW
 
 Compared with the **usermod** of Ubuntu 26.04's *passwd* package,

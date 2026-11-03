@@ -2063,6 +2063,67 @@ fn test_value_that_does_not_parse_exits_3() {
     assert_refused(&dir, &["-c", "a:b", "-a", "testuser"], 3);
 }
 
+// Probed on Ubuntu 26.04: a value is checked as its option is read, so the first
+// wrong one on the command line is reported, before the login is looked up and
+// before -a, -r, -o, -m or -L -U are checked against the rest.
+#[test]
+fn test_values_are_checked_in_command_line_order_before_the_rest() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    let dir = setup_one_user();
+    for (args, code) in [
+        (&["-g", "nogrp", "-a", "testuser"][..], 6),
+        (&["-a", "-g", "nogrp", "testuser"][..], 6),
+        (&["-l", "a:b", "-a", "testuser"][..], 3),
+        (&["-a", "-l", "a:b", "testuser"][..], 3),
+        (&["-l", "-x", "-a", "testuser"][..], 3),
+        (&["-g", "nogrp", "-a", "ghost"][..], 6),
+        (&["-l", "a:b", "ghost"][..], 3),
+        (&["-r", "-g", "nogrp", "testuser"][..], 6),
+        (&["-o", "-g", "nogrp", "testuser"][..], 6),
+        (&["-m", "-g", "nogrp", "testuser"][..], 6),
+        (&["-L", "-U", "-g", "nogrp", "testuser"][..], 6),
+        (&["-l", "a:b", "-r", "testuser"][..], 3),
+        (&["-u", "4294967295", "-a", "testuser"][..], 3),
+        (&["-v", "bad", "-a", "testuser"][..], 3),
+        (&["-g", "nogrp", "-l", "a:b", "testuser"][..], 6),
+        (&["-l", "a:b", "-g", "nogrp", "testuser"][..], 3),
+        (&["-g", "nogrp", "-u", "abc", "testuser"][..], 6),
+        (&["-u", "abc", "-g", "nogrp", "testuser"][..], 3),
+        (&["-g", "nogrp", "-f", "bad", "testuser"][..], 6),
+        (&["-f", "bad", "-g", "nogrp", "testuser"][..], 3),
+        (&["-g", "nogrp", "-c", "a:b", "testuser"][..], 6),
+        (&["-g", "nogrp", "-e", "bad", "testuser"][..], 6),
+        (&["-v", "bad", "-g", "nogrp", "testuser"][..], 3),
+        (&["-G", "nogrp", "-a", "ghost"][..], 6),
+        (&["-G", "wheel,nogrp", "-c", "new", "testuser"][..], 6),
+        // These are checked later: the name or UID in use, and the hash.
+        (&["-l", "testuser", "-a", "testuser"][..], 2),
+        (&["-u", "1000", "-a", "testuser"][..], 2),
+        (&["-p", "a:b", "-a", "testuser"][..], 2),
+    ] {
+        assert_refused(&dir, args, code);
+    }
+
+    let prefix = dir.path().to_str().expect("non-UTF-8 temp path");
+    crate::common::run(
+        "usermod",
+        &["-P", prefix, "-g", "nogrp", "-l", "a:b", "testuser"],
+    )
+    .assert_code(6)
+    .assert_stderr_contains("group 'nogrp' does not exist");
+    crate::common::run("usermod", &["-P", prefix, "-l", "a:b", "-a", "testuser"])
+        .assert_code(3)
+        .assert_stderr_contains("invalid user name 'a:b': use --badname to ignore");
+    crate::common::run("usermod", &["-P", prefix, "-u", "abc", "testuser"])
+        .assert_code(3)
+        .assert_stderr_contains("invalid user ID 'abc'");
+    crate::common::run("usermod", &["-P", prefix, "-f", "bad", "testuser"])
+        .assert_code(3)
+        .assert_stderr_contains("invalid numeric argument 'bad'");
+}
+
 // Ubuntu 26.04's usermod -U on a field that would come out empty warns, exits 0
 // and leaves it locked. Everything else on the command line still happens.
 #[test]
