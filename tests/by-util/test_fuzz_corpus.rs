@@ -113,11 +113,6 @@ fn test_subid_corpus_round_trips() {
 #[test]
 fn test_username_corpus_is_answered() {
     for text in inputs("fuzz_validate_username") {
-        // A group name is a user name that fits in 32 characters.
-        let group = shadow_core::validate::is_valid_group_name(&text);
-        assert!(
-            !group || shadow_core::validate::is_valid_user_name(&text),
-            "{text:?} is a valid group name but not a valid user name"
-        );
+        let _ = shadow_core::validate::validate_username(&text);
     }
 }

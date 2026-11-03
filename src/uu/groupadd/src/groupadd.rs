@@ -149,12 +149,8 @@ fn do_groupadd(matches: &clap::ArgMatches) -> UResult<()> {
     }
 
     // Validate the group name.
-    if !validate::is_valid_group_name(&group_name) {
-        return Err(GroupaddError::BadArgument(format!(
-            "'{group_name}' is not a valid group name"
-        ))
-        .into());
-    }
+    validate::validate_username(&group_name)
+        .map_err(|e| GroupaddError::BadArgument(format!("{e}")))?;
 
     let group_path = root.group_path();
 
