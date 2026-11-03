@@ -33,7 +33,9 @@ changes that are specified on the command line.
 
 **-e**, **--expiredate** *EXPIRE_DATE*
 :   Set the account expiration date, as YYYY-MM-DD or a number of days since the
-    epoch. **-1** removes the date.
+    epoch, or another date form **date**(1) **-d** reads (**01/02/2030**,
+    **2 Jan 2030**, **tomorrow**), as for **chage**(1) **-E**. **-1** removes the
+    date.
 
 **-f**, **--inactive** *INACTIVE*
 :   Set the password inactive period, in days. **-1** removes it.
