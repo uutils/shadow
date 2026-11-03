@@ -9,6 +9,7 @@
 //! Drop-in replacement for upstream shadow `userdel(8)`.
 
 use std::fmt;
+use std::io::Write as _;
 use std::path::Path;
 
 use clap::{Arg, ArgAction, Command};
@@ -368,9 +369,31 @@ fn safe_remove_home(
         }
     }
 
+    // Upstream removes a subvolume with `btrfs subvolume delete -C`, which waits
+    // for the deletion to be committed and says so on standard output.
+    let subvolume = shadow_core::home::is_btrfs_subvolume(&canonical)
+        .then(|| shadow_core::home::btrfs_subvolume_id(&canonical));
+
     std::fs::remove_dir_all(&canonical).map_err(|e| {
         UserdelError::CantRemoveHome(format!("cannot remove '{}': {e}", canonical.display()))
     })?;
+
+    if let Some(id) = subvolume {
+        if let Some(parent) = canonical.parent()
+            && let Ok(dir) = std::fs::File::open(parent)
+        {
+            let _ = rustix::fs::syncfs(&dir);
+        }
+        // A kernel older than 6.10 does not tell the ID, and the line is not
+        // made up without it.
+        if let Some(id) = id {
+            let _ = writeln!(
+                std::io::stdout(),
+                "Delete subvolume {id} (commit): '{}'",
+                home.display()
+            );
+        }
+    }
 
     Ok(())
 }

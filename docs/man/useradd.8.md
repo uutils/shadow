@@ -102,9 +102,10 @@ default values used for creating new accounts.
 :   Add subordinate IDs for a system account too, which **-r** otherwise skips.
 
 **--btrfs-subvolume-home**
-:   With **-m**, make the home a btrfs subvolume. If the directory it goes in is not
-    on btrfs the exit status is 12, with the account written. Without **-m** it does
-    nothing.
+:   With **-m**, make the home a btrfs subvolume, and print *Create subvolume
+    'HOME'* on standard output, as upstream does. If the directory it goes in is
+    not on btrfs the exit status is 12, with the account written. Without **-m** it
+    does nothing.
 
 ## EXIT STATUS
 
