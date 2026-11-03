@@ -37,7 +37,9 @@ default values used for creating new accounts.
 
 **-e**, **--expiredate** *EXPIRE_DATE*
 :   Set the expiration date of the new account (YYYY-MM-DD). **-1** leaves it
-    unset.
+    unset. A number of days since the epoch, and the other date forms
+    **date**(1) **-d** reads (**01/02/2030**, **2 Jan 2030**, **tomorrow**),
+    are accepted as for **chage**(1) **-E**.
 
 **-f**, **--inactive** *INACTIVE*
 :   Set the password inactivity period of the new account. **-1** leaves it
