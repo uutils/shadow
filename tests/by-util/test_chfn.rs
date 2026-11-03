@@ -109,3 +109,57 @@ fn test_chfn_success_prints_nothing() {
         "passwd not updated:\n{passwd}"
     );
 }
+
+/// Run `chfn -R` on an account whose GECOS is `gecos` and return the GECOS
+/// field written back.
+fn gecos_after(gecos: &str, args: &[&str]) -> String {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let etc = dir.path().join("etc");
+    std::fs::create_dir_all(&etc).expect("failed to create etc dir");
+    std::fs::write(
+        etc.join("passwd"),
+        format!("root:x:0:0:root:/root:/bin/sh\nalice:x:1000:1000:{gecos}:/home/alice:/bin/sh\n"),
+    )
+    .expect("failed to write passwd");
+
+    let mut cmd = crate::common::tool("chfn");
+    cmd.arg("-R").arg(dir.path()).args(args).arg("alice");
+    crate::common::run_cmd(&mut cmd).assert_code(0);
+
+    let passwd = std::fs::read_to_string(etc.join("passwd")).expect("failed to read passwd");
+    passwd
+        .lines()
+        .find_map(|l| l.strip_prefix("alice:x:1000:1000:"))
+        .and_then(|rest| rest.split(':').next())
+        .expect("alice missing from passwd")
+        .to_string()
+}
+
+#[test]
+fn test_chfn_writes_other_only_when_set() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    // Upstream writes four sub-fields and adds the fifth, with its comma, only
+    // when "other" is not empty.
+    for (before, args, after) in [
+        ("", &["-f", "NewName"][..], "NewName,,,"),
+        ("A,B,C,D", &["-r", "R2"][..], "A,R2,C,D"),
+        ("A", &["-r", "R"][..], "A,R,,"),
+        ("A,B,C,D,", &["-r", "R"][..], "A,R,C,D"),
+        ("A,,,,", &["-r", "R"][..], "A,R,,"),
+        ("A", &["-f", ""][..], ",,,"),
+        ("A,B,C,D", &["-h", ""][..], "A,B,C,"),
+        ("A,B,C,D,E", &["-o", ""][..], "A,B,C,D"),
+        // A non-empty "other" is kept, commas and all.
+        ("A,B,C,D,E", &["-r", "R"][..], "A,R,C,D,E"),
+        ("A,B,C,D,E,F", &["-r", "R"][..], "A,R,C,D,E,F"),
+        ("", &["-o", "X"][..], ",,,,X"),
+    ] {
+        assert_eq!(
+            gecos_after(before, args),
+            after,
+            "chfn {args:?} on '{before}'"
+        );
+    }
+}
