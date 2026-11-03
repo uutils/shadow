@@ -71,6 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `chfn` writes the "other" GECOS sub-field, and the comma before it, only when it is
+  not empty, as upstream does. `chfn -f NewName` on an empty GECOS wrote
+  `NewName,,,,` instead of `NewName,,,`, so every change left a trailing empty field
+  that tools splitting on commas would count (#362)
+
 - `gpasswd -a`, `-A` and `-M` accept a user that only the name service knows, such
   as one from LDAP or SSSD, as upstream does. They refused anyone missing from
   /etc/passwd, exit 3 (#381)
