@@ -71,6 +71,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `chage -E`/`-d`, `usermod -e` and `useradd -e` take the date forms upstream reads
+  with its date parser, not only `YYYY-MM-DD`: `01/02/2030`, `2030/01/02`, `1/2/30`,
+  `2 Jan 2030`, `January 2, 2030`, `tomorrow`, with any time of day dropped. They are
+  read with `parse_datetime`, a new dependency of `shadow-core`. `YYYY-MM-DD`, a day
+  count and `-1` behave as before, and an impossible `YYYY-MM-DD` such as
+  `2023-02-29` is still refused where upstream rolls it over (#365)
+
 - `chfn` writes the "other" GECOS sub-field, and the comma before it, only when it is
   not empty, as upstream does. `chfn -f NewName` on an empty GECOS wrote
   `NewName,,,,` instead of `NewName,,,`, so every change left a trailing empty field
