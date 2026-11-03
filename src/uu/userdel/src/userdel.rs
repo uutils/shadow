@@ -22,7 +22,7 @@ use shadow_core::nscd;
 use shadow_core::passwd::{self, PasswdEntry};
 use shadow_core::shadow::ShadowEntry;
 use shadow_core::sysroot::SysRoot;
-use shadow_core::transaction::{self, Commit, LockedFile, Record};
+use shadow_core::transaction::{self, Commit, LockedFile, Record, RemoveWhenEmpty};
 
 mod options {
     pub const FORCE: &str = "force";
@@ -489,14 +489,16 @@ fn remove_user_private_group(
     // and not the other is a broken system, and validating both before writing
     // either keeps a bad value from leaving them out of step.
     let gshadow_path = root.gshadow_path();
-    let mut files: Vec<Box<dyn Commit>> = vec![Box::new(groups)];
+    // The last group going leaves nothing to write, and an absent group or
+    // gshadow file means no groups, as groupdel has it.
+    let mut files: Vec<Box<dyn Commit>> = vec![Box::new(RemoveWhenEmpty(groups))];
     if gshadow_path.exists() {
         let mut gshadow = LockedFile::<GshadowEntry>::open(&gshadow_path)
             .map_err(|e| format!("cannot open gshadow: {e}"))?;
         let before = gshadow.entries().len();
         gshadow.entries_mut().retain(|g| g.name != login);
         if gshadow.entries().len() != before {
-            files.push(Box::new(gshadow));
+            files.push(Box::new(RemoveWhenEmpty(gshadow)));
         }
     }
 
