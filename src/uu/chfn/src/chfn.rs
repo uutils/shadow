@@ -97,11 +97,20 @@ impl Gecos {
     }
 
     /// Serialize back to a GECOS string.
+    ///
+    /// Upstream writes the four finger fields and adds "other", with its
+    /// comma, only when it is not empty, so an entry with no "other" carries
+    /// no trailing empty sub-field that a comma-splitting reader would see.
     fn to_gecos_string(&self) -> String {
-        format!(
-            "{},{},{},{},{}",
-            self.full_name, self.room, self.work_phone, self.home_phone, self.other
-        )
+        let mut gecos = format!(
+            "{},{},{},{}",
+            self.full_name, self.room, self.work_phone, self.home_phone
+        );
+        if !self.other.is_empty() {
+            gecos.push(',');
+            gecos.push_str(&self.other);
+        }
+        gecos
     }
 }
 
@@ -556,7 +565,7 @@ mod tests {
     fn test_gecos_parse_empty() {
         let g = Gecos::parse("");
         assert_eq!(g.full_name, "");
-        assert_eq!(g.to_gecos_string(), ",,,,");
+        assert_eq!(g.to_gecos_string(), ",,,");
     }
 
     #[test]
@@ -570,7 +579,14 @@ mod tests {
     fn test_gecos_partial_update() {
         let mut g = Gecos::parse("John Doe,Room 101,555-1234,555-5678,");
         g.full_name = "Jane Doe".to_string();
-        assert_eq!(g.to_gecos_string(), "Jane Doe,Room 101,555-1234,555-5678,");
+        assert_eq!(g.to_gecos_string(), "Jane Doe,Room 101,555-1234,555-5678");
+    }
+
+    #[test]
+    fn test_gecos_keeps_a_non_empty_other() {
+        let mut g = Gecos::parse("A,B,C,D,E,F");
+        g.room = "R".to_string();
+        assert_eq!(g.to_gecos_string(), "A,R,C,D,E,F");
     }
 
     // -----------------------------------------------------------------------
