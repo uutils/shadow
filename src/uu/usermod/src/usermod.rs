@@ -679,7 +679,8 @@ fn check_value(
                 return Err(bad("homedir must be an absolute path".into()));
             }
         }
-        // usermod(8) documents YYYY-MM-DD; days since the epoch stays accepted.
+        // usermod(8) documents YYYY-MM-DD; days since the epoch and the other
+        // forms `date -d` reads are accepted too, as upstream.
         options::EXPIREDATE => {
             values.expire_date =
                 Some(shadow_core::date::parse_expire_date(value).map_err(|e| bad(e.to_string()))?);
