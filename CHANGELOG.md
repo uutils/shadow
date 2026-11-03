@@ -71,6 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `chfn` writes the "other" GECOS sub-field, and the comma before it, only when it is
+  not empty, as upstream does. `chfn -f NewName` on an empty GECOS wrote
+  `NewName,,,,` instead of `NewName,,,`, so every change left a trailing empty field
+  that tools splitting on commas would count (#362)
+
 - `useradd`, `usermod -l`, `groupadd`, `groupmod -n` and `newusers` take the names
   upstream takes: a name may start with a digit or a dot, end with a dot, and a user
   name may run to 255 characters. They refused `0abc`, `.abc`, `a.` and anything
