@@ -79,7 +79,7 @@ pub fn parse_expire_date(s: &str) -> Result<Option<i64>, ShadowError> {
         .bytes()
         .all(|b| b.is_ascii_digit() || b == b'-' || b == b'+')
     {
-        return parse_free_form_date(s);
+        return parse_free_form_date(s, jiff::Zoned::now());
     }
 
     // A bare integer is already days since the epoch.
@@ -118,12 +118,14 @@ pub fn parse_expire_date(s: &str) -> Result<Option<i64>, ShadowError> {
     Ok(Some(days_from_civil(year, month, day)))
 }
 
-/// Read a date in any form GNU `date -d` takes, in the local time zone, and
-/// return its day number. The time of day is dropped: the field holds a day.
-fn parse_free_form_date(s: &str) -> Result<Option<i64>, ShadowError> {
+/// Read a date in any form GNU `date -d` takes, in the time zone of `now`,
+/// and return its day number. The time of day is dropped: the field holds a
+/// day. Relative forms such as `tomorrow` count from `now`, which the caller
+/// reads once so that every relative form is resolved against one instant.
+fn parse_free_form_date(s: &str, now: jiff::Zoned) -> Result<Option<i64>, ShadowError> {
     let invalid = || ShadowError::Validation(format!("invalid date '{s}'").into());
 
-    let zoned = parse_datetime::parse_datetime(s)
+    let zoned = parse_datetime::parse_datetime_at_date(now, s)
         .map_err(|_| invalid())?
         .into_zoned()
         .ok_or_else(invalid)?;
@@ -280,8 +282,38 @@ mod tests {
 
     #[test]
     fn test_parse_expire_date_accepts_relative_dates() {
+        // Relative forms are resolved against one fixed instant, so the test
+        // does not depend on when it runs. 23:59:59 makes a parser that read
+        // the clock again, or kept the time of day, land on the wrong day.
+        let now = jiff::civil::date(2030, 1, 2)
+            .at(23, 59, 59, 0)
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .unwrap();
+        // 2030-01-02 is day 21916.
+        for (form, day) in [
+            ("today", 21916),
+            ("now", 21916),
+            ("tomorrow", 21917),
+            ("yesterday", 21915),
+            ("next week", 21923),
+            ("+3 days", 21919),
+        ] {
+            assert_eq!(
+                parse_free_form_date(form, now.clone()).unwrap(),
+                Some(day),
+                "'{form}' from 2030-01-02 23:59:59"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_expire_date_reads_the_clock_for_relative_dates() {
+        // The public entry point resolves "today" against the system clock.
+        // The local date is within a day of the UTC date at any instant. If
+        // a UTC midnight falls between the two readings, the local date read
+        // just before it is the old UTC day or the new one, so the bound
+        // holds whenever this runs.
         let today = parse_expire_date("today").unwrap().unwrap();
-        // The local date is within a day of the UTC one.
         let utc_today = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -292,9 +324,6 @@ mod tests {
             (today - utc_today).abs() <= 1,
             "today {today}, UTC {utc_today}"
         );
-        assert_eq!(parse_expire_date("tomorrow").unwrap(), Some(today + 1));
-        assert_eq!(parse_expire_date("yesterday").unwrap(), Some(today - 1));
-        assert_eq!(parse_expire_date("next week").unwrap(), Some(today + 7));
     }
 
     #[test]

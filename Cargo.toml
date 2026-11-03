@@ -72,6 +72,7 @@ thiserror = "2"
 
 # Dates
 parse_datetime = "0.17"
+jiff = { version = "0.2", default-features = false, features = ["std"] }
 
 # Unix/Linux
 rustix = { version = "1", features = ["event", "fs", "param", "process", "pty", "rand", "termios"] }

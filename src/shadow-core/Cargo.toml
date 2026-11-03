@@ -19,6 +19,7 @@ path = "src/lib.rs"
 
 [dependencies]
 clap = { workspace = true }
+jiff = { workspace = true }
 libc = { workspace = true }
 parse_datetime = { workspace = true }
 rustix = { workspace = true }
