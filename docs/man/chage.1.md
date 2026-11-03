@@ -33,12 +33,17 @@ nothing is written. This is for root only.
 
 **-d**, **--lastday** *LAST_DAY*
 :   Record *LAST_DAY* as the date of the last password change. Accepts
-    **YYYY-MM-DD** or a number of days since the epoch. **-1** clears the
-    field. A last day of **0** forces a password change at the next login.
+    **YYYY-MM-DD**, a number of days since the epoch, or another date form
+    **date**(1) **-d** reads, such as **01/02/2030**, **2030/01/02**,
+    **2 Jan 2030**, **January 2, 2030** or **tomorrow**, read in the local time
+    zone with any time of day dropped. A **YYYY-MM-DD** date that does not
+    exist, such as **2025-02-29**, is refused rather than rolled over, and so is
+    a date before 1970. **-1** clears the field. A last day of **0** forces a
+    password change at the next login.
 
 **-E**, **--expiredate** *EXPIRE_DATE*
-:   Expire the account on *EXPIRE_DATE*, in the same two forms. **-1** removes
-    the expiry. An expired account is refused a login even with a valid
+:   Expire the account on *EXPIRE_DATE*, in the same forms as **-d**. **-1**
+    removes the expiry. An expired account is refused a login even with a valid
     password.
 
 **-I**, **--inactive** *INACTIVE*
