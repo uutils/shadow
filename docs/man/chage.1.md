@@ -24,8 +24,10 @@ the superuser.
 
 Given only a *LOGIN*, **chage** asks for each field in turn on standard output,
 showing the current value, and reads the answers from standard input. An empty
-answer, or the end of input, keeps a value; **-1** empties a field. An answer that
-does not parse is exit status 1, and nothing is written. This is for root only.
+field is shown as *[-1]*. An empty line, or the end of input, keeps a value; **-1**
+empties a field. Blanks around an answer are dropped, but a line of nothing else is
+an answer, and does not parse. An answer that does not parse is exit status 1, and
+nothing is written. This is for root only.
 
 ## OPTIONS
 
