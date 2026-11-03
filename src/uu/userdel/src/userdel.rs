@@ -201,17 +201,16 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // Restore signals before potentially long-running home removal.
     drop(signals);
 
-    // 7. Optionally remove the home directory and mail spool.
+    // 7. Optionally remove the mail spool and home directory.
     if remove_home {
-        if !saved_home.is_empty() {
-            let home = root.resolve(saved_home);
-            safe_remove_home(&home, saved_uid, force, home_shared_by_other)?;
-        }
-
-        let mail = root.resolve(&format!("/var/mail/{login}"));
-        if mail.exists() {
-            let _ = std::fs::remove_file(&mail);
-        }
+        remove_spool_and_home(
+            &root,
+            login,
+            saved_home,
+            saved_uid,
+            force,
+            home_shared_by_other,
+        )?;
     }
 
     if selinux_user {
@@ -281,6 +280,43 @@ pub fn uu_app() -> Command {
 }
 
 // ---------------------------------------------------------------------------
+// Mail spool and home removal
+// ---------------------------------------------------------------------------
+
+/// Remove the mail spool and the home of the account being deleted, for `-r`.
+///
+/// Either one missing is said on stderr and is not a failure, spool first, as
+/// upstream does.
+fn remove_spool_and_home(
+    root: &SysRoot,
+    login: &str,
+    home: &str,
+    uid: u32,
+    force: bool,
+    shared_by_other: bool,
+) -> Result<(), UserdelError> {
+    let mail = root.resolve(&format!("/var/mail/{login}"));
+    if mail.exists() {
+        let _ = std::fs::remove_file(&mail);
+    } else {
+        uucore::show_error!("{login} mail spool ({}) not found", mail.display());
+    }
+
+    if home.is_empty() {
+        // Nothing to remove; upstream names the empty path all the same.
+        uucore::show_error!("{login} home directory () not found");
+        return Ok(());
+    }
+    let home = root.resolve(home);
+    if home.exists() {
+        safe_remove_home(&home, uid, force, shared_by_other)
+    } else {
+        uucore::show_error!("{login} home directory ({}) not found", home.display());
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Safe home directory removal
 // ---------------------------------------------------------------------------
 
@@ -290,7 +326,7 @@ const PROTECTED_DIRS: &[&str] = &[
     "/proc", "/root", "/run", "/sbin", "/srv", "/sys", "/tmp", "/usr", "/var",
 ];
 
-/// Safely remove a home directory with multiple safeguards:
+/// Safely remove a home directory that exists, with multiple safeguards:
 /// - Refuse a home shared with another account, or not owned by the user,
 ///   unless `force` (userdel(8) ties both to `-f`).
 /// - Refuse to remove protected system directories.
@@ -302,10 +338,6 @@ fn safe_remove_home(
     force: bool,
     shared_by_other: bool,
 ) -> Result<(), UserdelError> {
-    if !home.exists() {
-        return Ok(());
-    }
-
     if shared_by_other && !force {
         return Err(UserdelError::CantRemoveHome(format!(
             "not removing '{}': it is used by another user (use -f to force)",

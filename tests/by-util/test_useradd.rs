@@ -1049,3 +1049,40 @@ fn test_selinux_range_needs_selinux_user() {
     let dir = setup_new_options();
     assert_eq!(add(&dir, &["-M", "--selinux-range", "s0", "u4"]), 2);
 }
+
+/// The names Ubuntu 26.04's `useradd` was seen to take and refuse. A leading
+/// digit is fine; what is refused is a name that reads as a number (a UID),
+/// a leading `-` (an option), `.` and `..` (paths), and anything outside the
+/// portable set. A user name may run to 255 characters.
+#[test]
+fn test_user_names_follow_upstream() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    let prefix = dir.path().to_str().expect("non-UTF-8 temp path");
+    let long = "a".repeat(255);
+    for name in [
+        "0abc", "1e5", "1-1", ".abc", "a.", "...", "1$", "123$", "0xg", "0b1", "1.5", &long,
+    ] {
+        crate::common::run("useradd", &["-P", prefix, "-M", "--", name]).assert_code(0);
+        assert!(
+            std::fs::read_to_string(dir.path().join("etc/passwd"))
+                .expect("read passwd")
+                .contains(&format!("\n{name}:")),
+            "useradd should have created {name}"
+        );
+    }
+
+    let too_long = "a".repeat(256);
+    for name in [
+        "123", "0", "00", "0x", "0x1a", "0o7", "-x", ".", "..", "$", "a$b", "a@b", &too_long,
+    ] {
+        crate::common::run("useradd", &["-P", prefix, "-M", "--", name])
+            .assert_code(19)
+            .assert_stderr_contains(&format!(
+                "invalid user name '{name}': use --badname to ignore"
+            ));
+    }
+}

@@ -107,6 +107,14 @@ default values used for creating new accounts.
     not on btrfs the exit status is 12, with the account written. Without **-m** it
     does nothing.
 
+## USER NAMES
+
+A user name is up to 255 characters of ASCII letters, digits, `_`, `.` and `-`, with
+one `$` allowed at the end for a Samba machine account. It may start with a digit or
+a dot, but not with `-`, and it may not be `.`, `..`, or something that reads as a
+number, decimal (`123`), hexadecimal (`0x1a`) or octal (`0o7`), which would be taken
+for a user ID. Any other name is exit status 19, unless **--badname** is given.
+
 ## EXIT STATUS
 
 **0**
