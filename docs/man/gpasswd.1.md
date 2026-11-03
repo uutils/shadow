@@ -38,6 +38,10 @@ tool for permitting co-operation between different users.
 
 Except for the **-A** and **-M** options, the options cannot be combined.
 
+A *USER* given to **-a**, **-A** or **-M** must exist, in `/etc/passwd` or in the
+name service, such as LDAP or SSSD. Under **-P** or **-Q** only the `passwd` file in
+that directory counts.
+
 **-a**, **--add** *USER*
 :   Add *USER* to the named group.
 
