@@ -19,6 +19,10 @@ of /etc/passwd (see **passwd**(5)):
 Full Name,Room Number,Work Phone,Home Phone,Other
 ```
 
+The four finger fields are always written, empty or not. *Other* and the
+comma before it are written only when *Other* is not empty, so an account
+with no other information gets `Full Name,Room Number,Work Phone,Home Phone`.
+
 With no *LOGIN*, **chfn** operates on the account of the user running it.
 
 If no field option is given, **chfn** prompts for each field it is allowed
