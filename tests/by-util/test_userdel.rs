@@ -567,3 +567,91 @@ fn test_last_private_group_in_gshadow_goes_with_the_file() {
     );
     assert!(!etc.join("gshadow").exists());
 }
+
+/// The messages of a run, without the program name each line starts with.
+fn messages(out: &crate::common::Output) -> Vec<String> {
+    out.stderr
+        .lines()
+        .map(|l| l.split_once(": ").map_or(l, |(_, rest)| rest).to_string())
+        .collect()
+}
+
+/// `userdel -r` says so when the mail spool or the home is not there, mail
+/// spool first, on standard error and with exit 0, as Ubuntu 26.04's does.
+#[test]
+fn test_remove_reports_a_missing_mail_spool_and_home() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    // Neither is there.
+    let dir = setup_root_dir();
+    let root = dir.path();
+    let prefix = root.to_str().expect("non-UTF-8 temp path");
+    let out = crate::common::run("userdel", &["-P", prefix, "-r", "testuser"]);
+    out.assert_code(0);
+    assert!(out.stdout.is_empty(), "stdout: {:?}", out.stdout);
+    assert_eq!(
+        messages(&out),
+        [
+            format!(
+                "testuser mail spool ({}) not found",
+                root.join("var/mail/testuser").display()
+            ),
+            format!(
+                "testuser home directory ({}) not found",
+                root.join("home/testuser").display()
+            ),
+        ]
+    );
+    assert!(!read_passwd(&dir).contains("testuser:"));
+
+    // Only the home is missing: the spool goes without a word.
+    let dir = setup_root_dir();
+    let root = dir.path();
+    let prefix = root.to_str().expect("non-UTF-8 temp path");
+    let spool = root.join("var/mail/testuser");
+    std::fs::create_dir_all(root.join("var/mail")).expect("mail dir");
+    std::fs::write(&spool, "").expect("spool");
+    std::os::unix::fs::chown(&spool, Some(1000), Some(1000)).expect("chown spool");
+    let out = crate::common::run("userdel", &["-P", prefix, "-r", "testuser"]);
+    out.assert_code(0);
+    assert_eq!(
+        messages(&out),
+        [format!(
+            "testuser home directory ({}) not found",
+            root.join("home/testuser").display()
+        )]
+    );
+    assert!(!spool.exists(), "the mail spool should have been removed");
+
+    // Only the spool is missing: the home goes without a word.
+    let dir = setup_root_dir();
+    let root = dir.path();
+    let prefix = root.to_str().expect("non-UTF-8 temp path");
+    let home = root.join("home/testuser");
+    std::fs::create_dir_all(&home).expect("home");
+    std::os::unix::fs::chown(&home, Some(1000), Some(1000)).expect("chown home");
+    let out = crate::common::run("userdel", &["-P", prefix, "-r", "testuser"]);
+    out.assert_code(0);
+    assert_eq!(
+        messages(&out),
+        [format!(
+            "testuser mail spool ({}) not found",
+            root.join("var/mail/testuser").display()
+        )]
+    );
+    assert!(!home.exists(), "the home should have been removed");
+
+    // An empty home field is reported as an empty path, as upstream does.
+    let dir = setup_root_dir();
+    let passwd = read_passwd(&dir).replace("/home/testuser", "");
+    std::fs::write(dir.path().join("etc/passwd"), passwd).expect("rewrite passwd");
+    let prefix = dir.path().to_str().expect("non-UTF-8 temp path");
+    let out = crate::common::run("userdel", &["-P", prefix, "-r", "testuser"]);
+    out.assert_code(0);
+    assert_eq!(
+        messages(&out)[1..],
+        ["testuser home directory () not found".to_string()]
+    );
+}
