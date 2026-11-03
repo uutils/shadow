@@ -114,7 +114,8 @@ impl UError for ChageError {
 // Date parsing
 // ---------------------------------------------------------------------------
 
-/// Parse a date argument: `YYYY-MM-DD`, days since the epoch, or `-1`.
+/// Parse a date argument: `YYYY-MM-DD`, days since the epoch, another form
+/// `date -d` reads (`01/02/2030`, `tomorrow`), or `-1`.
 ///
 /// `-1` reaches the caller as `-1` rather than `None`, because chage(1) uses
 /// it to clear the field and the caller has to tell "clear it" from "leave it

@@ -70,6 +70,9 @@ uucore = "0.12"
 # Error handling
 thiserror = "2"
 
+# Dates
+parse_datetime = "0.17"
+
 # Unix/Linux
 rustix = { version = "1", features = ["event", "fs", "param", "process", "pty", "rand", "termios"] }
 libc = "0.2"

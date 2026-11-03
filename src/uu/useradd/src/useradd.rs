@@ -1591,8 +1591,15 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_expire_date_invalid_format() {
-        assert!(parse_expire_date("2025/01/01").is_err());
+    fn test_parse_expire_date_other_forms() {
+        // Upstream's date parser reads these too.
+        assert_eq!(parse_expire_date("2025/01/01").expect("Y/M/D"), Some(20089));
+        assert_eq!(parse_expire_date("01/01/2025").expect("M/D/Y"), Some(20089));
+        assert_eq!(
+            parse_expire_date("1 Jan 2025").expect("D Mon Y"),
+            Some(20089)
+        );
+        assert!(parse_expire_date("not a date").is_err());
     }
 
     #[test]
