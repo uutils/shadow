@@ -171,8 +171,10 @@ fn validate(line: &Line, relaxed: bool) -> Result<(), NewusersError> {
                 line.number, line.name
             )));
         }
-    } else {
-        shadow_core::validate::validate_username(&line.name).map_err(bad)?;
+    } else if !shadow_core::validate::is_valid_user_name(&line.name) {
+        // Upstream names the fault, then the line it gave up on.
+        uucore::show_error!("invalid user name '{}': use --badname to ignore", line.name);
+        return Err(line_error(line, "can't create user"));
     }
 
     shadow_core::validate::validate_field("GECOS", &line.gecos).map_err(bad)?;
@@ -237,7 +239,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         return Ok(());
     }
 
-    apply(&root, &defs, &lines, system, method)
+    apply(&root, &defs, &lines, system, relaxed, method)
 }
 
 /// Build the clap `Command` for `newusers`.
@@ -303,6 +305,7 @@ fn apply(
     defs: &LoginDefs,
     lines: &[Line],
     system: bool,
+    relaxed: bool,
     method: shadow_core::crypt::CryptMethod,
 ) -> UResult<()> {
     // Hash before taking any lock: crypt(3) is deliberately slow, and a batch
@@ -329,7 +332,7 @@ fn apply(
         NewusersError::UnexpectedFailure(format!("cannot determine the current date: {e}"))
     })?;
     let (uid_min, uid_max) = uid_alloc::uid_range(defs, system);
-    let (gid_min, gid_max) = uid_alloc::gid_range(defs, system);
+    let gid_range = uid_alloc::gid_range(defs, system);
 
     let mut homes = Vec::new();
 
@@ -346,7 +349,7 @@ fn apply(
                 .ok_or_else(|| line_error(line, &format!("invalid user ID '{given}'")))?,
         };
 
-        let gid = resolve_gid(&mut group, line, uid, gid_min, gid_max, system, scope)?;
+        let gid = resolve_gid(&mut group, line, uid, gid_range, system, scope, relaxed)?;
 
         match existing {
             Some(i) => {
@@ -420,10 +423,10 @@ fn resolve_gid(
     group: &mut LockedFile<GroupEntry>,
     line: &Line,
     uid: u32,
-    gid_min: u32,
-    gid_max: u32,
+    (gid_min, gid_max): (u32, u32),
     system: bool,
     scope: Scope,
+    relaxed: bool,
 ) -> Result<u32, NewusersError> {
     // A number names a group directly. If no group has it, one is created
     // carrying the user's name -- otherwise the account would be left pointing
@@ -431,7 +434,7 @@ fn resolve_gid(
     // what grpck then reports.
     if let Some(gid) = parse_id(&line.gid) {
         if !group.entries().iter().any(|g| g.gid == gid) {
-            push_group(group, &line.name, gid);
+            push_group(group, line, gid, relaxed)?;
         }
         return Ok(gid);
     }
@@ -465,19 +468,33 @@ fn resolve_gid(
     } else {
         uid
     };
-    push_group(group, &line.name, gid);
+    push_group(group, line, gid, relaxed)?;
     Ok(gid)
 }
 
-/// Add a group with no members: the user's primary group is recorded in
-/// `/etc/passwd`, not in the member list.
-fn push_group(group: &mut LockedFile<GroupEntry>, name: &str, gid: u32) {
+/// Add a group named after the line's user, with no members: the user's
+/// primary group is recorded in `/etc/passwd`, not in the member list.
+///
+/// The name has passed the user rule, but a group name stops at 32
+/// characters, so a longer one is refused here as upstream refuses it, unless
+/// `relaxed` (`--badname`).
+fn push_group(
+    group: &mut LockedFile<GroupEntry>,
+    line: &Line,
+    gid: u32,
+    relaxed: bool,
+) -> Result<(), NewusersError> {
+    if !relaxed && !shadow_core::validate::is_valid_group_name(&line.name) {
+        uucore::show_error!("invalid group name '{}'", line.name);
+        return Err(line_error(line, "can't create group"));
+    }
     group.entries_mut().push(GroupEntry {
-        name: name.to_string(),
+        name: line.name.clone(),
         passwd: "x".to_string(),
         gid,
         members: Vec::new(),
     });
+    Ok(())
 }
 
 /// Write the account's hash and aging fields.
@@ -653,10 +670,10 @@ mod tests {
     /// name from corrupting the file or being read as an option.
     #[test]
     fn test_badname_relaxes_only_the_portability_rules() {
-        // Both are refused by the portability rules and both turn up on real
-        // systems: a name starting with a digit, and the domain-qualified form
-        // an Active Directory join produces. Neither can corrupt a file.
-        for odd in ["3dprint:pw:1000:1000:::", "alice@corp:pw:1000:1000:::"] {
+        // Both are refused by the portability rules and neither can corrupt a
+        // file: a name that reads as a UID, and the domain-qualified form an
+        // Active Directory join produces.
+        for odd in ["1234:pw:1000:1000:::", "alice@corp:pw:1000:1000:::"] {
             assert!(
                 validate(&line(odd), false).is_err(),
                 "the strict rules should refuse {odd:?}"

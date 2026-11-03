@@ -715,7 +715,7 @@ fn check_value(
             if badname {
                 validate::validate_field("login name", value)
                     .map_err(|e| bad(format!("invalid login name: {e}")))?;
-            } else if validate::validate_username(value).is_err() {
+            } else if !validate::is_valid_user_name(value) {
                 return Err(bad(format!(
                     "invalid user name '{value}': use --badname to ignore"
                 )));

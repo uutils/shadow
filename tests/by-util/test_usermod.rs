@@ -2245,3 +2245,36 @@ fn test_selinux_user_needs_a_selinux_kernel() {
 fn test_selinux_range_needs_selinux_user() {
     assert_eq!(run(&["usermod", "--selinux-range", "s0", "root"]), 2);
 }
+
+/// `usermod -l` takes the names upstream's `useradd` takes: a leading digit
+/// is fine, a name that reads as a number is not.
+#[test]
+fn test_rename_follows_upstream_name_rules() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "root:x:0:0:root:/root:/bin/bash\ntestuser:x:1000:1000::/home/testuser:/bin/sh\n",
+        "root:!:19000:0:99999:7:::\ntestuser:!:19000:0:99999:7:::\n",
+        "root:x:0:\n",
+    );
+    let prefix = dir.path().to_str().expect("non-UTF-8 temp path");
+    let mut current = String::from("testuser");
+    for name in ["0abc", "1e5", ".abc", "a.", "123$", &"b".repeat(255)] {
+        crate::common::run("usermod", &["-P", prefix, "-l", name, &current]).assert_code(0);
+        assert!(
+            read_passwd(&dir).contains(&format!("\n{name}:x:1000:")),
+            "usermod -l should have renamed {current} to {name}"
+        );
+        current = name.to_string();
+    }
+
+    for name in ["123", "0x1a", "0o7", "-x", ".", "a@b", &"b".repeat(256)] {
+        crate::common::run("usermod", &["-P", prefix, "-l", name, &current])
+            .assert_code(3)
+            .assert_stderr_contains(&format!(
+                "invalid user name '{name}': use --badname to ignore"
+            ));
+    }
+}

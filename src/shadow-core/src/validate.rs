@@ -10,18 +10,22 @@
 
 use crate::error::ShadowError;
 
-/// Maximum username length on Linux.
-const MAX_USERNAME_LEN: usize = 32;
+/// Longest user name: upstream's `useradd`, `usermod -l` and `newusers` take
+/// 255 characters, and `pwck` passes as many.
+pub const MAX_USER_NAME_LEN: usize = 255;
+
+/// Longest group name: upstream's `groupadd`, `groupmod -n`, `newusers` and
+/// `grpck` stop at 32 characters.
+pub const MAX_GROUP_NAME_LEN: usize = 32;
 
 /// Whether a name already in an account file passes the checks of `pwck` and
 /// `grpck`, which take `max_len`: a user name may run to 255, a group name to 32.
 ///
-/// This is wider than [`validate_username`], which judges a new account: `1abc`
-/// or 40 letters may be on a system already, and calling them bad would fail the
-/// whole check there. The rule is what Ubuntu 26.04's `pwck` and `grpck` were
-/// seen to do: ASCII letters, digits, `_`, `.` and `-`, with one `$` at the end,
-/// and not `.`, `..`, or something that reads as a number in base 10, 8 or 16
-/// (`123`, `0o7`, `0xABC`).
+/// The rule is what Ubuntu 26.04's `pwck` and `grpck` were seen to do: ASCII
+/// letters, digits, `_`, `.` and `-`, with one `$` at the end, and not `.`,
+/// `..`, or something that reads as a number in base 10, 8 or 16 (`123`,
+/// `0o7`, `0xABC`), which would be taken for an ID. A leading digit is fine:
+/// `1abc` is a name, `123` is a UID.
 #[must_use]
 pub fn is_valid_account_name(name: &str, max_len: usize) -> bool {
     let body = name.strip_suffix('$').unwrap_or(name);
@@ -44,67 +48,31 @@ pub fn is_valid_account_name(name: &str, max_len: usize) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
-/// Validate a username or group name.
+/// Whether a new or renamed account may take `name`: the rule of
+/// [`is_valid_account_name`], and not starting with `-`, which every tool
+/// downstream would read as an option. Ubuntu 26.04's `useradd`, `usermod -l`,
+/// `groupadd`, `groupmod -n` and `newusers` were seen to refuse a leading `-`
+/// that `pwck` and `grpck` let pass in a file.
+fn is_valid_new_name(name: &str, max_len: usize) -> bool {
+    !name.starts_with('-') && is_valid_account_name(name, max_len)
+}
+
+/// Whether `useradd`, `usermod -l` and `newusers` may give a user this name,
+/// without `--badname`.
 ///
-/// Rules, from the CAVEATS of useradd(8) and groupadd(8):
-/// - must not be empty, and at most 32 characters
-/// - first character is a letter or underscore
-/// - the rest are letters, digits, underscores, hyphens or periods
-/// - a single trailing `$` is allowed, which is how Samba names machine
-///   accounts (`MACHINE$`)
-/// - must not end with a period, and must not consist only of periods
-///
-/// Upper case is accepted: `useradd Alice` succeeds on upstream shadow
-/// (verified), and rejecting it made us refuse accounts that already exist on
-/// real systems. Lower case remains the recommendation, not a rule.
-///
-/// # Errors
-///
-/// Returns `ShadowError::Validation` if the name violates any rule.
-pub fn validate_username(name: &str) -> Result<(), ShadowError> {
-    if name.len() > MAX_USERNAME_LEN {
-        return Err(ShadowError::Validation(
-            format!("username '{name}' exceeds maximum length of {MAX_USERNAME_LEN} characters")
-                .into(),
-        ));
-    }
+/// Upper case, a leading digit or dot, a trailing dot and a Samba machine
+/// account's trailing `$` are all accepted, as upstream does; lower case is
+/// the recommendation, not a rule.
+#[must_use]
+pub fn is_valid_user_name(name: &str) -> bool {
+    is_valid_new_name(name, MAX_USER_NAME_LEN)
+}
 
-    // A single trailing '$' is part of the name but not of the character set.
-    let body = name.strip_suffix('$').unwrap_or(name);
-
-    let mut chars = body.chars();
-    // Reject empty names by requiring a first character here.
-    let Some(first) = chars.next() else {
-        return Err(ShadowError::Validation("username must not be empty".into()));
-    };
-
-    if !first.is_ascii_alphabetic() && first != '_' {
-        return Err(ShadowError::Validation(
-            format!("username '{name}' must start with a letter or underscore").into(),
-        ));
-    }
-
-    for ch in chars {
-        if !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-' && ch != '.' {
-            return Err(ShadowError::Validation(
-                format!("username '{name}' contains invalid character '{ch}'").into(),
-            ));
-        }
-    }
-
-    if body.ends_with('.') {
-        return Err(ShadowError::Validation(
-            format!("username '{name}' must not end with a period").into(),
-        ));
-    }
-
-    if body.chars().all(|c| c == '.') {
-        return Err(ShadowError::Validation(
-            format!("username '{name}' must not consist only of periods").into(),
-        ));
-    }
-
-    Ok(())
+/// Whether `groupadd`, `groupmod -n` and `newusers` may give a group this
+/// name: the user name rule, at most 32 characters.
+#[must_use]
+pub fn is_valid_group_name(name: &str) -> bool {
+    is_valid_new_name(name, MAX_GROUP_NAME_LEN)
 }
 
 /// Reject a value that would corrupt a colon-separated account file.
@@ -156,95 +124,37 @@ fn describe_char(c: char) -> String {
 mod tests {
     use super::*;
 
+    /// What Ubuntu 26.04's `useradd`, `usermod -l` and `newusers` were seen
+    /// to accept and refuse.
     #[test]
-    fn test_valid_usernames() {
-        assert!(validate_username("root").is_ok());
-        assert!(validate_username("_apt").is_ok());
-        assert!(validate_username("user123").is_ok());
-        assert!(validate_username("test-user").is_ok());
-        assert!(validate_username("test.user").is_ok());
-        assert!(validate_username("a").is_ok());
+    fn test_user_names_follow_the_probe() {
+        for name in [
+            "root", "_apt", "user123", "Alice", "MACHINE$", "0abc", "1e5", "1-1", "_abc", ".abc",
+            "a.", "...", "a$", "1$", "123$", ".$", "0xg", "0X1", "0b1", "1.5", "0x1$", "a-",
+            "a..b", "0abc.",
+        ] {
+            assert!(is_valid_user_name(name), "{name} should be accepted");
+        }
+        for name in [
+            "", "123", "0", "00", "0x", "0x1a", "0o7", "-abc", "-x", "-", ".", "..", "$", "a$b",
+            "a$$", "ma$chine", "a@b", "a+b", "a b", "a:b", "é", "café", "\0user",
+        ] {
+            assert!(!is_valid_user_name(name), "{name:?} should be refused");
+        }
+        assert!(is_valid_user_name(&"a".repeat(255)));
+        assert!(!is_valid_user_name(&"a".repeat(256)));
     }
 
+    /// Groups follow the user rule but stop at 32 characters, `$` included.
     #[test]
-    fn test_empty_username() {
-        assert!(validate_username("").is_err());
-    }
-
-    #[test]
-    fn test_too_long() {
-        let long_name = "a".repeat(33);
-        assert!(validate_username(&long_name).is_err());
-        let max_name = "a".repeat(32);
-        assert!(validate_username(&max_name).is_ok());
-    }
-
-    #[test]
-    fn test_invalid_first_char() {
-        assert!(validate_username("1user").is_err());
-        assert!(validate_username("-user").is_err());
-        assert!(validate_username(".user").is_err());
-    }
-
-    #[test]
-    fn test_invalid_chars() {
-        assert!(validate_username("user@name").is_err());
-        assert!(validate_username("user name").is_err());
-        assert!(validate_username("user:name").is_err());
-    }
-
-    #[test]
-    fn test_trailing_period() {
-        assert!(validate_username("user.").is_err());
-    }
-
-    // -------------------------------------------------------------------
-    // Issue #16: additional edge case tests
-    // -------------------------------------------------------------------
-
-    #[test]
-    fn test_unicode_username_rejected() {
-        assert!(validate_username("café").is_err());
-    }
-
-    #[test]
-    fn test_null_byte_rejected() {
-        assert!(validate_username("\0user").is_err());
-    }
-
-    #[test]
-    fn test_max_length_32_ok() {
-        let name = "a".repeat(32);
-        assert!(validate_username(&name).is_ok());
-    }
-
-    #[test]
-    fn test_length_33_rejected() {
-        let name = "a".repeat(33);
-        assert!(validate_username(&name).is_err());
-    }
-
-    #[test]
-    fn test_only_dots_rejected() {
-        assert!(validate_username("..").is_err());
-        assert!(validate_username("...").is_err());
-    }
-
-    #[test]
-    fn test_hyphen_start_rejected() {
-        assert!(validate_username("-user").is_err());
-    }
-
-    // upstream shadow accepts these (verified against useradd(8)); refusing
-    // them made us reject accounts that exist on real systems.
-    #[test]
-    fn test_uppercase_and_machine_accounts_accepted() {
-        assert!(validate_username("Alice").is_ok());
-        assert!(validate_username("DevOps").is_ok());
-        assert!(validate_username("MACHINE$").is_ok());
-        // The '$' is only meaningful as the last character.
-        assert!(validate_username("ma$chine").is_err());
-        assert!(validate_username("$").is_err());
+    fn test_group_names_follow_the_probe() {
+        assert!(is_valid_group_name("0abc"));
+        assert!(!is_valid_group_name("123"));
+        assert!(!is_valid_group_name("-x"));
+        assert!(is_valid_group_name(&"a".repeat(32)));
+        assert!(!is_valid_group_name(&"a".repeat(33)));
+        assert!(is_valid_group_name(&format!("{}$", "a".repeat(31))));
+        assert!(!is_valid_group_name(&format!("{}$", "a".repeat(32))));
     }
 
     // -------------------------------------------------------------------
