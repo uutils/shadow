@@ -71,6 +71,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `useradd`, `usermod -l`, `groupadd`, `groupmod -n` and `newusers` take the names
+  upstream takes: a name may start with a digit or a dot, end with a dot, and a user
+  name may run to 255 characters. They refused `0abc`, `.abc`, `a.` and anything
+  over 32. A name that reads as a number (`123`, `0x1a`, `0o7`), a leading `-`, `.`
+  and `..` stay refused, now with upstream's message, and `groupmod -n -x` is exit 3,
+  not a usage error. `newusers` refuses to create a group over 32 characters, as
+  upstream does (#391)
+
 - `chfn` writes the "other" GECOS sub-field, and the comma before it, only when it is
   not empty, as upstream does. `chfn -f NewName` on an empty GECOS wrote
   `NewName,,,,` instead of `NewName,,,`, so every change left a trailing empty field

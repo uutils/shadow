@@ -145,9 +145,6 @@ fn report(message: fmt::Arguments<'_>) {
     let _ = writeln!(std::io::stdout(), "{message}");
 }
 
-/// The longest group name `grpck` takes, as seen on Ubuntu 26.04's.
-const MAX_GROUP_NAME_LEN: usize = 32;
-
 /// Core logic, separated from argument parsing.
 fn run_checks(opts: &GrpckOptions) -> UResult<()> {
     let group_lines = read_raw_lines(&opts.group_path).map_err(|e| {
@@ -287,7 +284,10 @@ fn check_names_are_valid(entries: &[GroupEntry]) -> u32 {
     let mut errors: u32 = 0;
 
     for entry in entries {
-        if !shadow_core::validate::is_valid_account_name(&entry.name, MAX_GROUP_NAME_LEN) {
+        if !shadow_core::validate::is_valid_account_name(
+            &entry.name,
+            shadow_core::validate::MAX_GROUP_NAME_LEN,
+        ) {
             report(format_args!("invalid group name '{}'", entry.name));
             errors += 1;
         }

@@ -595,9 +595,12 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
         }
         validate::validate_field("login name", &opts.login)
             .map_err(|e| UseraddError::CannotUpdatePasswd(e.to_string()))?;
-    } else {
-        validate::validate_username(&opts.login)
-            .map_err(|e| UseraddError::BadName(format!("{e}")))?;
+    } else if !validate::is_valid_user_name(&opts.login) {
+        return Err(UseraddError::BadName(format!(
+            "invalid user name '{}': use --badname to ignore",
+            opts.login
+        ))
+        .into());
     }
 
     // Step 2: Block signals for the lock→write critical section only.
