@@ -71,6 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `userdel -r` says `LOGIN mail spool (PATH) not found` and `LOGIN home directory
+  (PATH) not found` on standard error when either is missing, mail spool first, as
+  upstream does, with exit 0. It said nothing (#392)
+
 - `chfn` writes the "other" GECOS sub-field, and the comma before it, only when it is
   not empty, as upstream does. `chfn -f NewName` on an empty GECOS wrote
   `NewName,,,,` instead of `NewName,,,`, so every change left a trailing empty field
