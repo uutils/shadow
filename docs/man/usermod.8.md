@@ -137,6 +137,15 @@ a name, and an administrator who renames the account re-grants it if that is
 what they meant. Because **-V** is this option, **--version** has no short
 form.
 
+## USER NAMES
+
+The new name given with **-l** follows the rule of **useradd**(8). A user name is up
+to 255 characters of ASCII letters, digits, `_`, `.` and `-`, with one `$` allowed
+at the end for a Samba machine account. It may start with a digit or a dot, but not
+with `-`, and it may not be `.`, `..`, or something that reads as a number, decimal
+(`123`), hexadecimal (`0x1a`) or octal (`0o7`), which would be taken for a user ID.
+Any other name is exit status 3, unless **-b** is given.
+
 ## EXIT STATUS
 
 **0**
