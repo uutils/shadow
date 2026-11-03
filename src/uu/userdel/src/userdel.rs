@@ -15,6 +15,7 @@ use clap::{Arg, ArgAction, Command};
 use uucore::error::{UError, UResult};
 
 use shadow_core::audit;
+use shadow_core::error::ShadowError;
 use shadow_core::group::GroupEntry;
 use shadow_core::gshadow::GshadowEntry;
 use shadow_core::nscd;
@@ -121,8 +122,19 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // Read the account BEFORE removing it: home, uid and primary gid are
     // needed for home removal, the private-group cleanup and the audit event.
     let passwd_path = root.passwd_path();
-    let pre_entries = passwd::read_passwd_file(&passwd_path)
-        .map_err(|e| UserdelError::CantUpdatePasswd(format!("cannot read passwd: {e}")))?;
+    // A passwd file that is not there has no users in it: upstream says the user
+    // does not exist, exit 6, for a prefix with no /etc/passwd. One that is there
+    // and cannot be read is still exit 1.
+    let pre_entries = match passwd::read_passwd_file(&passwd_path) {
+        Err(ShadowError::Io(e) | ShadowError::IoPath(e, _))
+            if e.kind() == std::io::ErrorKind::NotFound =>
+        {
+            Vec::new()
+        }
+        read => {
+            read.map_err(|e| UserdelError::CantUpdatePasswd(format!("cannot read passwd: {e}")))?
+        }
+    };
 
     // userdel(8): exit 6 when the user does not exist, with -f too.
     let Some(target) = pre_entries.iter().find(|e| e.name == *login) else {
