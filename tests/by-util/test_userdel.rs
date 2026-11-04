@@ -584,7 +584,6 @@ fn test_remove_reports_a_missing_mail_spool_and_home() {
         return;
     }
 
-    // Neither is there.
     let dir = setup_root_dir();
     let root = dir.path();
     let prefix = root.to_str().expect("non-UTF-8 temp path");
@@ -605,8 +604,15 @@ fn test_remove_reports_a_missing_mail_spool_and_home() {
         ]
     );
     assert!(!read_passwd(&dir).contains("testuser:"));
+}
 
-    // Only the home is missing: the spool goes without a word.
+/// Only the home is missing: the spool goes without a word.
+#[test]
+fn test_remove_reports_a_missing_home() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
     let dir = setup_root_dir();
     let root = dir.path();
     let prefix = root.to_str().expect("non-UTF-8 temp path");
@@ -624,8 +630,15 @@ fn test_remove_reports_a_missing_mail_spool_and_home() {
         )]
     );
     assert!(!spool.exists(), "the mail spool should have been removed");
+}
 
-    // Only the spool is missing: the home goes without a word.
+/// Only the spool is missing: the home goes without a word.
+#[test]
+fn test_remove_reports_a_missing_mail_spool() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
     let dir = setup_root_dir();
     let root = dir.path();
     let prefix = root.to_str().expect("non-UTF-8 temp path");
@@ -642,8 +655,15 @@ fn test_remove_reports_a_missing_mail_spool_and_home() {
         )]
     );
     assert!(!home.exists(), "the home should have been removed");
+}
 
-    // An empty home field is reported as an empty path, as upstream does.
+/// An empty home field is reported as an empty path, as upstream does.
+#[test]
+fn test_remove_reports_an_empty_home_field() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
     let dir = setup_root_dir();
     let passwd = read_passwd(&dir).replace("/home/testuser", "");
     std::fs::write(dir.path().join("etc/passwd"), passwd).expect("rewrite passwd");
