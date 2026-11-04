@@ -472,3 +472,34 @@ fn test_names_follow_upstream() {
     assert!(!has_entry(&dir, "passwd", &long), "{long} should not exist");
     assert!(!has_entry(&dir, "group", &long), "no group {long} either");
 }
+
+/// Where `useradd -U` creates a 33-character group, `newusers` holds the
+/// group it creates for a line to the group rule, as upstream does: the line
+/// is refused, exit 1, and nothing is written.
+#[test]
+fn test_refuses_a_33_character_group() {
+    if skip_unless_root() {
+        return;
+    }
+
+    let dir = prefix();
+    let before: Vec<String> = ["passwd", "shadow", "group"]
+        .iter()
+        .map(|f| read(&dir, f))
+        .collect();
+    let name = "a".repeat(33);
+    let out = newusers(&dir, &[], &format!("{name}:pw:::::/bin/sh\n"));
+    out.assert_code(1);
+    assert_eq!(
+        messages(&out),
+        [
+            format!("invalid group name '{name}'"),
+            "line 1: can't create group".to_string(),
+        ]
+    );
+    let after: Vec<String> = ["passwd", "shadow", "group"]
+        .iter()
+        .map(|f| read(&dir, f))
+        .collect();
+    assert_eq!(before, after, "nothing should be written");
+}
