@@ -1086,3 +1086,22 @@ fn test_user_names_follow_upstream() {
             ));
     }
 }
+
+/// A user name may be longer than a group name, but `useradd -U` does not
+/// hold the group it creates to the 32-character group rule: Ubuntu 26.04's
+/// `useradd -U` with a 33-character name creates the user and a group of the
+/// same 33-character name.
+#[test]
+fn test_user_group_takes_a_33_character_name() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    let name = "a".repeat(33);
+    assert_eq!(run_with_root(&dir, &["-M", "-U", &name]), 0);
+    let passwd = read_passwd(&dir);
+    assert!(passwd.contains(&format!("\n{name}:x:")), "got: {passwd}");
+    let group = read_group(&dir);
+    assert!(group.contains(&format!("\n{name}:x:")), "got: {group}");
+}
