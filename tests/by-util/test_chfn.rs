@@ -113,20 +113,16 @@ fn test_chfn_success_prints_nothing() {
 /// Run `chfn -R` on an account whose GECOS is `gecos` and return the GECOS
 /// field written back.
 fn gecos_after(gecos: &str, args: &[&str]) -> String {
-    let dir = tempfile::tempdir().expect("failed to create temp dir");
-    let etc = dir.path().join("etc");
-    std::fs::create_dir_all(&etc).expect("failed to create etc dir");
-    std::fs::write(
-        etc.join("passwd"),
-        format!("root:x:0:0:root:/root:/bin/sh\nalice:x:1000:1000:{gecos}:/home/alice:/bin/sh\n"),
-    )
-    .expect("failed to write passwd");
+    let dir = setup_prefix(&format!(
+        "root:x:0:0:root:/root:/bin/sh\nalice:x:1000:1000:{gecos}:/home/alice:/bin/sh\n"
+    ));
 
     let mut cmd = crate::common::tool("chfn");
     cmd.arg("-R").arg(dir.path()).args(args).arg("alice");
     crate::common::run_cmd(&mut cmd).assert_code(0);
 
-    let passwd = std::fs::read_to_string(etc.join("passwd")).expect("failed to read passwd");
+    let passwd =
+        std::fs::read_to_string(dir.path().join("etc/passwd")).expect("failed to read passwd");
     passwd
         .lines()
         .find_map(|l| l.strip_prefix("alice:x:1000:1000:"))
