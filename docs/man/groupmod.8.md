@@ -48,12 +48,8 @@ databases.
 
 ## GROUP NAMES
 
-The new name given with **-n** follows the rule of **groupadd**(8). A group name is
-up to 32 characters, the `$` included, of ASCII letters, digits, `_`, `.` and `-`,
-with one `$` allowed at the end. It may start with a digit or a dot, but not with
-`-`, and it may not be `.`, `..`, or something that reads as a number, decimal
-(`123`), hexadecimal (`0x1a`) or octal (`0o7`), which would be taken for a group ID.
-Any other name is exit status 3.
+The new name given with **-n** follows the rule of **groupadd**(8). A name it
+refuses is exit status 3.
 
 ## EXIT STATUS
 

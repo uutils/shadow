@@ -69,16 +69,10 @@ surprise than a missing directory.
 
 ## NAMES
 
-The login name follows the rule of **useradd**(8). A user name is up to 255
-characters of ASCII letters, digits, `_`, `.` and `-`, with one `$` allowed at the
-end for a Samba machine account. It may start with a digit or a dot, but not with
-`-`, and it may not be `.`, `..`, or something that reads as a number, decimal
-(`123`), hexadecimal (`0x1a`) or octal (`0o7`), which would be taken for a user ID.
-
-A line that creates a group of the user's own name, with an empty or new numeric
-GID field, also needs a valid group name, as **groupadd**(8) does: no longer than 32
-characters. Either refusal is exit status 1, before anything is written, unless
-**--badname** is given.
+The login name follows the rule of **useradd**(8). A line that creates a group of
+the user's own name, with an empty or new numeric GID field, also needs a group
+name that follows the rule of **groupadd**(8). Either refusal is exit status 1,
+before anything is written, unless **--badname** is given.
 
 ## OPTIONS
 
