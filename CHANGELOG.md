@@ -71,6 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `userdel -r` says `LOGIN mail spool (PATH) not found` and `LOGIN home directory
+  (PATH) not found` on standard error when either is missing, mail spool first, as
+  upstream does, with exit 0. It said nothing (#392)
+
 - `gpasswd -a`, `-A` and `-M` accept a user that only the name service knows, such
   as one from LDAP or SSSD, as upstream does. They refused anyone missing from
   /etc/passwd, exit 3 (#381)
