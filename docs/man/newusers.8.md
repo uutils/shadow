@@ -67,6 +67,13 @@ surprise than a missing directory.
     directory; otherwise the directory is created with mode 0700, owned by the
     new account, and /etc/skel is copied into it.
 
+## NAMES
+
+The login name follows the rule of **useradd**(8). A line that creates a group of
+the user's own name, with an empty or new numeric GID field, also needs a group
+name that follows the rule of **groupadd**(8). Either refusal is exit status 1,
+before anything is written, unless **--badname** is given.
+
 ## OPTIONS
 
 **-b**, **--badname**

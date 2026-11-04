@@ -71,6 +71,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `useradd`, `usermod -l`, `groupadd`, `groupmod -n` and `newusers` take the names
+  upstream takes: a name may start with a digit or a dot, end with a dot, and a user
+  name may run to 255 characters. They refused `0abc`, `.abc`, `a.` and anything
+  over 32. A name that reads as a number (`123`, `0x1a`, `0o7`), a leading `-`, `.`
+  and `..` stay refused, now with upstream's message, and `groupmod -n -x` is exit 3,
+  not a usage error. `newusers` refuses to create a group over 32 characters, as
+  upstream does (#391)
+
 - `gpasswd -a`, `-A` and `-M` accept a user that only the name service knows, such
   as one from LDAP or SSSD, as upstream does. They refused anyone missing from
   /etc/passwd, exit 3 (#381)

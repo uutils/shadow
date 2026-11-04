@@ -46,6 +46,11 @@ databases.
     Otherwise the exit status is 10 and nothing changes. An empty name is not a
     user: an empty list and a stray comma are refused too.
 
+## GROUP NAMES
+
+The new name given with **-n** follows the rule of **groupadd**(8). A name it
+refuses is exit status 3.
+
 ## EXIT STATUS
 
 **0**
