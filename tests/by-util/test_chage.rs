@@ -158,6 +158,30 @@ fn test_each_field_option_writes_its_own_field() {
     }
 }
 
+/// -E and -d take the date forms upstream's date parser reads, not only
+/// YYYY-MM-DD.
+#[test]
+fn test_dates_in_other_forms_are_accepted() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+    for date in [
+        "01/02/2030",
+        "2030/01/02",
+        "1/2/30",
+        "2 Jan 2030",
+        "January 2, 2030",
+    ] {
+        let dir = prefix("testuser:$6$hash:19500:0:99999:7:::\n");
+        chage(&dir, &["-E", date, "-d", date, "testuser"]).assert_code(0);
+        assert_eq!(
+            shadow_line(&dir),
+            "testuser:$6$hash:21916:0:99999:7::21916:",
+            "after chage -E/-d '{date}'"
+        );
+    }
+}
+
 /// -1 clears a field rather than storing a negative number.
 #[test]
 fn test_minus_one_clears_a_field() {

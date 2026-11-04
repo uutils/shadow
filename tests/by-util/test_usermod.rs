@@ -1054,6 +1054,35 @@ fn test_expiredate_accepts_iso_date() {
 }
 
 #[test]
+fn test_expiredate_accepts_other_date_forms() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    for date in [
+        "01/02/2030",
+        "2030/01/02",
+        "1/2/30",
+        "2 Jan 2030",
+        "January 2, 2030",
+    ] {
+        let dir = setup_prefix(
+            "alice:x:1000:1000:Alice:/home/alice:/bin/bash\n",
+            "alice:$6$h:19500:0:99999:7:::\n",
+            "alice:x:1000:\n",
+        );
+        // 2030-01-02 is 21916 days after the epoch.
+        let code = run_with_prefix(&dir, &["-e", date, "alice"]);
+        assert_eq!(code, 0, "usermod -e '{date}' must be accepted");
+        assert_eq!(
+            read_shadow(&dir).trim_end(),
+            "alice:$6$h:19500:0:99999:7::21916:",
+            "after usermod -e '{date}'"
+        );
+    }
+}
+
+#[test]
 fn test_negative_one_blanks_inactive_and_expiredate() {
     if crate::common::skip_unless_root() {
         return;

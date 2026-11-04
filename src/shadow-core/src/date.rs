@@ -6,8 +6,9 @@
 //! Calendar arithmetic for the account-expiry and aging fields.
 //!
 //! `/etc/shadow` stores those fields as days since the Unix epoch, while the
-//! tools accept the `YYYY-MM-DD` form their man pages document. Both live
-//! here so `useradd`, `usermod` and `chage` agree on what a date is.
+//! tools accept the `YYYY-MM-DD` form their man pages document and the other
+//! forms GNU `date -d` reads. Both live here so `useradd`, `usermod` and
+//! `chage` agree on what a date is.
 
 use crate::error::ShadowError;
 
@@ -56,12 +57,29 @@ pub fn days_in_month(year: i64, month: i64) -> i64 {
 /// expressed in days since the epoch. Impossible dates (month 13, 31 April,
 /// 29 February in a common year) are rejected rather than normalised.
 ///
+/// Anything else goes to the general date parser, which reads what GNU
+/// `date -d` reads, as upstream does: `01/02/2030`, `2030/01/02`, `1/2/30`,
+/// `2 Jan 2030`, `January 2, 2030`, `tomorrow`. A time of day is dropped, and
+/// a date before 1970 is rejected like a pre-epoch `YYYY-MM-DD`.
+///
 /// # Errors
 ///
 /// Returns `ShadowError::Validation` describing the malformed value.
 pub fn parse_expire_date(s: &str) -> Result<Option<i64>, ShadowError> {
     if s.is_empty() || s == "-1" {
         return Ok(None);
+    }
+
+    // Every value accepted before the general parser was added is made of
+    // digits, signs and dashes, and keeps its strict reading here. The
+    // general parser would take "2024-02" for a time with a UTC offset and
+    // roll 2023-02-29 over into March; a malformed day count or date stays
+    // an error instead.
+    if !s
+        .bytes()
+        .all(|b| b.is_ascii_digit() || b == b'-' || b == b'+')
+    {
+        return parse_free_form_date(s, jiff::Zoned::now());
     }
 
     // A bare integer is already days since the epoch.
@@ -98,6 +116,31 @@ pub fn parse_expire_date(s: &str) -> Result<Option<i64>, ShadowError> {
     }
 
     Ok(Some(days_from_civil(year, month, day)))
+}
+
+/// Read a date in any form GNU `date -d` takes, in the time zone of `now`,
+/// and return its day number. The time of day is dropped: the field holds a
+/// day. Relative forms such as `tomorrow` count from `now`, which the caller
+/// reads once so that every relative form is resolved against one instant.
+fn parse_free_form_date(s: &str, now: jiff::Zoned) -> Result<Option<i64>, ShadowError> {
+    let invalid = || ShadowError::Validation(format!("invalid date '{s}'").into());
+
+    let zoned = parse_datetime::parse_datetime_at_date(now, s)
+        .map_err(|_| invalid())?
+        .into_zoned()
+        .ok_or_else(invalid)?;
+    let date = zoned.date();
+    let year = i64::from(date.year());
+    if year < 1970 {
+        return Err(ShadowError::Validation(
+            format!("invalid date '{s}' (before 1970-01-01)").into(),
+        ));
+    }
+    Ok(Some(days_from_civil(
+        year,
+        i64::from(date.month()),
+        i64::from(date.day()),
+    )))
 }
 
 /// The range of day counts this module will turn back into a calendar date.
@@ -214,6 +257,99 @@ mod tests {
         assert_eq!(parse_expire_date("2024-02-29").unwrap(), Some(19782));
         // A bare integer is already days since the epoch.
         assert_eq!(parse_expire_date("19782").unwrap(), Some(19782));
+    }
+
+    #[test]
+    fn test_parse_expire_date_accepts_the_upstream_date_forms() {
+        // Upstream reads every one of these as 2030-01-02, day 21916.
+        for form in [
+            "01/02/2030",
+            "2030/01/02",
+            "1/2/30",
+            "2 Jan 2030",
+            "January 2, 2030",
+            // A time of day is dropped: the field holds a day.
+            "2030-01-02 23:30",
+            "2030-01-02 00:30",
+        ] {
+            assert_eq!(
+                parse_expire_date(form).unwrap(),
+                Some(21916),
+                "'{form}' should be 2030-01-02"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_expire_date_accepts_relative_dates() {
+        // Relative forms are resolved against one fixed instant, so the test
+        // does not depend on when it runs. 23:59:59 makes a parser that read
+        // the clock again, or kept the time of day, land on the wrong day.
+        let now = jiff::civil::date(2030, 1, 2)
+            .at(23, 59, 59, 0)
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .unwrap();
+        // 2030-01-02 is day 21916.
+        for (form, day) in [
+            ("today", 21916),
+            ("now", 21916),
+            ("tomorrow", 21917),
+            ("yesterday", 21915),
+            ("next week", 21923),
+            ("+3 days", 21919),
+        ] {
+            assert_eq!(
+                parse_free_form_date(form, now.clone()).unwrap(),
+                Some(day),
+                "'{form}' from 2030-01-02 23:59:59"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_expire_date_reads_the_clock_for_relative_dates() {
+        // The public entry point resolves "today" against the system clock.
+        // The local date is within a day of the UTC date at any instant. If
+        // a UTC midnight falls between the two readings, the local date read
+        // just before it is the old UTC day or the new one, so the bound
+        // holds whenever this runs.
+        let today = parse_expire_date("today").unwrap().unwrap();
+        let utc_today = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            / 86_400;
+        let utc_today = i64::try_from(utc_today).unwrap();
+        assert!(
+            (today - utc_today).abs() <= 1,
+            "today {today}, UTC {utc_today}"
+        );
+    }
+
+    #[test]
+    fn test_parse_expire_date_numeric_forms_are_unchanged() {
+        // Anything made only of digits and dashes is read as before: a day
+        // count or a strict YYYY-MM-DD, never handed to the general parser,
+        // which would read "2024-02" as a time with a UTC offset and roll
+        // impossible dates over.
+        assert_eq!(parse_expire_date("2030-1-2").unwrap(), Some(21916));
+        assert_eq!(parse_expire_date("0").unwrap(), Some(0));
+        for bad in ["-5", "99999999999999999999", "2024-02", "2023-02-29"] {
+            assert!(
+                parse_expire_date(bad).is_err(),
+                "'{bad}' should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_expire_date_rejects_what_no_parser_reads() {
+        for bad in ["garbage", "2030-01-02T25:00", "1969/12/31", "31 Dec 1969"] {
+            assert!(
+                parse_expire_date(bad).is_err(),
+                "'{bad}' should be rejected"
+            );
+        }
     }
 
     #[test]
