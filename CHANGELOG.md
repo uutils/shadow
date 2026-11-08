@@ -53,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Releases no longer carry `source.tar.gz`: it had the same content as the
+  tarball GitHub generates for the tag (#405)
+
 - `pwck` prints nothing when the files are clean, and `pwck: no changes` on
   standard output after an error, with `-q` as well. It no longer warns about a
   UID or GID above 60000, which flagged `nobody` (65534) on every Debian and
