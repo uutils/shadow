@@ -19,7 +19,7 @@
 //! back to the caller's uid, and the two layouts have the same privilege
 //! model.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
@@ -172,20 +172,13 @@ fn run_applet(applet: &str, run: Applet, args: &[OsString]) -> ExitCode {
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().collect();
 
-    let binary_name = args
-        .first()
-        .and_then(|a| {
-            Path::new(a)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-        })
-        .unwrap_or_default();
+    let argv0 = args.first().map(OsString::as_os_str).unwrap_or_default();
 
     // In setuid context, reject spoofed argv[0] that doesn't match AT_EXECFN.
     // Only enforced when euid != uid (setuid active) — non-setuid invocations
     // are harmless since the caller already has full privileges.
     let is_setuid = rustix::process::getuid() != rustix::process::geteuid();
-    if is_setuid && !shadow_core::process::verify_argv0_matches_execfn(&binary_name) {
+    if is_setuid && !shadow_core::process::verify_argv0_matches_execfn(argv0) {
         let _ = writeln!(
             std::io::stderr(),
             "shadow-rs: argv[0] does not match executed binary, aborting"
@@ -193,14 +186,18 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    // Utility names are UTF-8, so a basename that is not names none of them.
+    let binary_name = Path::new(argv0).file_name().and_then(OsStr::to_str);
+
     // Direct invocation via symlink (e.g., argv[0] = "passwd")
-    if let Some(run) = find_applet(&binary_name) {
-        return run_applet(&binary_name, run, &args);
+    if let Some((name, run)) = binary_name.and_then(|n| find_applet(n).map(|run| (n, run))) {
+        return run_applet(name, run, &args);
     }
 
     // Multicall: `shadow-rs <util> [args...]`
     if args.len() > 1 {
-        let util_name = args[1].to_string_lossy().to_string();
+        // As for argv[0], an argument that is not UTF-8 names no utility.
+        let util_name = args[1].to_str().unwrap_or_default();
 
         if util_name == "--list" {
             print_available_utils();
@@ -217,13 +214,14 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
 
-        if let Some(run) = find_applet(&util_name) {
-            return run_applet(&util_name, run, &args[1..]);
+        if let Some(run) = find_applet(util_name) {
+            return run_applet(util_name, run, &args[1..]);
         }
 
         let _ = writeln!(
             std::io::stderr(),
-            "shadow-rs: unknown utility '{util_name}'"
+            "shadow-rs: unknown utility '{}'",
+            args[1].to_string_lossy()
         );
         let _ = writeln!(
             std::io::stderr(),

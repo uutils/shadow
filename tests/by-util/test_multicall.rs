@@ -11,6 +11,9 @@
 //! reachable, is a single-line mistake with no other symptom. Nothing checked
 //! for it.
 
+use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::process::CommandExt;
 use std::process::Command;
 
 use crate::common::{run, run_cmd};
@@ -128,6 +131,27 @@ fn test_unknown_applet_is_refused() {
     multicall(&["no-such-tool"])
         .assert_code(1)
         .assert_stderr_contains("no-such-tool");
+}
+
+/// Utility names are UTF-8, so a name with any other byte in it never
+/// dispatches, whether it comes in as `argv[0]` or as the applet argument.
+#[test]
+fn test_name_that_is_not_utf8_is_refused() {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_shadow-rs"));
+    cmd.env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .arg0(OsStr::from_bytes(b"/usr/bin/passwd\xff"));
+    run_cmd(&mut cmd)
+        .assert_code(1)
+        .assert_stderr_contains("Usage: shadow-rs");
+
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_shadow-rs"));
+    cmd.env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .arg(OsStr::from_bytes(b"passwd\xff"));
+    run_cmd(&mut cmd)
+        .assert_code(1)
+        .assert_stderr_contains("unknown utility");
 }
 
 #[test]
