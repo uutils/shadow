@@ -732,26 +732,22 @@ pub fn gid_exists(gid: u32) -> io::Result<bool> {
 /// `AT_EXECFN` cannot be read at all: a check that cannot run must fail
 /// closed in a setuid binary.
 ///
-/// The value is read through getauxval(3) called directly. rustix's `param`
-/// module reaches that function by name at run time, through `dlsym(3)`, so
-/// that it can tolerate a glibc older than 2.16. In a statically linked
-/// binary a symbol is only present if something links it in, and a lookup by
-/// name links nothing in: the static musl archive carried no `getauxval` at
-/// all, rustix reported an empty `AT_EXECFN`, and every setuid invocation of
-/// that archive aborted here. A direct call both links the symbol and needs
-/// no lookup. glibc 2.34, the floor of the glibc archives, and musl both
-/// provide it.
+/// The value comes from `rustix::param::linux_execfn`, which on Linux reads
+/// the auxiliary vector itself: `prctl(PR_GET_AUXV)` first, `/proc/self/auxv`
+/// as a fallback. That holds only while rustix's `use-libc-auxv` feature is
+/// off. With it on, rustix looks getauxval(3) up by name at run time through
+/// `dlsym(3)`; a static binary only contains the symbols something links in,
+/// so the static musl archive found nothing, read an empty `AT_EXECFN`, and
+/// refused every setuid invocation (#302). `use-libc`, which switches rustix
+/// to its libc backend, does the same lookup. deny.toml bans both features,
+/// so no crate in the dependency graph can turn them back on unnoticed. If
+/// neither `PR_GET_AUXV` nor `/proc` is available, rustix panics, an abort
+/// under the release profile, which fails closed as well.
 pub fn verify_argv0_matches_execfn(argv0: &str) -> bool {
-    // SAFETY: getauxval has no preconditions. The `AT_EXECFN` string is
-    // placed on the initial stack by the kernel and lives as long as the
-    // process, so the pointer is valid for the borrow taken here.
-    let execfn = unsafe {
-        let ptr = libc::getauxval(libc::AT_EXECFN) as *const libc::c_char;
-        if ptr.is_null() {
-            return false;
-        }
-        std::ffi::CStr::from_ptr(ptr)
-    };
+    let execfn = rustix::param::linux_execfn();
+    if execfn.is_empty() {
+        return false;
+    }
     let execfn = execfn.to_string_lossy();
 
     let argv0_base = std::path::Path::new(argv0)
