@@ -19,7 +19,10 @@ path = "src/lib.rs"
 
 [dependencies]
 clap = { workspace = true }
-jiff = { workspace = true }
+# `Zoned::now()` reads the local zone: `tz-system` reads TZ and /etc/localtime,
+# and `tzdb-zoneinfo` resolves a zone name such as TZ=Europe/Paris against
+# /usr/share/zoneinfo. Without them the zone silently behaves as UTC.
+jiff = { workspace = true, features = ["tz-system", "tzdb-zoneinfo"] }
 libc = { workspace = true }
 parse_datetime = { workspace = true }
 rustix = { workspace = true }
