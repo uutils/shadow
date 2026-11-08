@@ -42,6 +42,14 @@ skip = [
     { name = "syn", version = "2", reason = "landlock's enumflags2_derive still uses syn 2 while uucore's displaydoc uses syn 3" },
 ]
 
+# rustix must read the auxiliary vector itself. Either feature makes it look
+# getauxval(3) up by name at run time, which finds nothing in the static musl
+# binary: AT_EXECFN reads as empty and every setuid invocation is refused
+# (#302, brought in once by uucore 0.11).
+features = [
+    { crate = "rustix", deny = ["use-libc-auxv", "use-libc"] },
+]
+
 [sources]
 # A crate from anywhere but crates.io is a supply-chain decision, not a
 # warning to scroll past.
