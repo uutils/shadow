@@ -764,7 +764,7 @@ where
     // Upstream passwd reports every change it writes this way, on stdout.
     if !quiet {
         let _ = writeln!(
-            std::io::stdout().lock(),
+            std::io::stdout(),
             "{}: password changed.",
             uucore::util_name()
         );

@@ -326,12 +326,11 @@ fn do_gpasswd(matches: &clap::ArgMatches) -> UResult<()> {
     audit::log_user_event("MOD_GROUP", &group_name, modified_gid, true);
 
     // Upstream prints these on stdout, so a script capturing it keeps working.
-    let mut out = io::stdout().lock();
     if let Some(ref user) = req.add_user {
-        let _ = writeln!(out, "Adding user {user} to group {group_name}");
+        let _ = writeln!(io::stdout(), "Adding user {user} to group {group_name}");
     }
     if let Some(ref user) = req.del_user {
-        let _ = writeln!(out, "Removing user {user} from group {group_name}");
+        let _ = writeln!(io::stdout(), "Removing user {user} from group {group_name}");
     }
 
     Ok(())

@@ -358,7 +358,7 @@ fn display_message(message: &PamMessage) {
 
     {
         use std::io::Write as _;
-        let _ = writeln!(std::io::stderr().lock(), "{text}");
+        let _ = writeln!(std::io::stderr(), "{text}");
     }
 }
 

@@ -75,8 +75,7 @@ fn read_line(prompt: &str, echo: bool) -> io::Result<Zeroizing<String>> {
         }
         // No controlling terminal.
         Err(e) if matches!(e.raw_os_error(), Some(libc::ENXIO | libc::ENODEV)) => {
-            let stderr = io::stderr();
-            write_prompt(prompt, &mut stderr.lock())?;
+            write_prompt(prompt, io::stderr())?;
             let stdin = io::stdin();
             let _guard = if echo {
                 None
@@ -85,7 +84,7 @@ fn read_line(prompt: &str, echo: bool) -> io::Result<Zeroizing<String>> {
             };
             let line = read_trimmed(&mut stdin.lock())?;
             if !echo {
-                let _ = writeln!(stderr.lock());
+                let _ = writeln!(io::stderr());
             }
             Ok(line)
         }
