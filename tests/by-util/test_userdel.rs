@@ -675,3 +675,66 @@ fn test_remove_reports_an_empty_home_field() {
         ["testuser home directory () not found".to_string()]
     );
 }
+
+/// A mail spool that is a dangling symlink counts as missing and is left in
+/// place, as Ubuntu 26.04's `userdel -r` does.
+#[test]
+fn test_remove_leaves_a_dangling_mail_spool_link() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    let root = dir.path();
+    let prefix = root.to_str().expect("non-UTF-8 temp path");
+    let home = root.join("home/testuser");
+    std::fs::create_dir_all(&home).expect("home");
+    std::os::unix::fs::chown(&home, Some(1000), Some(1000)).expect("chown home");
+    let spool = root.join("var/mail/testuser");
+    std::fs::create_dir_all(root.join("var/mail")).expect("mail dir");
+    std::os::unix::fs::symlink(root.join("nowhere"), &spool).expect("spool link");
+    let out = crate::common::run("userdel", &["-P", prefix, "-r", "testuser"]);
+    out.assert_code(0);
+    assert_eq!(
+        messages(&out),
+        [format!(
+            "testuser mail spool ({}) not found",
+            spool.display()
+        )]
+    );
+    let meta = std::fs::symlink_metadata(&spool).expect("the link should be left in place");
+    assert!(meta.file_type().is_symlink());
+    assert!(!home.exists(), "the home should have been removed");
+    assert!(!read_passwd(&dir).contains("testuser:"));
+}
+
+/// A home that is a dangling symlink counts as missing and is left in place,
+/// as Ubuntu 26.04's `userdel -r` does.
+#[test]
+fn test_remove_leaves_a_dangling_home_link() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_root_dir();
+    let root = dir.path();
+    let prefix = root.to_str().expect("non-UTF-8 temp path");
+    let home = root.join("home/testuser");
+    std::fs::create_dir_all(root.join("home")).expect("home parent");
+    std::os::unix::fs::symlink(root.join("nowhere"), &home).expect("home link");
+    let out = crate::common::run("userdel", &["-P", prefix, "-r", "testuser"]);
+    out.assert_code(0);
+    assert_eq!(
+        messages(&out),
+        [
+            format!(
+                "testuser mail spool ({}) not found",
+                root.join("var/mail/testuser").display()
+            ),
+            format!("testuser home directory ({}) not found", home.display()),
+        ]
+    );
+    let meta = std::fs::symlink_metadata(&home).expect("the link should be left in place");
+    assert!(meta.file_type().is_symlink());
+    assert!(!read_passwd(&dir).contains("testuser:"));
+}

@@ -296,6 +296,9 @@ fn remove_spool_and_home(
     shared_by_other: bool,
 ) -> Result<(), UserdelError> {
     let mail = root.resolve(&format!("/var/mail/{login}"));
+    // `exists()` follows a symlink on purpose, here and for the home below:
+    // Ubuntu 26.04's `userdel -r` reports a dangling link as not found, exit
+    // 0, and leaves it in place.
     if mail.exists() {
         let _ = std::fs::remove_file(&mail);
     } else {
