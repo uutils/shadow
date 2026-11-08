@@ -14,8 +14,10 @@
 //! This is one of the few modules that permits `unsafe` — all unsafe is
 //! confined to well-understood POSIX C library calls.
 
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, OsStr};
 use std::io;
+use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
 
 // ---------------------------------------------------------------------------
 // UID / GID manipulation (process-wide via libc)
@@ -728,9 +730,9 @@ pub fn gid_exists(gid: u32) -> io::Result<bool> {
 /// from the ELF auxiliary vector records the real path the kernel executed,
 /// which cannot be spoofed from userspace.
 ///
-/// Returns `true` if the basenames match, `false` if they differ or if
-/// `AT_EXECFN` cannot be read at all: a check that cannot run must fail
-/// closed in a setuid binary.
+/// Returns `true` if the basenames match, `false` if they differ, if either
+/// has no basename, or if `AT_EXECFN` cannot be read at all: a check that
+/// cannot run must fail closed in a setuid binary.
 ///
 /// The value is read through getauxval(3) called directly. rustix's `param`
 /// module reaches that function by name at run time, through `dlsym(3)`, so
@@ -741,7 +743,7 @@ pub fn gid_exists(gid: u32) -> io::Result<bool> {
 /// that archive aborted here. A direct call both links the symbol and needs
 /// no lookup. glibc 2.34, the floor of the glibc archives, and musl both
 /// provide it.
-pub fn verify_argv0_matches_execfn(argv0: &str) -> bool {
+pub fn verify_argv0_matches_execfn(argv0: &OsStr) -> bool {
     // SAFETY: getauxval has no preconditions. The `AT_EXECFN` string is
     // placed on the initial stack by the kernel and lives as long as the
     // process, so the pointer is valid for the borrow taken here.
@@ -752,18 +754,20 @@ pub fn verify_argv0_matches_execfn(argv0: &str) -> bool {
         }
         std::ffi::CStr::from_ptr(ptr)
     };
-    let execfn = execfn.to_string_lossy();
 
-    let argv0_base = std::path::Path::new(argv0)
-        .file_name()
-        .map(|n| n.to_string_lossy())
-        .unwrap_or_default();
-    let execfn_base = std::path::Path::new(execfn.as_ref())
-        .file_name()
-        .map(|n| n.to_string_lossy())
-        .unwrap_or_default();
+    basenames_match(argv0, OsStr::from_bytes(execfn.to_bytes()))
+}
 
-    argv0_base == execfn_base
+/// Compare the basenames of two paths byte for byte.
+///
+/// A lossy conversion would map every invalid UTF-8 sequence to U+FFFD, so
+/// two different names would compare equal. A path with no basename, such as
+/// an empty `argv[0]`, matches nothing.
+fn basenames_match(argv0: &OsStr, execfn: &OsStr) -> bool {
+    match (Path::new(argv0).file_name(), Path::new(execfn).file_name()) {
+        (Some(argv0), Some(execfn)) => argv0.as_bytes() == execfn.as_bytes(),
+        _ => false,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -805,5 +809,46 @@ impl Drop for PrivDrop {
                 self.original_euid
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn matches(argv0: &[u8], execfn: &[u8]) -> bool {
+        basenames_match(OsStr::from_bytes(argv0), OsStr::from_bytes(execfn))
+    }
+
+    #[test]
+    fn same_basename_matches() {
+        assert!(matches(b"passwd", b"/usr/bin/passwd"));
+        assert!(matches(b"/usr/bin/passwd", b"/usr/local/bin/passwd"));
+    }
+
+    #[test]
+    fn different_basename_does_not_match() {
+        assert!(!matches(b"useradd", b"/usr/bin/passwd"));
+    }
+
+    // Both names decode lossily to "passwd\u{FFFD}", so a lossy comparison
+    // calls them equal although the bytes differ.
+    #[test]
+    fn different_invalid_utf8_bytes_do_not_match() {
+        assert!(!matches(b"passwd\xff", b"/usr/bin/passwd\xfe"));
+        assert!(!matches(b"passwd\xef\xbf\xbd", b"/usr/bin/passwd\xff"));
+    }
+
+    #[test]
+    fn identical_invalid_utf8_bytes_match() {
+        assert!(matches(b"passwd\xff", b"/usr/bin/passwd\xff"));
+    }
+
+    #[test]
+    fn missing_basename_matches_nothing() {
+        assert!(!matches(b"", b""));
+        assert!(!matches(b"", b"/usr/bin/passwd"));
+        assert!(!matches(b"/", b"/"));
+        assert!(!matches(b"passwd", b"/usr/bin/.."));
     }
 }
