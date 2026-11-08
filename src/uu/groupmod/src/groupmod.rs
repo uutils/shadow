@@ -125,9 +125,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let root = SysRoot::new(prefix);
 
     // Validate new name if provided.
-    if let Some(name) = new_name {
-        shadow_core::validate::validate_username(name)
-            .map_err(|e| GroupmodError::BadArgument(format!("{e}")))?;
+    if let Some(name) = new_name
+        && !shadow_core::validate::is_valid_group_name(name)
+    {
+        return Err(GroupmodError::BadArgument(format!("invalid group name '{name}'")).into());
     }
 
     // Parse new GID if provided. u32::MAX is (gid_t)-1, the "no change"
@@ -317,7 +318,10 @@ pub fn uu_app() -> Command {
                 .short('n')
                 .long("new-name")
                 .value_name("NEW_GROUP")
-                .help("Rename the group to NEW_GROUP"),
+                .help("Rename the group to NEW_GROUP")
+                // Taken as the name, as upstream does, and refused as one: exit
+                // 3 and not a usage error.
+                .allow_hyphen_values(true),
         )
         .arg(
             Arg::new(options::NON_UNIQUE)

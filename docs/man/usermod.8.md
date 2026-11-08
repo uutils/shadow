@@ -137,6 +137,11 @@ a name, and an administrator who renames the account re-grants it if that is
 what they meant. Because **-V** is this option, **--version** has no short
 form.
 
+## USER NAMES
+
+The new name given with **-l** follows the rule of **useradd**(8). A name it
+refuses is exit status 3, unless **-b** is given.
+
 ## EXIT STATUS
 
 **0**
