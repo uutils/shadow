@@ -16,6 +16,10 @@ targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 # setuid bit to do anything useful (see the install notes in the README).
 installers = []
 unix-archive = ".tar.gz"
+# No source.tar.gz. dist builds it with `git archive` of the tag, which is
+# what GitHub already serves as the release's "Source code" download, so it
+# only duplicated that (issue #405).
+source-tarball = false
 # Build with PAM. Without it `passwd` refuses the interactive change path
 # ("PAM support is not compiled in"), which is the tool's primary function.
 features = ["pam"]
