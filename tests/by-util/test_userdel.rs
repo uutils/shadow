@@ -738,3 +738,144 @@ fn test_remove_leaves_a_dangling_home_link() {
     assert!(meta.file_type().is_symlink());
     assert!(!read_passwd(&dir).contains("testuser:"));
 }
+
+/// What a spool test starts from: a home the user owns, so that the home's
+/// fate shows whether `-r` carried on past the spool.
+struct SpoolCase {
+    dir: tempfile::TempDir,
+    home: std::path::PathBuf,
+    spool: std::path::PathBuf,
+    target: std::path::PathBuf,
+}
+
+/// `kind` is `"file"` for a regular spool, or `"link"` for a spool that is a
+/// symlink to a file outside /var/mail; that file, or the spool itself, is
+/// owned by `owner`.
+fn spool_case(kind: &str, owner: u32) -> SpoolCase {
+    let dir = setup_root_dir();
+    let root = dir.path().to_path_buf();
+    let home = root.join("home/testuser");
+    std::fs::create_dir_all(&home).expect("home");
+    std::os::unix::fs::chown(&home, Some(1000), Some(1000)).expect("chown home");
+    std::fs::create_dir_all(root.join("var/mail")).expect("mail dir");
+    let spool = root.join("var/mail/testuser");
+    let target = root.join("srv-mailbox");
+    if kind == "link" {
+        std::fs::write(&target, "mail").expect("link target");
+        std::os::unix::fs::chown(&target, Some(owner), Some(owner)).expect("chown target");
+        std::os::unix::fs::symlink(&target, &spool).expect("spool link");
+    } else {
+        std::fs::write(&spool, "mail").expect("spool");
+        std::os::unix::fs::chown(&spool, Some(owner), Some(owner)).expect("chown spool");
+    }
+    SpoolCase {
+        dir,
+        home,
+        spool,
+        target,
+    }
+}
+
+fn run_spool_case(case: &SpoolCase, flags: &[&str]) -> crate::common::Output {
+    let prefix = case.dir.path().to_str().expect("non-UTF-8 temp path");
+    let mut command_line = vec!["-P", prefix];
+    command_line.extend_from_slice(flags);
+    command_line.push("testuser");
+    crate::common::run("userdel", &command_line)
+}
+
+/// A spool that is not the user's is kept, said on stderr, exit 12; the
+/// account and the home go all the same. Ubuntu 26.04's `userdel -r` does so.
+#[test]
+fn test_remove_keeps_a_mail_spool_the_user_does_not_own() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let case = spool_case("file", 0);
+    let out = run_spool_case(&case, &["-r"]);
+    out.assert_code(12);
+    assert!(out.stdout.is_empty(), "stdout: {:?}", out.stdout);
+    assert_eq!(
+        messages(&out),
+        [format!(
+            "{} not owned by testuser, not removing",
+            case.spool.display()
+        )]
+    );
+    assert!(case.spool.exists(), "the spool should have been kept");
+    assert!(!case.home.exists(), "the home should have been removed");
+    assert!(!read_passwd(&case.dir).contains("testuser:"));
+}
+
+/// `-f` removes a spool that is not the user's, without a word.
+#[test]
+fn test_remove_force_removes_a_mail_spool_the_user_does_not_own() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let case = spool_case("file", 0);
+    let out = run_spool_case(&case, &["-r", "-f"]);
+    out.assert_code(0);
+    assert!(out.stderr.is_empty(), "stderr: {:?}", out.stderr);
+    assert!(!case.spool.exists(), "the spool should have been removed");
+    assert!(!case.home.exists(), "the home should have been removed");
+}
+
+/// A spool that is a symlink to someone else's file is judged by that file:
+/// the link is kept, and so is the file, exit 12.
+#[test]
+fn test_remove_keeps_a_spool_link_to_a_file_the_user_does_not_own() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let case = spool_case("link", 0);
+    let out = run_spool_case(&case, &["-r"]);
+    out.assert_code(12);
+    assert_eq!(
+        messages(&out),
+        [format!(
+            "{} not owned by testuser, not removing",
+            case.spool.display()
+        )]
+    );
+    let meta = std::fs::symlink_metadata(&case.spool).expect("the link should be kept");
+    assert!(meta.file_type().is_symlink());
+    assert!(case.target.exists(), "the link target should be untouched");
+    assert!(!case.home.exists(), "the home should have been removed");
+    assert!(!read_passwd(&case.dir).contains("testuser:"));
+}
+
+/// `-f` removes the link to someone else's file, never the file itself.
+#[test]
+fn test_remove_force_removes_a_spool_link_but_not_its_target() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let case = spool_case("link", 0);
+    let out = run_spool_case(&case, &["-r", "-f"]);
+    out.assert_code(0);
+    assert!(out.stderr.is_empty(), "stderr: {:?}", out.stderr);
+    assert!(std::fs::symlink_metadata(&case.spool).is_err());
+    assert!(case.target.exists(), "the link target should be untouched");
+}
+
+/// A symlink to the user's own file is removed even though the link itself is
+/// root's, and the file it points at stays, exit 0.
+#[test]
+fn test_remove_removes_a_spool_link_to_the_users_own_file() {
+    if crate::common::skip_unless_root() {
+        return;
+    }
+
+    let case = spool_case("link", 1000);
+    let out = run_spool_case(&case, &["-r"]);
+    out.assert_code(0);
+    assert!(out.stderr.is_empty(), "stderr: {:?}", out.stderr);
+    assert!(std::fs::symlink_metadata(&case.spool).is_err());
+    assert!(case.target.exists(), "the link target should be untouched");
+    assert!(!case.home.exists(), "the home should have been removed");
+}

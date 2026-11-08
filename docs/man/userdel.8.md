@@ -20,7 +20,8 @@ is also removed from membership lists in /etc/group and /etc/gshadow.
 
 **-f**, **--force**
 :   With **-r**, remove the home directory even if it is not owned by the user or
-    is shared with another account. A user that does not exist is still exit
+    is shared with another account, and the mail spool even if it is not owned by
+    the user. A user that does not exist is still exit
     status 6.
 
 **-P**, **--prefix** *PREFIX_DIR*
@@ -36,6 +37,11 @@ is also removed from membership lists in /etc/group and /etc/gshadow.
     A mail spool or home that is not there is not an error: *LOGIN mail spool
     (PATH) not found* and *LOGIN home directory (PATH) not found* are printed on
     standard error, in that order, and the exit status is unchanged.
+
+    A mail spool the user does not own is kept unless **-f** is given: *SPOOL not
+    owned by LOGIN, not removing* is printed on standard error, the home is still
+    removed, and the exit status is 12. A spool that is a symbolic link is judged
+    by the file it points to; the link is what is removed, never that file.
 
 **-R**, **--root** *CHROOT_DIR*
 :   Apply changes in the *CHROOT_DIR* directory.
