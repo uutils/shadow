@@ -71,6 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `userdel -r` keeps a mail spool that the user does not own, or a symlink to a
+  file they do not own, says `SPOOL not owned by LOGIN, not removing` and exits 12
+  after removing the home, as upstream does; `-f` removes it. It unlinked the
+  spool whoever owned it (#400)
+
 - `userdel -r` says `LOGIN mail spool (PATH) not found` and `LOGIN home directory
   (PATH) not found` on standard error when either is missing, mail spool first, as
   upstream does, with exit 0. It said nothing (#392)

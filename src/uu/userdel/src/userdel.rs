@@ -286,7 +286,8 @@ pub fn uu_app() -> Command {
 /// Remove the mail spool and the home of the account being deleted, for `-r`.
 ///
 /// Either one missing is said on stderr and is not a failure, spool first, as
-/// upstream does.
+/// upstream does. A spool the user does not own is kept unless `force`; the
+/// home is still removed, and the exit status is then `CANT_REMOVE_HOME`.
 fn remove_spool_and_home(
     root: &SysRoot,
     login: &str,
@@ -294,29 +295,79 @@ fn remove_spool_and_home(
     uid: u32,
     force: bool,
     shared_by_other: bool,
-) -> Result<(), UserdelError> {
+) -> UResult<()> {
     let mail = root.resolve(&format!("/var/mail/{login}"));
-    // `exists()` follows a symlink on purpose, here and for the home below:
-    // Ubuntu 26.04's `userdel -r` reports a dangling link as not found, exit
-    // 0, and leaves it in place.
-    if mail.exists() {
-        let _ = std::fs::remove_file(&mail);
-    } else {
-        uucore::show_error!("{login} mail spool ({}) not found", mail.display());
-    }
+    let spool_kept = match remove_mail_spool(&mail, uid, force) {
+        Spool::Removed => false,
+        Spool::Missing => {
+            uucore::show_error!("{login} mail spool ({}) not found", mail.display());
+            false
+        }
+        Spool::NotOwned => {
+            uucore::show_error!("{} not owned by {login}, not removing", mail.display());
+            true
+        }
+    };
 
     if home.is_empty() {
         // Nothing to remove; upstream names the empty path all the same.
         uucore::show_error!("{login} home directory () not found");
-        return Ok(());
-    }
-    let home = root.resolve(home);
-    if home.exists() {
-        safe_remove_home(&home, uid, force, shared_by_other)
     } else {
-        uucore::show_error!("{login} home directory ({}) not found", home.display());
-        Ok(())
+        let home = root.resolve(home);
+        // `exists()` follows a symlink on purpose: Ubuntu 26.04's `userdel -r`
+        // reports a dangling link as not found, exit 0, and leaves it in place.
+        if home.exists() {
+            safe_remove_home(&home, uid, force, shared_by_other)?;
+        } else {
+            uucore::show_error!("{login} home directory ({}) not found", home.display());
+        }
     }
+
+    if spool_kept {
+        // Already said above, in its place before anything about the home.
+        return Err(shadow_core::cli::AlreadyPrinted(exit_codes::CANT_REMOVE_HOME).into());
+    }
+    Ok(())
+}
+
+/// What `-r` did with the mail spool.
+enum Spool {
+    Removed,
+    Missing,
+    NotOwned,
+}
+
+/// Remove the mail spool at `mail` unless it belongs to someone other than
+/// `uid` and `force` is not given.
+///
+/// Ownership is that of the file the entry leads to: Ubuntu 26.04's `userdel
+/// -r` keeps a symlink to another user's file, removes a symlink to the
+/// user's own, and reports a dangling one as not found and leaves it. The
+/// entry is looked up once through a descriptor on its directory, and the
+/// unlink goes through that same descriptor, so the directory cannot be
+/// swapped for another between the ownership check and the removal.
+fn remove_mail_spool(mail: &Path, uid: u32, force: bool) -> Spool {
+    use rustix::fs::{AtFlags, Mode, OFlags};
+
+    let (Some(parent), Some(name)) = (mail.parent(), mail.file_name()) else {
+        return Spool::Missing;
+    };
+    let Ok(dir) = rustix::fs::open(
+        parent,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) else {
+        return Spool::Missing;
+    };
+    let Ok(target) = rustix::fs::statat(&dir, name, AtFlags::empty()) else {
+        return Spool::Missing;
+    };
+    if !force && target.st_uid != uid {
+        return Spool::NotOwned;
+    }
+    // A failed unlink has never been reported here; that is not this check's to change.
+    let _ = rustix::fs::unlinkat(&dir, name, AtFlags::empty());
+    Spool::Removed
 }
 
 // ---------------------------------------------------------------------------
