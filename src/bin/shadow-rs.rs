@@ -190,7 +190,9 @@ fn main() -> ExitCode {
     let binary_name = Path::new(argv0).file_name().and_then(OsStr::to_str);
 
     // Direct invocation via symlink (e.g., argv[0] = "passwd")
-    if let Some((name, run)) = binary_name.and_then(|n| find_applet(n).map(|run| (n, run))) {
+    if let Some(name) = binary_name
+        && let Some(run) = find_applet(name)
+    {
         return run_applet(name, run, &args);
     }
 
