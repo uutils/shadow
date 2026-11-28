@@ -71,7 +71,7 @@ uucore = "0.13"
 thiserror = "2"
 
 # Dates
-parse_datetime = "0.17"
+parse_datetime = "0.18"
 jiff = { version = "0.2", default-features = false, features = ["std"] }
 
 # Unix/Linux
